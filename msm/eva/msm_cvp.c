@@ -1088,10 +1088,10 @@ int msm_cvp_session_create(struct msm_cvp_inst *inst)
 	}
 
 	params.name = "cvp-kernel-client";
-	if (synx_initialize(&inst->synx_session_id, &params)) {
-		dprintk(CVP_ERR, "%s synx_initialize failed\n", __func__);
-		rc = -EFAULT;
-	}
+	//if (synx_initialize(&inst->synx_session_id, &params)) {
+	//	dprintk(CVP_ERR, "%s synx_initialize failed\n", __func__);
+	//	rc = -EFAULT;
+	//}
 
 fail_init:
 	return rc;

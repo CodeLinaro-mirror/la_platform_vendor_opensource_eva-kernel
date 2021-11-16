@@ -2187,7 +2187,7 @@ static int iris_hfi_core_release(void *dev)
 	__dsp_shutdown(device, 0);
 
 	if (msm_cvp_mmrm_enabled) {
-		rc = mmrm_client_deregister(device->mmrm_cvp);
+		//rc = mmrm_client_deregister(device->mmrm_cvp);
 		if (rc) {
 			dprintk(CVP_ERR,
 				"%s: Failed mmrm_client_deregister with rc: %d\n",

@@ -54,7 +54,7 @@ int msm_cvp_mmrm_register(struct iris_hfi_device *device)
 		"%s: Register for %s\n",
 		__func__, device->mmrm_cvp_desc.client_info.desc.name);
 
-	device->mmrm_cvp = mmrm_client_register(&(device->mmrm_cvp_desc));
+	//device->mmrm_cvp = mmrm_client_register(&(device->mmrm_cvp_desc));
 	if (device->mmrm_cvp == NULL) {
 		dprintk(CVP_ERR, "%s: Failed mmrm_client_register with mmrm_cvp: %p\n",
 			__func__, device->mmrm_cvp);
@@ -94,7 +94,7 @@ int msm_cvp_mmrm_set_value_in_range(struct iris_hfi_device *device, u32 freq_min
 		"%s: set clock rate to min %u cur %u: %d\n",
 		__func__, val.min, val.cur, rc);
 
-	rc = mmrm_client_set_value_in_range(device->mmrm_cvp, &data, &val);
+	//rc = mmrm_client_set_value_in_range(device->mmrm_cvp, &data, &val);
 	if (rc) {
 		dprintk(CVP_ERR,
 			"%s: Failed to set clock rate to min %u cur %u: %d\n",

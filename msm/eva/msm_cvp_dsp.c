@@ -726,8 +726,8 @@ static int eva_fastrpc_dev_map_dma(struct fastrpc_device *frpc_device,
 			"%s frpc_map_buf size %d, dma_buf %pK, map %pK, 0x%x\n",
 			__func__, frpc_map_buf.size, frpc_map_buf.buf,
 			&frpc_map_buf, (unsigned long)&frpc_map_buf);
-		rc = fastrpc_driver_invoke(frpc_device, FASTRPC_DEV_MAP_DMA,
-			(unsigned long)(&frpc_map_buf));
+		//rc = fastrpc_driver_invoke(frpc_device, FASTRPC_DEV_MAP_DMA,
+			//(unsigned long)(&frpc_map_buf));
 		if (rc) {
 			dprintk(CVP_ERR,
 				"%s Failed to map buffer 0x%x\n", __func__, rc);
@@ -752,8 +752,8 @@ static int eva_fastrpc_dev_unmap_dma(struct fastrpc_device *frpc_device,
 	/* Only if buffer is mapped to dsp */
 	if (buf->fd != 0) {
 		frpc_unmap_buf.buf = buf->smem->dma_buf;
-		rc = fastrpc_driver_invoke(frpc_device, FASTRPC_DEV_UNMAP_DMA,
-				(unsigned long)(&frpc_unmap_buf));
+		//rc = fastrpc_driver_invoke(frpc_device, FASTRPC_DEV_UNMAP_DMA,
+			//	(unsigned long)(&frpc_unmap_buf));
 		if (rc) {
 			dprintk(CVP_ERR, "%s Failed to unmap buffer 0x%x\n",
 				__func__, rc);
@@ -868,7 +868,7 @@ static int eva_fastrpc_driver_register(uint32_t handle)
 		frpc_node->handle = handle;
 		frpc_node->cvp_fastrpc_driver = cvp_fastrpc_client;
 		frpc_node->cvp_fastrpc_driver.handle = handle;
-		rc = fastrpc_driver_register(&frpc_node->cvp_fastrpc_driver);
+		//rc = fastrpc_driver_register(&frpc_node->cvp_fastrpc_driver);
 		if (rc) {
 			dprintk(CVP_ERR, "%s fastrpc driver reg fail err %d\n",
 				__func__, rc);
@@ -892,7 +892,7 @@ fail_fastrpc_driver_timeout:
 	mutex_lock(&me->fastrpc_driver_list.lock);
 	list_del(&frpc_node->list);
 	mutex_unlock(&me->fastrpc_driver_list.lock);
-	fastrpc_driver_unregister(&frpc_node->cvp_fastrpc_driver);
+	//fastrpc_driver_unregister(&frpc_node->cvp_fastrpc_driver);
 fail_fastrpc_driver_register:
 	kfree(frpc_node);
 	return -EINVAL;
@@ -924,7 +924,7 @@ static void eva_fastrpc_driver_unregister(uint32_t handle, bool force_exit)
 		list_del(&frpc_node->list);
 		mutex_unlock(&me->fastrpc_driver_list.lock);
 
-		fastrpc_driver_unregister(&frpc_node->cvp_fastrpc_driver);
+		//fastrpc_driver_unregister(&frpc_node->cvp_fastrpc_driver);
 		kfree(frpc_node);
 	}
 }
