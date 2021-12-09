@@ -2677,53 +2677,55 @@ static void iris_hfi_pm_handler(struct work_struct *work)
 		dprintk(CVP_ERR, "%s: NULL device\n", __func__);
 		return;
 	}
+	if (device->res->sw_power_collapsible) {
+		dprintk(CVP_PWR,"Entering %s\n", __func__);
+		/*
+		 * It is ok to check this variable outside the lock since
+		 * it is being updated in this context only
+		 */
+		if (device->skip_pc_count >= CVP_MAX_PC_SKIP_COUNT) {
+			dprintk(CVP_WARN, "Failed to PC for %d times\n",
+					device->skip_pc_count);
+			device->skip_pc_count = 0;
+			__process_fatal_error(device);
+			return;
+		}
 
-	dprintk(CVP_PWR,
-		"Entering %s\n", __func__);
-	/*
-	 * It is ok to check this variable outside the lock since
-	 * it is being updated in this context only
-	 */
-	if (device->skip_pc_count >= CVP_MAX_PC_SKIP_COUNT) {
-		dprintk(CVP_WARN, "Failed to PC for %d times\n",
-				device->skip_pc_count);
-		device->skip_pc_count = 0;
-		__process_fatal_error(device);
-		return;
-	}
-
-	mutex_lock(&device->lock);
-	if (gfa_cv.state == DSP_SUSPEND)
-		rc = __power_collapse(device, true);
-	else
-		rc = __power_collapse(device, false);
-	mutex_unlock(&device->lock);
-	switch (rc) {
-	case 0:
-		device->skip_pc_count = 0;
-		/* Cancel pending delayed works if any */
-		cancel_delayed_work(&iris_hfi_pm_work);
-		dprintk(CVP_PWR, "%s: power collapse successful!\n",
-			__func__);
-		break;
-	case -EBUSY:
-		device->skip_pc_count = 0;
-		dprintk(CVP_PWR, "%s: retry PC as cvp is busy\n", __func__);
-		queue_delayed_work(device->iris_pm_workq,
+		mutex_lock(&device->lock);
+		if (gfa_cv.state == DSP_SUSPEND)
+			rc = __power_collapse(device, true);
+		else
+			rc = __power_collapse(device, false);
+		mutex_unlock(&device->lock);
+		switch (rc) {
+		case 0:
+			device->skip_pc_count = 0;
+			/* Cancel pending delayed works if any */
+			cancel_delayed_work(&iris_hfi_pm_work);
+			dprintk(CVP_PWR, "%s: power collapse successful!\n",
+				__func__);
+			break;
+		case -EBUSY:
+			device->skip_pc_count = 0;
+			dprintk(CVP_PWR, "%s: retry PC as cvp is busy\n", __func__);
+			queue_delayed_work(device->iris_pm_workq,
 			&iris_hfi_pm_work, msecs_to_jiffies(
-			device->res->msm_cvp_pwr_collapse_delay));
-		break;
-	case -EAGAIN:
-		device->skip_pc_count++;
-		dprintk(CVP_WARN, "%s: retry power collapse (count %d)\n",
-			__func__, device->skip_pc_count);
-		queue_delayed_work(device->iris_pm_workq,
+				device->res->msm_cvp_pwr_collapse_delay));
+			break;
+		case -EAGAIN:
+			device->skip_pc_count++;
+			dprintk(CVP_WARN, "%s: retry power collapse (count %d)\n",
+				__func__, device->skip_pc_count);
+				queue_delayed_work(device->iris_pm_workq,
 			&iris_hfi_pm_work, msecs_to_jiffies(
-			device->res->msm_cvp_pwr_collapse_delay));
-		break;
-	default:
-		dprintk(CVP_ERR, "%s: power collapse failed\n", __func__);
-		break;
+				device->res->msm_cvp_pwr_collapse_delay));
+			break;
+		default:
+			dprintk(CVP_ERR, "%s: power collapse failed\n", __func__);
+			break;
+		}
+	} else {
+		dprintk(CVP_PWR, "%s: sw power collapse is disabled \n", __func__);
 	}
 }
 
