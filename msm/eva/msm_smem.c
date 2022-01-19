@@ -8,19 +8,50 @@
 #include <linux/dma-direction.h>
 #include <linux/iommu.h>
 #include <linux/msm_dma_iommu_mapping.h>
-#include <linux/ion.h>
-#include <linux/msm_ion.h>
 #include <soc/qcom/secure_buffer.h>
 #include <linux/mem-buf.h>
 #include <linux/slab.h>
 #include <linux/types.h>
 #include <linux/qcom-dma-mapping.h>
+#include <linux/version.h>
 #include "msm_cvp_core.h"
 #include "msm_cvp_debug.h"
 #include "msm_cvp_resources.h"
 #include "cvp_core_hfi.h"
 #include "msm_cvp_dsp.h"
 
+static void * __cvp_dma_buf_vmap(struct dma_buf *dbuf)
+{
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 13, 0))
+	return dma_buf_vmap(dbuf);
+#else
+	struct dma_buf_map map;
+	void *dma_map;
+	int err;
+
+	err = dma_buf_vmap(dbuf, &map);
+	dma_map = err ? NULL : map.vaddr;
+	if (!dma_map)
+		dprintk(CVP_ERR, "map to kvaddr failed\n");
+
+	return dma_map;
+#endif
+}
+
+static void __cvp_dma_buf_vunmap(struct dma_buf *dbuf, void *vaddr)
+{
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 13, 0))
+	dma_buf_vunmap(dbuf, vaddr);
+#else
+	struct dma_buf_map map = { \
+			.vaddr = vaddr, \
+			.is_iomem = false, \
+	};
+
+	if (vaddr)
+		dma_buf_vunmap(dbuf, &map);
+#endif
+}
 
 static int msm_dma_get_device_address(struct dma_buf *dbuf, u32 align,
 	dma_addr_t *iova, u32 flags, struct msm_cvp_platform_resources *res,
@@ -79,7 +110,11 @@ static int msm_dma_get_device_address(struct dma_buf *dbuf, u32 align,
 		}
 
 		if (table->sgl) {
-			*iova = table->sgl->dma_address;
+			if (flags & SMEM_CAMERA) {
+				*iova = sg_phys(table->sgl);
+			} else {
+				*iova = table->sgl->dma_address;
+			}
 		} else {
 			dprintk(CVP_ERR, "sgl is NULL\n");
 			rc = -ENOMEM;
@@ -258,6 +293,9 @@ static int alloc_dma_mem(size_t size, u32 align, int map_kernel,
 	int rc = 0;
 	struct dma_buf *dbuf = NULL;
 	struct dma_heap *heap = NULL;
+	struct mem_buf_lend_kernel_arg arg;
+	int vmids[1];
+	int perms[1];
 
 	if (!res) {
 		dprintk(CVP_ERR, "%s: NULL res\n", __func__);
@@ -277,18 +315,32 @@ static int alloc_dma_mem(size_t size, u32 align, int map_kernel,
 		size, align);
 	}
 
-	if (mem->flags & SMEM_NON_PIXEL)
-		heap = dma_heap_find("qcom,secure-non-pixel");
-	else if (mem->flags & SMEM_PIXEL)
-		heap = dma_heap_find("qcom,secure-pixel");
-
 	dbuf = dma_heap_buffer_alloc(heap, size, 0, 0);
 	if (IS_ERR_OR_NULL(dbuf)) {
 		dprintk(CVP_ERR,
-		"Failed to allocate shared memory = %x bytes, %x %x\n",
-		size, mem->flags, PTR_ERR(dbuf));
+			"Failed to allocate shared memory = %x bytes, %x %x\n",
+			size, mem->flags, PTR_ERR(dbuf));
 		rc = -ENOMEM;
 		goto fail_shared_mem_alloc;
+	}
+
+	perms[0] = PERM_READ | PERM_WRITE;
+	arg.nr_acl_entries = 1;
+	arg.vmids = vmids;
+	arg.perms = perms;
+
+	if (mem->flags & SMEM_NON_PIXEL) {
+		vmids[0] = VMID_CP_NON_PIXEL;
+		rc = mem_buf_lend(dbuf, &arg);
+	} else if (mem->flags & SMEM_PIXEL) {
+		vmids[0] = VMID_CP_PIXEL;
+		rc = mem_buf_lend(dbuf, &arg);
+	}
+
+	if (rc) {
+		dprintk(CVP_ERR, "Failed to lend dmabuf %d, vmid %d\n",
+			rc, vmids[0]);
+		goto fail_device_address;
 	}
 
 	if (!gfa_cv.dmabuf_f_op)
@@ -314,7 +366,7 @@ static int alloc_dma_mem(size_t size, u32 align, int map_kernel,
 
 	if (map_kernel) {
 		dma_buf_begin_cpu_access(dbuf, DMA_BIDIRECTIONAL);
-		mem->kvaddr = dma_buf_vmap(dbuf);
+		mem->kvaddr = __cvp_dma_buf_vmap(dbuf);
 		if (!mem->kvaddr) {
 			dprintk(CVP_ERR,
 				"Failed to map shared mem in kernel\n");
@@ -350,7 +402,7 @@ static int free_dma_mem(struct msm_cvp_smem *mem)
 	}
 
 	if (mem->kvaddr) {
-		dma_buf_vunmap(mem->dma_buf, mem->kvaddr);
+		__cvp_dma_buf_vunmap(mem->dma_buf, mem->kvaddr);
 		mem->kvaddr = NULL;
 		dma_buf_end_cpu_access(mem->dma_buf, DMA_BIDIRECTIONAL);
 	}
@@ -446,6 +498,8 @@ struct context_bank_info *msm_cvp_smem_get_context_bank(
 		search_str = secure_pixel_cb;
 	else if (flags & SMEM_NON_PIXEL)
 		search_str = secure_nonpixel_cb;
+	else if (flags & SMEM_CAMERA)
+		search_str = secure_pixel_cb;
 	else
 		search_str = non_secure_cb;
 

@@ -8,6 +8,7 @@
 #include "msm_cvp_common.h"
 #include "cvp_core_hfi.h"
 #include "cvp_hfi_api.h"
+#include "msm_cvp_dsp.h"
 
 #define CREATE_TRACE_POINTS
 #define MAX_SSR_STRING_LEN 10
@@ -27,7 +28,13 @@ bool msm_cvp_cacheop_disabled = !true;
 int msm_cvp_clock_voting = !1;
 bool msm_cvp_syscache_disable = !true;
 bool msm_cvp_dsp_disable = !true;
+#ifdef CVP_MMRM_ENABLED
 bool msm_cvp_mmrm_enabled = true;
+#else
+bool msm_cvp_mmrm_enabled = !true;
+#endif
+bool msm_cvp_dcvs_disable = !true;
+int msm_cvp_minidump_enable = !1;
 
 #define MAX_DBG_BUF_SIZE 4096
 
@@ -231,7 +238,7 @@ DEFINE_DEBUGFS_ATTRIBUTE(cvp_pwr_fops, cvp_power_get, cvp_power_set, "%llu\n");
 
 struct dentry *msm_cvp_debugfs_init_drv(void)
 {
-	struct dentry *dir = NULL, *f;
+	struct dentry *dir = NULL;
 
 	dir = debugfs_create_dir("msm_cvp", NULL);
 	if (IS_ERR_OR_NULL(dir)) {
@@ -245,21 +252,17 @@ struct dentry *msm_cvp_debugfs_init_drv(void)
 	debugfs_create_u32("fw_low_power_mode", 0644, dir,
 		&msm_cvp_fw_low_power_mode);
 	debugfs_create_u32("debug_output", 0644, dir, &msm_cvp_debug_out);
-	f = debugfs_create_bool("fw_coverage", 0644, dir, &msm_cvp_fw_coverage);
-	if (IS_ERR_OR_NULL(f))
-		goto failed_create_dir;
-	f = debugfs_create_bool("disable_thermal_mitigation", 0644, dir,
+	debugfs_create_u32("minidump_enable", 0644, dir,
+			&msm_cvp_minidump_enable);
+	debugfs_create_bool("fw_coverage", 0644, dir, &msm_cvp_fw_coverage);
+	debugfs_create_bool("disable_thermal_mitigation", 0644, dir,
 			&msm_cvp_thermal_mitigation_disabled);
-	if (IS_ERR_OR_NULL(f))
-		goto failed_create_dir;
-	f = debugfs_create_bool("enable_cacheop", 0644, dir,
+	debugfs_create_bool("enable_cacheop", 0644, dir,
 			&msm_cvp_cacheop_enabled);
-	if (IS_ERR_OR_NULL(f))
-		goto failed_create_dir;
-	f = debugfs_create_bool("disable_cvp_syscache", 0644, dir,
+	debugfs_create_bool("disable_cvp_syscache", 0644, dir,
 			&msm_cvp_syscache_disable);
-	if (IS_ERR_OR_NULL(f))
-		goto failed_create_dir;
+	debugfs_create_bool("disable_dcvs", 0644, dir,
+			&msm_cvp_dcvs_disable);
 
 	debugfs_create_file("cvp_power", 0644, dir, NULL, &cvp_pwr_fops);
 
@@ -328,6 +331,80 @@ static int _clk_rate_get(void *data, u64 *val)
 
 DEFINE_DEBUGFS_ATTRIBUTE(clk_rate_fops, _clk_rate_get, _clk_rate_set, "%llu\n");
 
+static int _dsp_dbg_set(void *data, u64 val)
+{
+
+	if (val == 0 || val >= (1 << (EVA_MEM_DEBUG_ON + 1))) {
+		dprintk(CVP_WARN, "DSP debug mask cannot be %llx\n", val);
+		return 0;
+	}
+
+	gfa_cv.debug_mask = (uint32_t)val;
+
+	cvp_dsp_send_debug_mask();
+
+	return 0;
+}
+
+static int _dsp_dbg_get(void *data, u64 *val)
+{
+	*val = gfa_cv.debug_mask;
+
+	return 0;
+}
+
+DEFINE_DEBUGFS_ATTRIBUTE(dsp_debug_fops, _dsp_dbg_get, _dsp_dbg_set, "%llu\n");
+
+static int _max_ssr_set(void *data, u64 val)
+{
+	struct msm_cvp_core *core;
+	core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
+	if (core) {
+		if (val < 1) {
+			dprintk(CVP_WARN,
+				"Invalid max_ssr_allowed value %llx\n", val);
+			return 0;
+		}
+
+		core->resources.max_ssr_allowed = (unsigned int)val;
+	}
+	return 0;
+}
+
+static int _max_ssr_get(void *data, u64 *val)
+{
+	struct msm_cvp_core *core;
+	core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
+	if (core)
+		*val = core->resources.max_ssr_allowed;
+
+	return 0;
+}
+
+DEFINE_DEBUGFS_ATTRIBUTE(max_ssr_fops, _max_ssr_get, _max_ssr_set, "%llu\n");
+
+static int _ssr_stall_set(void *data, u64 val)
+{
+	struct msm_cvp_core *core;
+	core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
+	if (core)
+		core->resources.fatal_ssr = (val >= 1) ? true : false;
+
+	return 0;
+}
+
+static int _ssr_stall_get(void *data, u64 *val)
+{
+	struct msm_cvp_core *core;
+	core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
+	if (core)
+		*val = core->resources.fatal_ssr ? 1 : 0;
+
+	return 0;
+}
+
+DEFINE_DEBUGFS_ATTRIBUTE(ssr_stall_fops, _ssr_stall_get, _ssr_stall_set, "%llu\n");
+
 
 struct dentry *msm_cvp_debugfs_init_core(struct msm_cvp_core *core,
 		struct dentry *parent)
@@ -361,7 +438,23 @@ struct dentry *msm_cvp_debugfs_init_core(struct msm_cvp_core *core,
 		dprintk(CVP_ERR, "debugfs_create_file: clock_rate fail\n");
 		goto failed_create_dir;
 	}
+	if (!debugfs_create_file("dsp_debug_level", 0644, dir,
+			NULL, &dsp_debug_fops)) {
+		dprintk(CVP_ERR, "debugfs_create: dsp_debug_level fail\n");
+		goto failed_create_dir;
+	}
 
+	if (!debugfs_create_file("max_ssr_allowed", 0644, dir,
+			NULL, &max_ssr_fops)) {
+		dprintk(CVP_ERR, "debugfs_create: max_ssr_allowed fail\n");
+		goto failed_create_dir;
+	}
+
+	if (!debugfs_create_file("ssr_stall", 0644, dir,
+			NULL, &ssr_stall_fops)) {
+		dprintk(CVP_ERR, "debugfs_create: ssr_stall fail\n");
+		goto failed_create_dir;
+	}
 failed_create_dir:
 	return dir;
 }
@@ -477,7 +570,7 @@ struct dentry *msm_cvp_debugfs_init_inst(struct msm_cvp_inst *inst,
 		dprintk(CVP_ERR, "Invalid params, inst: %pK\n", inst);
 		goto exit;
 	}
-	snprintf(debugfs_name, MAX_DEBUGFS_NAME, "inst_%p", inst);
+	snprintf(debugfs_name, MAX_DEBUGFS_NAME, "inst_%pK", inst);
 
 	idata = kzalloc(sizeof(*idata), GFP_KERNEL);
 	if (!idata) {

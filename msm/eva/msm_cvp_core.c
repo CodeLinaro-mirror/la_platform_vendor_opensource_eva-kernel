@@ -15,7 +15,6 @@
 #include "cvp_hfi_api.h"
 #include "msm_cvp_clocks.h"
 #include <linux/dma-buf.h>
-#include <media/msm_media_info.h>
 
 #define MAX_EVENTS 30
 #define NUM_CYCLES16X16_HCD_FRAME 95
@@ -119,7 +118,7 @@ static void __deinit_session_queue(struct msm_cvp_inst *inst)
 		kmem_cache_free(cvp_driver->msg_cache, msg);
 	}
 	inst->session_queue.msg_count = 0;
-	inst->session_queue.state = QUEUE_STOP;
+	inst->session_queue.state = QUEUE_INVALID;
 	spin_unlock(&inst->session_queue.lock);
 
 	wake_up_all(&inst->session_queue.wq);
@@ -155,9 +154,8 @@ void *msm_cvp_open(int core_id, int session_type)
 		dprintk(CVP_ERR, "Instance num reached Max, rejecting session");
 		mutex_lock(&core->lock);
 		list_for_each_entry(inst, &core->instances, list)
-			dprintk(CVP_ERR, "inst %pK, cmd %d id %d\n",
-				inst, inst->cur_cmd_type,
-				hash32_ptr(inst->session));
+			dprintk(CVP_ERR, "inst %pK, id %d\n",
+				inst, hash32_ptr(inst->session));
 		mutex_unlock(&core->lock);
 
 		return NULL;
@@ -202,7 +200,9 @@ void *msm_cvp_open(int core_id, int session_type)
 	msm_cvp_session_init(inst);
 
 	mutex_lock(&core->lock);
+	mutex_lock(&core->clk_lock);
 	list_add_tail(&inst->list, &core->instances);
+	mutex_unlock(&core->clk_lock);
 	mutex_unlock(&core->lock);
 
 	__init_fence_queue(inst);
@@ -224,6 +224,7 @@ void *msm_cvp_open(int core_id, int session_type)
 	return inst;
 fail_init:
 	__deinit_session_queue(inst);
+	__deinit_fence_queue(inst);
 	mutex_lock(&core->lock);
 	list_del(&inst->list);
 	mutex_unlock(&core->lock);
@@ -269,6 +270,7 @@ static void msm_cvp_cleanup_instance(struct msm_cvp_inst *inst)
 	int max_retries;
 	struct msm_cvp_frame *frame;
 	struct cvp_session_queue *sq, *sqf;
+	struct cvp_hfi_device *hdev;
 
 	if (!inst) {
 		dprintk(CVP_ERR, "%s: invalid params\n", __func__);
@@ -278,9 +280,25 @@ static void msm_cvp_cleanup_instance(struct msm_cvp_inst *inst)
 	sqf = &inst->session_queue_fence;
 	sq = &inst->session_queue;
 
-	max_retries =  inst->core->resources.msm_cvp_hw_rsp_timeout >> 1;
+	max_retries =  inst->core->resources.msm_cvp_hw_rsp_timeout >> 5;
 	msm_cvp_session_queue_stop(inst);
 
+wait_dsp:
+	mutex_lock(&inst->cvpdspbufs.lock);
+	empty = list_empty(&inst->cvpdspbufs.list);
+	if (!empty && max_retries > 0) {
+		mutex_unlock(&inst->cvpdspbufs.lock);
+		usleep_range(1000, 2000);
+		max_retries--;
+		goto wait_dsp;
+	}
+	mutex_unlock(&inst->cvpdspbufs.lock);
+
+	if (!empty)
+		dprintk(CVP_WARN, "Failed flush DSP frame retried %d\n",
+			(inst->core->resources.msm_cvp_hw_rsp_timeout >> 5)
+			- max_retries);
+	max_retries =  inst->core->resources.msm_cvp_hw_rsp_timeout >> 1;
 wait:
 	mutex_lock(&inst->frames.lock);
 	empty = list_empty(&inst->frames.list);
@@ -308,6 +326,20 @@ wait:
 	if (cvp_release_arp_buffers(inst))
 		dprintk(CVP_ERR,
 			"Failed to release persist buffers\n");
+
+	if (inst->prop.type == HFI_SESSION_FD
+		|| inst->prop.type == HFI_SESSION_DMM) {
+		spin_lock(&inst->core->resources.pm_qos.lock);
+		if (inst->core->resources.pm_qos.off_vote_cnt > 0)
+			inst->core->resources.pm_qos.off_vote_cnt--;
+		else
+			dprintk(CVP_WARN, "%s Unexpected pm_qos off vote %d\n",
+				__func__,
+				inst->core->resources.pm_qos.off_vote_cnt);
+		spin_unlock(&inst->core->resources.pm_qos.lock);
+		hdev = inst->core->device;
+		call_hfi_op(hdev, pm_qos_update, hdev->hfi_device_data);
+	}
 }
 
 int msm_cvp_destroy(struct msm_cvp_inst *inst)
@@ -321,9 +353,12 @@ int msm_cvp_destroy(struct msm_cvp_inst *inst)
 
 	core = inst->core;
 
+	/* Ensure no path has core->clk_lock and core->lock sequence */
 	mutex_lock(&core->lock);
+	mutex_lock(&core->clk_lock);
 	/* inst->list lives in core->instances */
 	list_del(&inst->list);
+	mutex_unlock(&core->clk_lock);
 	mutex_unlock(&core->lock);
 
 	DEINIT_MSM_CVP_LIST(&inst->persistbufs);
@@ -338,13 +373,10 @@ int msm_cvp_destroy(struct msm_cvp_inst *inst)
 
 	__deinit_session_queue(inst);
 	__deinit_fence_queue(inst);
-	//synx_uninitialize(inst->synx_session_id);
+	cvp_sess_deinit_synx(inst);
 
 	pr_info(CVP_DBG_TAG "Closed cvp instance: %pK session_id = %d\n",
 		"sess", inst, hash32_ptr(inst->session));
-	if (inst->cur_cmd_type)
-		dprintk(CVP_ERR, "deleted instance has pending cmd %d\n",
-				inst->cur_cmd_type);
 	inst->session = (void *)0xdeadbeef;
 	kfree(inst);
 	return 0;

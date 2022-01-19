@@ -31,10 +31,11 @@
 #define HIGH32                      (0xFFFFFFFF00000000LL)
 #define LOW32                       (0xFFFFFFFFLL)
 
+#define CVP_FASTRPC_DRIVER_NAME_SIZE    16
 
-/* Supports up to 8 DSP sessions in 4 processes */
-#define MAX_FASTRPC_DRIVER_NUM			(4)
+/* Supports up to 8 DSP sessions in 8 processes */
 #define MAX_DSP_SESSION_NUM			(8)
+#define MAX_FASTRPC_DRIVER_NUM		(MAX_DSP_SESSION_NUM)
 
 int cvp_dsp_device_init(void);
 void cvp_dsp_device_exit(void);
@@ -73,7 +74,7 @@ enum CVP_DSP_COMMAND {
 	CVP_DSP_MAX_CMD = 21,
 };
 
-enum eva_dsp_debug_level {
+enum eva_dsp_debug_bits {
 	EVA_PORT_INFO_ON = 0,
 	EVA_PORT_DEBUG_ON = 1,
 	EVA_QDI_INFO_ON = 2,
@@ -123,7 +124,7 @@ struct cvp_dsp_cmd_msg {
 	uint32_t buff_offset;
 	uint32_t buff_fd_size;
 
-	uint32_t eva_dsp_debug_level;
+	uint32_t eva_dsp_debug_mask;
 
 	/* Create Session */
 	uint32_t session_cpu_low;
@@ -164,10 +165,22 @@ struct cvp_dsp2cpu_cmd_msg {
 	uint32_t data[CVP_DSP2CPU_RESERVED];
 };
 
+struct driver_name {
+    uint32_t status;
+    char name[CVP_FASTRPC_DRIVER_NAME_SIZE];
+};
+
+enum DRIVER_NAME_STATUS {
+	DRIVER_NAME_INVALID = 0,
+	DRIVER_NAME_AVAILABLE = 1,
+	DRIVER_NAME_USED = 2,
+};
+
 struct cvp_dsp_fastrpc_driver_entry {
 	struct list_head list;
 	uint32_t handle;
 	uint32_t session_cnt;
+	uint32_t driver_name_idx;
 	struct fastrpc_driver cvp_fastrpc_driver;
 	struct fastrpc_device *cvp_fastrpc_device;
 	struct completion fastrpc_probe_completion;
@@ -176,9 +189,17 @@ struct cvp_dsp_fastrpc_driver_entry {
 };
 
 struct cvp_dsp_apps {
-	struct mutex lock;
+	/*
+	 * tx_lock for sending CPU2DSP cmds or msgs
+	 * and dsp state change
+	 */
+	struct mutex tx_lock;
+	/* rx_lock for receiving DSP2CPU cmds or msgs */
+	struct mutex rx_lock;
+	struct mutex driver_name_lock;
 	struct rpmsg_device *chan;
 	uint32_t state;
+	uint32_t debug_mask;
 	bool hyp_assigned;
 	uint64_t addr;
 	uint32_t size;
@@ -190,6 +211,7 @@ struct cvp_dsp_apps {
 	const struct file_operations *dmabuf_f_op;
 	uint32_t buf_num;
 	struct msm_cvp_list fastrpc_driver_list;
+	struct driver_name cvp_fastrpc_name[MAX_FASTRPC_DRIVER_NUM];
 };
 
 extern struct cvp_dsp_apps gfa_cv;
@@ -255,6 +277,8 @@ int cvp_dsp_deregister_buffer(uint32_t session_id, uint32_t buff_fd,
 int cvp_dsp_fastrpc_unmap(uint32_t process_id, struct cvp_internal_buf *buf);
 
 int cvp_dsp_del_sess(uint32_t process_id, struct msm_cvp_inst *inst);
+
+void cvp_dsp_send_debug_mask(void);
 
 #endif // MSM_CVP_DSP_H
 

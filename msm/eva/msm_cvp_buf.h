@@ -10,8 +10,6 @@
 #include <linux/types.h>
 #include <linux/dma-buf.h>
 #include <linux/dma-heap.h>
-#include <linux/ion.h>
-#include <linux/msm_ion.h>
 #include <linux/refcount.h>
 #include <media/msm_eva_private.h>
 
@@ -35,7 +33,8 @@ enum smem_prop {
 	SMEM_ADSP = 0x8,
 	SMEM_NON_PIXEL = 0x10,
 	SMEM_PIXEL = 0x20,
-	SMEM_CAMERA = 0x40
+	SMEM_CAMERA = 0x40,
+	SMEM_PERSIST = 0x100,
 };
 
 struct msm_cvp_list {
@@ -146,7 +145,7 @@ void print_cvp_buffer(u32 tag, const char *str,
 void print_client_buffer(u32 tag, const char *str,
 		struct msm_cvp_inst *inst,
 		struct eva_kmd_buffer *cbuf);
-void print_smem(u32 tag, const char *str,
+int print_smem(u32 tag, const char *str,
 		struct msm_cvp_inst *inst,
 		struct msm_cvp_smem *smem);
 
@@ -203,8 +202,12 @@ int msm_cvp_map_frame(struct msm_cvp_inst *inst,
 		struct eva_kmd_hfi_packet *in_pkt,
 		unsigned int offset, unsigned int buf_num);
 void msm_cvp_unmap_frame(struct msm_cvp_inst *inst, u64 ktid);
+int msm_cvp_register_buffer(struct msm_cvp_inst *inst,
+		struct eva_kmd_buffer *buf);
+int msm_cvp_unregister_buffer(struct msm_cvp_inst *inst,
+		struct eva_kmd_buffer *buf);
 int msm_cvp_session_deinit_buffers(struct msm_cvp_inst *inst);
-void msm_cvp_print_inst_bufs(struct msm_cvp_inst *inst);
+void msm_cvp_print_inst_bufs(struct msm_cvp_inst *inst, bool log);
 int cvp_allocate_dsp_bufs(struct msm_cvp_inst *inst,
 			struct cvp_internal_buf *buf,
 			u32 buffer_size,

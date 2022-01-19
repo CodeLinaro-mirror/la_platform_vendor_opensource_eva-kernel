@@ -70,6 +70,9 @@ static unsigned int cvp_poll(struct file *filp, struct poll_table_struct *p)
 	spin_lock_irqsave(&inst->event_handler.lock, flags);
 	if (inst->event_handler.event == CVP_SSR_EVENT)
 		rc |= POLLPRI;
+	if (inst->event_handler.event == CVP_DUMP_EVENT)
+		rc |= POLLIN;
+	inst->event_handler.event = CVP_NO_EVENT;
 	spin_unlock_irqrestore(&inst->event_handler.lock, flags);
 
 	return rc;
@@ -145,6 +148,7 @@ static int msm_cvp_initialize_core(struct platform_device *pdev,
 	INIT_DELAYED_WORK(&core->fw_unload_work, msm_cvp_fw_unload_handler);
 	INIT_WORK(&core->ssr_work, msm_cvp_ssr_handler);
 	init_cycle_info(&core->dyn_clk);
+	core->ssr_count = 0;
 
 	return rc;
 }
@@ -434,7 +438,7 @@ static int msm_probe_cvp_device(struct platform_device *pdev)
 		goto err_fail_sub_device_probe;
 	}
 
-	atomic64_set(&core->kernel_trans_id, 0);
+	atomic64_set(&core->kernel_trans_id, get_pkt_array_size());
 
 	if (core->resources.dsp_enabled) {
 		rc = cvp_dsp_device_init();

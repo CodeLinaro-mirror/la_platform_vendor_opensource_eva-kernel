@@ -18,7 +18,16 @@ enum op_mode {
 enum queue_state {
 	QUEUE_INIT,
 	QUEUE_ACTIVE = 1,
-	QUEUE_STOP = 2,
+	QUEUE_START,
+	QUEUE_STOP,
 	QUEUE_INVALID,
 };
+
+#ifdef CONFIG_EVA_WAIPIO
+#define CVP_SYNX_ENABLED 1
+#define CVP_MMRM_ENABLED 1
+#define CVP_FASTRPC_ENABLED 1
+#define CVP_MINIDUMP_ENABLED 1
+#endif
+
 #endif

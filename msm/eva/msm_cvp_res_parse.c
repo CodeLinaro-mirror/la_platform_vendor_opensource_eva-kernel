@@ -11,6 +11,7 @@
 #include "msm_cvp_debug.h"
 #include "msm_cvp_resources.h"
 #include "msm_cvp_res_parse.h"
+#include "cvp_core_hfi.h"
 #include "soc/qcom/secure_buffer.h"
 
 enum clock_properties {
@@ -597,6 +598,7 @@ static int msm_cvp_load_clock_table(
 {
 	int rc = 0, num_clocks = 0, c = 0;
 	struct platform_device *pdev = res->pdev;
+	int *clock_ids = NULL;
 	int *clock_props = NULL;
 	struct clock_set *clocks = &res->clock_set;
 
@@ -607,6 +609,23 @@ static int msm_cvp_load_clock_table(
 		clocks->count = 0;
 		rc = 0;
 		goto err_load_clk_table_fail;
+	}
+
+	clock_ids = devm_kzalloc(&pdev->dev, num_clocks *
+		sizeof(*clock_ids), GFP_KERNEL);
+	if (!clock_ids) {
+		dprintk(CVP_ERR, "No memory to read clock ids\n");
+		rc = -ENOMEM;
+		goto err_load_clk_table_fail;
+	}
+
+	rc = of_property_read_u32_array(pdev->dev.of_node,
+		"clock-ids", clock_ids,
+		num_clocks);
+	if (rc) {
+		dprintk(CVP_CORE, "Failed to read clock ids: %d\n", rc);
+		msm_cvp_mmrm_enabled = false;
+		dprintk(CVP_CORE, "flag msm_cvp_mmrm_enabled disabled\n");
 	}
 
 	clock_props = devm_kzalloc(&pdev->dev, num_clocks *
@@ -642,6 +661,9 @@ static int msm_cvp_load_clock_table(
 		of_property_read_string_index(pdev->dev.of_node,
 				"clock-names", c, &vc->name);
 
+		if (msm_cvp_mmrm_enabled == true)
+			vc->clk_id = clock_ids[c];
+
 		if (clock_props[c] & CLOCK_PROP_HAS_SCALING) {
 			vc->has_scaling = true;
 		} else {
@@ -654,8 +676,8 @@ static int msm_cvp_load_clock_table(
 		else
 			vc->has_mem_retention = false;
 
-		dprintk(CVP_CORE, "Found clock %s: scale-able = %s\n", vc->name,
-			vc->count ? "yes" : "no");
+		dprintk(CVP_CORE, "Found clock %s id %d: scale-able = %s\n",
+			vc->name, vc->clk_id, vc->count ? "yes" : "no");
 	}
 
 	return 0;
@@ -729,7 +751,7 @@ int cvp_read_platform_resources_from_drv_data(
 {
 	struct msm_cvp_platform_data *platform_data;
 	struct msm_cvp_platform_resources *res;
-	int rc = 0;
+	int rc = 0, i;
 
 	if (!core || !core->platform_data) {
 		dprintk(CVP_ERR, "%s Invalid data\n", __func__);
@@ -750,20 +772,22 @@ int cvp_read_platform_resources_from_drv_data(
 	res->dsp_enabled = find_key_value(platform_data,
 			"qcom,dsp-enabled");
 
-	res->max_load = find_key_value(platform_data,
-			"qcom,max-hw-load");
+	res->max_ssr_allowed = find_key_value(platform_data,
+			"qcom,max-ssr-allowed");
 
 	res->sw_power_collapsible = find_key_value(platform_data,
 			"qcom,sw-power-collapse");
 
-	res->never_unload_fw =  find_key_value(platform_data,
-			"qcom,never-unload-fw");
-
 	res->debug_timeout = find_key_value(platform_data,
 			"qcom,debug-timeout");
 
-	res->pm_qos_latency_us = find_key_value(platform_data,
+	res->pm_qos.latency_us = find_key_value(platform_data,
 			"qcom,pm-qos-latency-us");
+	res->pm_qos.silver_count = 4;
+	for (i = 0; i < res->pm_qos.silver_count; i++)
+		res->pm_qos.silver_cores[i] = i;
+	res->pm_qos.off_vote_cnt = 0;
+	spin_lock_init(&res->pm_qos.lock);
 
 	res->max_secure_inst_count = find_key_value(platform_data,
 			"qcom,max-secure-instances");
@@ -783,6 +807,7 @@ int cvp_read_platform_resources_from_drv_data(
 
 	res->vpu_ver = platform_data->vpu_ver;
 	res->ubwc_config = platform_data->ubwc_config;
+	res->fatal_ssr = false;
 	return rc;
 
 }
@@ -930,8 +955,9 @@ int msm_cvp_smmu_fault_handler(struct iommu_domain *domain,
 		struct device *dev, unsigned long iova, int flags, void *token)
 {
 	struct msm_cvp_core *core = token;
+	struct iris_hfi_device *hdev;
 	struct msm_cvp_inst *inst;
-	u32 *pfaddr = &core->last_fault_addr;
+	bool log = false;
 
 	if (!domain || !core) {
 		dprintk(CVP_ERR, "%s - invalid param %pK %pK\n",
@@ -939,23 +965,20 @@ int msm_cvp_smmu_fault_handler(struct iommu_domain *domain,
 		return -EINVAL;
 	}
 
-	if (core->smmu_fault_handled) {
-		if (core->resources.non_fatal_pagefaults) {
-			WARN_ONCE(1, "%s: non-fatal pagefault address: %lx\n",
-					__func__, iova);
-			*pfaddr = (*pfaddr == 0) ? iova : (*pfaddr);
-			return 0;
-		}
-	}
-
-	dprintk(CVP_ERR, "%s - faulting address: %lx\n", __func__, iova);
+	core->smmu_fault_count++;
+	if (!core->last_fault_addr)
+		core->last_fault_addr = iova;
+	dprintk(CVP_ERR, "%s - faulting address: %lx, %d\n",
+		__func__, iova, core->smmu_fault_count);
 
 	mutex_lock(&core->lock);
+	log = (core->log.snapshot_index > 0)? false : true;
 	list_for_each_entry(inst, &core->instances, list) {
-		msm_cvp_print_inst_bufs(inst);
+		msm_cvp_print_inst_bufs(inst, log);
 	}
-	core->smmu_fault_handled = true;
-	msm_cvp_noc_error_info(core);
+	hdev = core->device->hfi_device_data;
+	if (hdev)
+		hdev->error = CVP_ERR_NOC_ERROR;
 	mutex_unlock(&core->lock);
 	/*
 	 * Return -EINVAL to elicit the default behaviour of smmu driver.

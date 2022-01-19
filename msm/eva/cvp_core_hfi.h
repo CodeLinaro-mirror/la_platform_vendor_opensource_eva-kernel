@@ -7,6 +7,7 @@
 #define __H_CVP_CORE_HFI_H__
 
 #include <linux/clk.h>
+#include <linux/clk-provider.h>
 #include <linux/mutex.h>
 #include <linux/platform_device.h>
 #include <linux/pm_qos.h>
@@ -231,6 +232,7 @@ struct iris_hfi_device {
 	u32 device_id;
 	u32 clk_freq;
 	u32 last_packet_type;
+	u32 error;
 	unsigned long clk_bitrate;
 	unsigned long scaled_rate;
 	struct msm_cvp_gov_data bus_vote;
@@ -252,7 +254,7 @@ struct iris_hfi_device {
 	int reg_count;
 	struct iris_resources resources;
 	struct msm_cvp_platform_resources *res;
-	struct mmrm_client_desc mmrm_cvp_desc;
+	struct mmrm_client_desc mmrm_desc;
 	struct mmrm_client *mmrm_cvp;
 	enum iris_hfi_state state;
 	struct cvp_hfi_packetization_ops *pkt_ops;

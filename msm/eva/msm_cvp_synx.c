@@ -9,6 +9,30 @@
 #include "msm_cvp_core.h"
 #include "msm_cvp_dsp.h"
 
+#ifdef CVP_SYNX_ENABLED
+int cvp_sess_init_synx(struct msm_cvp_inst *inst)
+{
+	struct synx_initialization_params params;
+
+	params.name = "cvp-kernel-client";
+	if (synx_initialize(&inst->synx_session_id, &params)) {
+		dprintk(CVP_ERR, "%s synx_initialize failed\n", __func__);
+		return -EFAULT;
+	}
+
+	return 0;
+}
+
+int cvp_sess_deinit_synx(struct msm_cvp_inst *inst)
+{
+	if (!inst) {
+		dprintk(CVP_ERR, "Used invalid sess in deinit_synx\n");
+		return -EINVAL;
+	}
+	synx_uninitialize(inst->synx_session_id);
+	return 0;
+}
+
 void cvp_dump_fence_queue(struct msm_cvp_inst *inst)
 {
 	struct cvp_fence_queue *q;
@@ -25,21 +49,21 @@ void cvp_dump_fence_queue(struct msm_cvp_inst *inst)
 	dprintk(CVP_WARN, "fence cmdq wait list:\n");
 	list_for_each_entry(f, &q->wait_list, list) {
 		dprintk(CVP_WARN, "frame pkt type 0x%x\n", f->pkt->packet_type);
-		//for (i = 0; i < f->output_index; i++)
-			//dprintk(CVP_WARN, "idx %d client hdl %d, state %d\n",
-				//i, f->synx[i],
-				//synx_get_status(ssid, f->synx[i]));
+		for (i = 0; i < f->output_index; i++)
+			dprintk(CVP_WARN, "idx %d client hdl %d, state %d\n",
+				i, f->synx[i],
+				synx_get_status(ssid, f->synx[i]));
 
 	}
 
 	dprintk(CVP_WARN, "fence cmdq schedule list:\n");
 	list_for_each_entry(f, &q->sched_list, list) {
 		dprintk(CVP_WARN, "frame pkt type 0x%x\n", f->pkt->packet_type);
-		for (i = 0; i < f->output_index; i++) {
-			//dprintk(CVP_WARN, "idx %d client hdl %d, state %d\n",
-			//	i, f->synx[i],
-				//synx_get_status(ssid, f->synx[i]));
-		}
+		for (i = 0; i < f->output_index; i++)
+			dprintk(CVP_WARN, "idx %d client hdl %d, state %d\n",
+				i, f->synx[i],
+				synx_get_status(ssid, f->synx[i]));
+
 	}
 	mutex_unlock(&q->lock);
 }
@@ -47,7 +71,7 @@ void cvp_dump_fence_queue(struct msm_cvp_inst *inst)
 int cvp_import_synx(struct msm_cvp_inst *inst, struct cvp_fence_command *fc,
 		u32 *fence)
 {
-	int rc = 0;
+	int rc = 0, rr = 0;
 	int i;
 	struct cvp_fence_type *fs;
 	struct synx_import_params params;
@@ -70,17 +94,17 @@ int cvp_import_synx(struct msm_cvp_inst *inst, struct cvp_fence_command *fc,
 			params.secure_key = fs[i].secure_key;
 			params.new_h_synx = &fc->synx[i];
 
-			//rc = synx_import(ssid, &params);
+			rc = synx_import(ssid, &params);
 			if (rc) {
 				dprintk(CVP_ERR,
 					"%s: %d synx_import failed\n",
 					__func__, h_synx);
-				return rc;
+				rr = rc;
 			}
 		}
 	}
 
-	return 0;
+	return rr;
 }
 
 int cvp_release_synx(struct msm_cvp_inst *inst, struct cvp_fence_command *fc)
@@ -99,7 +123,7 @@ int cvp_release_synx(struct msm_cvp_inst *inst, struct cvp_fence_command *fc)
 	for (i = 0; i < fc->num_fences; ++i) {
 		h_synx = fc->synx[i];
 		if (h_synx) {
-			//rc = synx_release(ssid, h_synx);
+			rc = synx_release(ssid, h_synx);
 			if (rc)
 				dprintk(CVP_ERR,
 				"%s: synx_release %d, %d failed\n",
@@ -136,7 +160,7 @@ static int cvp_cancel_synx_impl(struct msm_cvp_inst *inst,
 	for (i = start; i < end; ++i) {
 		h_synx = fc->synx[i];
 		if (h_synx) {
-			//rc = synx_signal(ssid, h_synx, synx_state);
+			rc = synx_signal(ssid, h_synx, synx_state);
 			dprintk(CVP_SYNX, "Cancel synx %d session %llx\n",
 					h_synx, inst);
 			if (rc)
@@ -166,15 +190,15 @@ static int cvp_wait_synx(struct synx_session ssid, u32 *synx, u32 num_synx,
 		u32 *synx_state)
 {
 	int i = 0, rc = 0;
-	//unsigned long timeout_ms = 2000;
+	unsigned long timeout_ms = 2000;
 	int h_synx;
 
 	while (i < num_synx) {
 		h_synx = synx[i];
 		if (h_synx) {
-			//rc = synx_wait(ssid, h_synx, timeout_ms);
+			rc = synx_wait(ssid, h_synx, timeout_ms);
 			if (rc) {
-				//*synx_state = synx_get_status(ssid, h_synx);
+				*synx_state = synx_get_status(ssid, h_synx);
 				if (*synx_state == SYNX_STATE_SIGNALED_CANCEL) {
 					dprintk(CVP_SYNX,
 					"%s: synx_wait %d cancel %d state %d\n",
@@ -204,7 +228,7 @@ static int cvp_signal_synx(struct synx_session ssid, u32 *synx, u32 num_synx,
 	while (i < num_synx) {
 		h_synx = synx[i];
 		if (h_synx) {
-			//rc = synx_signal(ssid, h_synx, synx_state);
+			rc = synx_signal(ssid, h_synx, synx_state);
 			if (rc) {
 				dprintk(CVP_ERR,
 					"%s: synx_signal %d %d failed\n",
@@ -242,4 +266,4 @@ int cvp_synx_ops(struct msm_cvp_inst *inst, enum cvp_synx_type type,
 		return -EINVAL;
 	}
 }
-
+#endif

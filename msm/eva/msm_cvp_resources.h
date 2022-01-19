@@ -8,6 +8,7 @@
 
 #include <linux/devfreq.h>
 #include <linux/platform_device.h>
+#include <linux/pm_qos.h>
 #include "msm_cvp_core.h"
 #include <linux/soc/qcom/llcc-qcom.h>
 
@@ -54,6 +55,7 @@ struct regulator_set {
 
 struct clock_info {
 	const char *name;
+	u32 clk_id;
 	struct clk *clk;
 	u32 count;
 	bool has_scaling;
@@ -87,7 +89,7 @@ enum power_state {
 	CVP_POWER_INIT,
 	CVP_POWER_ON,
 	CVP_POWER_OFF,
-	CVP_POWER_INVALID,
+	CVP_POWER_IGNORED,
 };
 
 struct reset_info {
@@ -133,6 +135,19 @@ struct msm_cvp_mem_cdsp {
 	struct device *dev;
 };
 
+#define MAX_SILVER_CORE_NUM 8
+#define HFI_SESSION_FD 4
+#define HFI_SESSION_DMM 2
+
+struct cvp_pm_qos {
+	u32 silver_count;
+	u32 latency_us;
+	u32 off_vote_cnt;
+	spinlock_t lock;
+	int silver_cores[MAX_SILVER_CORE_NUM];
+	struct dev_pm_qos_request *pm_qos_hdls;
+};
+
 struct msm_cvp_platform_resources {
 	phys_addr_t firmware_base;
 	phys_addr_t register_base;
@@ -151,7 +166,7 @@ struct msm_cvp_platform_resources {
 	struct subcache_set subcache_set;
 	struct reg_set reg_set;
 	struct addr_set qdss_addr_set;
-	uint32_t max_load;
+	uint32_t max_ssr_allowed;
 	struct platform_device *pdev;
 	struct regulator_set regulator_set;
 	struct clock_set clock_set;
@@ -165,9 +180,8 @@ struct msm_cvp_platform_resources {
 	bool thermal_mitigable;
 	const char *fw_name;
 	const char *hfi_version;
-	bool never_unload_fw;
 	bool debug_timeout;
-	uint32_t pm_qos_latency_us;
+	struct cvp_pm_qos pm_qos;
 	uint32_t max_inst_count;
 	uint32_t max_secure_inst_count;
 	int msm_cvp_hw_rsp_timeout;
@@ -175,6 +189,7 @@ struct msm_cvp_platform_resources {
 	int msm_cvp_firmware_unload_delay;
 	uint32_t msm_cvp_pwr_collapse_delay;
 	bool non_fatal_pagefaults;
+	bool fatal_ssr;
 	struct msm_cvp_mem_cdsp mem_cdsp;
 	uint32_t vpu_ver;
 	uint32_t fw_cycles;
@@ -186,5 +201,6 @@ static inline bool is_iommu_present(struct msm_cvp_platform_resources *res)
 	return !list_empty(&res->context_banks);
 }
 
+int cvp_of_fdt_get_ddrtype(void);
 #endif
 
