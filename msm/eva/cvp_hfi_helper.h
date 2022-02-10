@@ -160,6 +160,8 @@ struct cvp_hfi_resource_syscache_info_type {
 #define HFI_CMD_SYS_SESSION_END		(HFI_CMD_SYS_COMMON_START + 0x008)
 #define HFI_CMD_SYS_SET_BUFFERS		(HFI_CMD_SYS_COMMON_START + 0x009)
 #define HFI_CMD_SYS_SESSION_ABORT	(HFI_CMD_SYS_COMMON_START + 0x00A)
+#define HFI_CMD_SYS_START_GMU_CMD	(HFI_CMD_SYS_COMMON_START + 0x00E)
+#define HFI_CMD_SYS_STOP_GMU_CMD	(HFI_CMD_SYS_COMMON_START + 0x00F)
 #define HFI_CMD_SYS_TEST_START		(HFI_CMD_SYS_COMMON_START + 0x100)
 
 #define HFI_MSG_SYS_COMMON_START			\
@@ -176,6 +178,8 @@ struct cvp_hfi_resource_syscache_info_type {
 #define HFI_MSG_SYS_PROPERTY_INFO	(HFI_MSG_SYS_COMMON_START + 0xA)
 #define HFI_MSG_SYS_SESSION_ABORT_DONE	(HFI_MSG_SYS_COMMON_START + 0xC)
 #define HFI_MSG_SESSION_SYNC_DONE      (HFI_MSG_SESSION_OX_START + 0xD)
+#define HFI_MSG_SYS_START_GMU_CMD_DONE	(HFI_MSG_SYS_COMMON_START + 0xE)
+#define HFI_MSG_SYS_STOP_GMU_CMD_DONE	(HFI_MSG_SYS_COMMON_START + 0xF)
 
 #define HFI_MSG_SESSION_COMMON_START		\
 	(HFI_DOMAIN_BASE_COMMON + HFI_ARCH_COMMON_OFFSET +	\
@@ -498,5 +502,20 @@ struct cvp_hfi_msg_sys_session_flush_done_packet {
 	u32 error_type;
 	struct cvp_hfi_client client_data;
 };
+
+struct cvp_hfi_cmd_sys_gpu_packet {
+	u32 size;
+	u32 packet_type;
+	struct cvp_hfi_client client_data;
+	u32 reserved;
+}__packed;
+
+struct cvp_hfi_msg_sys_gpu_packet {
+	u32 size;
+	u32 packet_type;
+	u32 error_type;
+	struct cvp_hfi_client client_data;
+	u32 reserved;
+}__packed;
 
 #endif

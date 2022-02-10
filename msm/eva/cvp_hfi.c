@@ -32,6 +32,7 @@
 #include "msm_cvp_dsp.h"
 #include "msm_cvp_clocks.h"
 #include "cvp_dump.h"
+#include "msm_gpu_eva.h"
 
 #define FIRMWARE_SIZE			0X00A00000
 #define REG_ADDR_OFFSET_BITMASK	0x000FFFFF
@@ -1672,6 +1673,11 @@ static int __interface_queues_init(struct iris_hfi_device *dev)
 		dprintk(CVP_ERR, "dsp_queues_init failed\n");
 		goto fail_alloc_queue;
 	}
+	rc = __interface_gpu_init();
+	if(rc){
+		dprintk(CVP_ERR, "(kgsl/gpu)_eva_interface failed\n");
+		return -EINVAL;
+	}
 
 	__setup_ucregion_memory_map(dev);
 	return 0;
@@ -1996,6 +2002,7 @@ static int iris_hfi_core_release(void *dev)
 	__resume(device);
 	__set_state(device, IRIS_STATE_DEINIT);
 
+	__interface_gpu_deinit();
 	__dsp_shutdown(device, 0);
 
 	__disable_subcaches(device);
@@ -4759,6 +4766,30 @@ static int iris_hfi_validate_session(void *sess, const char *func)
 	return rc;
 }
 
+static int iris_hfi_notify_gpu_status(void *device, u32 packet_type)
+{
+	int rc = 0;
+	struct iris_hfi_device *dev;
+	struct cvp_hfi_cmd_sys_gpu_packet pkt;
+
+	if (!device) {
+		dprintk(CVP_ERR, "Invalid device\n");
+		return -ENODEV;
+	}
+
+	dev = device;
+	rc = call_hfi_pkt_op(dev, sys_gpu_cmd_prep, &pkt, packet_type);
+	if (rc) {
+		dprintk(CVP_ERR, "set_res: failed to create packet\n");
+		goto err_create_pkt;
+	}
+	rc = __iface_cmdq_write(dev, &pkt);
+	if (rc)
+		rc = -ENOTEMPTY;
+err_create_pkt:
+	return rc;
+}
+
 static void iris_init_hfi_callbacks(struct cvp_hfi_device *hdev)
 {
 	hdev->core_init = iris_hfi_core_init;
@@ -4782,6 +4813,7 @@ static void iris_init_hfi_callbacks(struct cvp_hfi_device *hdev)
 	hdev->noc_error_info = iris_hfi_noc_error_info;
 	hdev->validate_session = iris_hfi_validate_session;
 	hdev->pm_qos_update = iris_pm_qos_update;
+	hdev->notify_gpu_status = iris_hfi_notify_gpu_status;
 }
 
 int cvp_iris_hfi_initialize(struct cvp_hfi_device *hdev, u32 device_id,

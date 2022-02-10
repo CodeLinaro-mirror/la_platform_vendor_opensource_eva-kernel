@@ -138,6 +138,7 @@ struct msm_cvp_mem_cdsp {
 #define MAX_SILVER_CORE_NUM 8
 #define HFI_SESSION_FD 4
 #define HFI_SESSION_DMM 2
+#define HFI_SESSION_LSR	0x00000007
 
 struct cvp_pm_qos {
 	u32 silver_count;
