@@ -20,6 +20,7 @@
 	(__p >= __d)\
 )
 
+#define SW_PC_ENABLE	(1)
 static void handle_session_error(enum hal_command_response cmd, void *data);
 
 static void msm_cvp_comm_generate_session_error(struct msm_cvp_inst *inst)
@@ -1404,6 +1405,7 @@ int msm_cvp_comm_kill_session(struct msm_cvp_inst *inst)
 	}
 	dprintk(CVP_WARN, "%s: inst %pK, session %x state %d\n", __func__,
 		inst, hash32_ptr(inst->session), inst->state);
+	msm_eva_set_sw_pc(SW_PC_ENABLE);
 	/*
 	 * We're internally forcibly killing the session, if fw is aware of
 	 * the session send session_abort to firmware to clean up and release

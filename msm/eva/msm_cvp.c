@@ -1385,6 +1385,30 @@ static int msm_cvp_get_sysprop(struct msm_cvp_inst *inst,
 	return rc;
 }
 
+
+int msm_eva_set_sw_pc(u32 data)
+{
+	struct iris_hfi_device *hfi_device = NULL;
+	struct msm_cvp_core *core = NULL;
+	int rc = 0;
+
+	core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
+	if (core) {
+		hfi_device = core->device->hfi_device_data;
+		if ((hfi_device) && (hfi_device->res)) {
+			hfi_device->res->sw_power_collapsible = (bool)data;
+		} else {
+			dprintk(CVP_ERR, "unable to fetch hfi_device\n");
+			rc = -EINVAL;
+		}
+	} else {
+		dprintk(CVP_ERR, "unable to fetch core\n");
+		rc = -EINVAL;
+	}
+	return rc;
+}
+
+
 static int msm_cvp_set_sysprop(struct msm_cvp_inst *inst,
 		struct eva_kmd_arg *arg)
 {
@@ -1488,6 +1512,10 @@ static int msm_cvp_set_sysprop(struct msm_cvp_inst *inst,
 		case EVA_KMD_PROP_SESSION_DUMPSIZE:
 			session_prop->dump_size = prop_array[i].data;
 			break;
+		case EVA_KMD_PROP_PWR_SW_PC:
+			rc = msm_eva_set_sw_pc(prop_array[i].data);
+			break;
+
 		default:
 			dprintk(CVP_ERR,
 				"unrecognized sys property to set %d\n",
