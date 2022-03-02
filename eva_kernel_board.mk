@@ -1,6 +1,6 @@
 # Build eva kernel driver
 
-ENABLE_EVA_KERNEL := true
+ENABLE_EVA_KERNEL := false
 ifeq ($(TARGET_USES_QMAA), true)
 ifneq ($(TARGET_USES_QMAA_OVERRIDE_CVP), true)
 ENABLE_EVA_KERNEL := false
