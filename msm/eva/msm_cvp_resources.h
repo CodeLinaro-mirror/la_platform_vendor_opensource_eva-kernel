@@ -154,6 +154,42 @@ struct msm_cvp_platform_resources {
 	phys_addr_t register_base;
 	phys_addr_t ipcc_reg_base;
 	phys_addr_t gcc_reg_base;
+    /*Aurora iova and phyaddr*/
+    phys_addr_t uncached_iova;
+    phys_addr_t device_iova;
+    phys_addr_t ipclite_iova;
+    phys_addr_t ipclite_phyaddr;
+    phys_addr_t hwmutex_iova;
+    phys_addr_t hwmutex_phyaddr;
+
+    phys_addr_t llccevaleft_iova;
+    phys_addr_t llccevaleft_phyaddr;
+    phys_addr_t llccevaright_iova;
+    phys_addr_t llccevaright_phyaddr;
+    phys_addr_t llccevagain_iova;
+    phys_addr_t llccevagain_phyaddr;
+    phys_addr_t display_iova;
+    phys_addr_t display_phyaddr;
+    phys_addr_t aontimers_iova;
+    phys_addr_t aontimers_phyaddr;
+    phys_addr_t ipcc_computel0_iova;
+    phys_addr_t ipcc_computel0_phyaddr;
+    phys_addr_t ipcc_mproc_iova;
+    phys_addr_t ipcc_mproc_phyaddr;
+
+    /*Aurora size*/
+    uint32_t uncached_size;
+    uint32_t device_size;
+    uint32_t ipclite_size;
+    uint32_t hwmutex_size;
+    uint32_t llccevaleft_size;
+    uint32_t llccevaright_size;
+    uint32_t llccevagain_size;
+    uint32_t display_size;
+    uint32_t aontimers_size;
+    uint32_t ipcc_computel0_size;
+    uint32_t ipcc_mproc_size;
+
 	uint32_t register_size;
 	uint32_t ipcc_reg_size;
 	uint32_t gcc_reg_size;

@@ -1203,8 +1203,10 @@ void cvp_dsp_send_hfi_queue(void)
 		goto exit;
 	}
 
-	if (me->state != DSP_PROBED && me->state != DSP_INACTIVE)
-		goto exit;
+	if (me->state != DSP_PROBED && me->state != DSP_INACTIVE) {
+        dprintk(CVP_DSP, "%s: Either DSP is not probed or is not in proper state. me->state = %d\n", __func__, me->state);
+        goto exit;
+    }
 
 	rc = cvp_hyp_assign_to_dsp(addr, size);
 	if (rc) {

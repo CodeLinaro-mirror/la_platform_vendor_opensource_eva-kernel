@@ -54,7 +54,7 @@ static struct msm_cvp_common_data sm8450_common_data[] = {
 	},
 	{
 		.key = "qcom,sw-power-collapse",
-		.value = 1,
+		.value = 0,				//1 TODO: Aurora_BU
 	},
 	{
 		.key = "qcom,domain-attr-non-fatal-faults",
@@ -83,7 +83,7 @@ static struct msm_cvp_common_data sm8450_common_data[] = {
 	},
 	{
 		.key = "qcom,hw-resp-timeout",
-		.value = 2000,
+		.value = 20000,					//2000 TODO: Aurora_BU
 	},
 	{
 		.key = "qcom,dsp-resp-timeout",
@@ -95,7 +95,7 @@ static struct msm_cvp_common_data sm8450_common_data[] = {
 	},
 	{
 		.key = "qcom,dsp-enabled",
-		.value = 1,
+		.value = 0,     //1 TODO: Aurora_BU
 	}
 };
 
@@ -162,7 +162,21 @@ static struct msm_cvp_ubwc_config_data kona_ubwc_data[] = {
 	UBWC_CONFIG(1, 1, 1, 0, 0, 0, 8, 32, 16, 0, 0),
 };
 
+/* Default UBWC config for LPDDR4 */
+static struct msm_cvp_ubwc_config_data aurora_ubwc_data[] = {
+	UBWC_CONFIG(1, 1, 1, 0, 0, 0, 8, 32, 13, 0, 0),
+};
+
 static struct msm_cvp_qos_setting waipio_noc_qos = {
+	.axi_qos = 0x99,
+	.prioritylut_low = 0x22222222,
+	.prioritylut_high = 0x33333333,
+	.urgency_low = 0x1022,
+	.dangerlut_low = 0x0,
+	.safelut_low = 0xffff,
+};
+
+static struct msm_cvp_qos_setting aurora_noc_qos = {
 	.axi_qos = 0x99,
 	.prioritylut_low = 0x22222222,
 	.prioritylut_high = 0x33333333,
@@ -189,6 +203,15 @@ static struct msm_cvp_platform_data sm8450_data = {
 	.noc_qos = &waipio_noc_qos,
 };
 
+static struct msm_cvp_platform_data aurora_data = {
+	.common_data = sm8450_common_data,
+	.common_data_length =  ARRAY_SIZE(sm8450_common_data),
+	.sku_version = 0,
+	.vpu_ver = VPU_VERSION_5,
+	.ubwc_config = aurora_ubwc_data,
+	.noc_qos = &aurora_noc_qos,	/*Reuse Waipio setting*/  //TODO: AURORA-BU
+};
+
 static struct msm_cvp_platform_data sm8550_data = {
 	.common_data = sm8550_common_data,
 	.common_data_length =  ARRAY_SIZE(sm8550_common_data),
@@ -202,6 +225,10 @@ static const struct of_device_id msm_cvp_dt_match[] = {
 	{
 		.compatible = "qcom,waipio-cvp",
 		.data = &sm8450_data,
+	},
+	{
+		.compatible = "qcom,aurora-cvp",
+		.data = &aurora_data,
 	},
 	{
 		.compatible = "qcom,kalama-cvp",
@@ -516,6 +543,24 @@ void *cvp_get_drv_data(struct device *dev)
 			ddr_type, driver_data->ubwc_config ?
 			driver_data->ubwc_config->highest_bank_bit : -1);
 	}
+
+/*	
+	if (!strcmp(match->compatible, "qcom,aurora-cvp")) {
+		ddr_type = of_fdt_get_ddrtype();
+		if (ddr_type == -ENOENT) {
+			dprintk(CVP_ERR,
+				"Failed to get ddr type, use LPDDR4\n");
+		}
+
+		if (driver_data->ubwc_config &&
+			(ddr_type == DDR_TYPE_LPDDR4 ||
+			ddr_type == DDR_TYPE_LPDDR4X))
+			driver_data->ubwc_config->highest_bank_bit = 13;
+		dprintk(CVP_CORE, "DDR Type 0x%x hbb 0x%x\n",
+			ddr_type, driver_data->ubwc_config ?
+			driver_data->ubwc_config->highest_bank_bit : -1);
+	}
+*/
 exit:
 	return driver_data;
 }
