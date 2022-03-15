@@ -123,7 +123,7 @@ static int msm_cvp_load_ipcc_regs(struct msm_cvp_platform_resources *res)
 	struct platform_device *pdev = res->pdev;
 
 	ret = of_property_read_u32_array(pdev->dev.of_node, "qcom,ipcc-reg",
-				reg_config, 2);
+	reg_config,2);
 	if (ret) {
 		dprintk(CVP_ERR, "Failed to read ipcc reg: %d\n", ret);
 		return ret;
@@ -137,17 +137,17 @@ static int msm_cvp_load_ipcc_regs(struct msm_cvp_platform_resources *res)
 static int msm_cvp_load_regspace_mapping(struct msm_cvp_platform_resources *res)
 {
 	int ret = 0;
-	unsigned int uncached_mapping_config[2];
-    unsigned int device_mapping_config[2];
-    unsigned int ipclite_mapping_config[3];
-    unsigned int hwmutex_mapping_config[3];
-    unsigned int llccevaleft_config[3];
-    unsigned int llccevaright_config[3];
-    unsigned int llccevagain_config[3];
-    unsigned int display_config[3];
-    unsigned int aontimers_config[3];
+//	unsigned int uncached_mapping_config[2];
+  //  unsigned int device_mapping_config[2];
+  //  unsigned int ipclite_mapping_config[3];
+  //  unsigned int hwmutex_mapping_config[3];
+ //   unsigned int llccevaleft_config[3];
+  //  unsigned int llccevaright_config[3];
+  //  unsigned int llccevagain_config[3];
+  //  unsigned int display_config[3];
+  //  unsigned int aontimers_config[3];
 
-	struct platform_device *pdev = res->pdev;
+//	struct platform_device *pdev = res->pdev;
 
     //Uncached Memory Mappings
 //	ret = of_property_read_u32_array(pdev->dev.of_node, "uncached_mapping",

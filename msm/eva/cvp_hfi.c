@@ -32,12 +32,14 @@
 #include "msm_cvp_dsp.h"
 #include "msm_cvp_clocks.h"
 #include "cvp_dump.h"
+#if IS_REACHABLE(CONFIG_QCOM_KGSL)
 #include "msm_gpu_eva.h"
-
+#endif
 #define FIRMWARE_SIZE			0X00A00000
 #define REG_ADDR_OFFSET_BITMASK	0x000FFFFF
 #define QDSS_IOVA_START 0x80001000
 #define MIN_PAYLOAD_SIZE 3
+
 
 struct cvp_tzbsp_memprot {
 	u32 cp_start;
@@ -83,7 +85,7 @@ static int __iface_cmdq_write(struct iris_hfi_device *device,
 					void *pkt);
 static int __load_fw(struct iris_hfi_device *device);
 static int __dev_regspace_mapping(struct iris_hfi_device *device);
-static int __dev_regspace_unmap(struct iris_hfi_device *device);
+// static int __dev_regspace_unmap(struct iris_hfi_device *device);
 static void __unload_fw(struct iris_hfi_device *device);
 static int __tzbsp_set_cvp_state(enum tzbsp_subsys_state state);
 static int __enable_subcaches(struct iris_hfi_device *device);
@@ -1732,12 +1734,13 @@ static int __interface_queues_init(struct iris_hfi_device *dev)
 		dprintk(CVP_ERR, "dsp_queues_init failed\n");
 		goto fail_alloc_queue;
 	} //TODO: Aurora-BU */
+	#if IS_REACHABLE(CONFIG_QCOM_KGSL)
 	rc = __interface_gpu_init();
 	if(rc){
 		dprintk(CVP_ERR, "(kgsl/gpu)_eva_interface failed\n");
 		return -EINVAL;
 	}
-
+	#endif
 	__setup_ucregion_memory_map(dev);
 	return 0;
 fail_alloc_queue:
@@ -2068,10 +2071,10 @@ static int iris_hfi_core_release(void *dev)
 
 	__resume(device);
 	__set_state(device, IRIS_STATE_DEINIT);
-
+	#if IS_REACHABLE(CONFIG_QCOM_KGSL)
 	__interface_gpu_deinit();
+	#endif
 	__dsp_shutdown(device, 0);
-
 	__disable_subcaches(device);
 	__unload_fw(device);
 
@@ -4397,8 +4400,8 @@ static int __dev_regspace_mapping(struct iris_hfi_device *device)
 {
     int rc = 0;
     struct context_bank_info *cb;
-    struct subcache_info *sinfo = NULL;
-    uint32_t scid = 0;
+  //  struct subcache_info *sinfo = NULL;
+  //  uint32_t scid = 0;
     //non-secure context bank
     cb = msm_cvp_smem_get_context_bank(device->res, 0);
         if (!cb) {
@@ -4429,7 +4432,6 @@ static int __dev_regspace_mapping(struct iris_hfi_device *device)
        //LLCC
 //       iris_hfi_for_each_subcache(device, sinfo) 
 //       {
-//
 //       	if (IS_ERR_OR_NULL(sinfo->subcache)) {
 //       		rc = PTR_ERR(sinfo->subcache) ?
 //       			PTR_ERR(sinfo->subcache) : -EBADHANDLE;
@@ -4441,7 +4443,6 @@ static int __dev_regspace_mapping(struct iris_hfi_device *device)
 //       	}
 //       	dprintk(CVP_CORE, " %s: init_subcaches: %s\n", __func__,
 //       		sinfo->name);
-//      
 //       	if (!strcmp("eva_left", sinfo->name))
 //           {
 //       	      scid = sinfo->subcache->slice_id;
@@ -4453,11 +4454,11 @@ static int __dev_regspace_mapping(struct iris_hfi_device *device)
 //              if (rc) {
 //                      dprintk(CVP_ERR," %s:  iommu_map llcc eva left failed, rc:%d\n", __func__, rc);
 //              }
-//           } 
-//           else if (!strcmp("eva_right", sinfo->name)) 
+//           }
+//           else if (!strcmp("eva_right", sinfo->name))
 //           {
 //       	      scid = sinfo->subcache->slice_id;
-//              rc = iommu_map(cb->domain, 
+//              rc = iommu_map(cb->domain,
 //                             device->res->llccevaright_iova,
 //                             device->res->llccevaright_phyaddr + (0x1000*scid),
 //                             device->res->llccevaright_size ,
@@ -4466,7 +4467,7 @@ static int __dev_regspace_mapping(struct iris_hfi_device *device)
 //                      dprintk(CVP_ERR,"  %s: iommu_map llcc eva right failed, rc:%d\n", __func__, rc);
 //              }
 //           } 
-//           else if (!strcmp("eva_gain", sinfo->name)) 
+//           else if (!strcmp("eva_gain", sinfo->name))
 //           {
 //       	      scid = sinfo->subcache->slice_id;
 //              rc = iommu_map(cb->domain, 
@@ -4477,15 +4478,13 @@ static int __dev_regspace_mapping(struct iris_hfi_device *device)
 //              if (rc) {
 //                      dprintk(CVP_ERR," %s:  iommu_map eva gain failed, rc:%d\n", __func__, rc);
 //              }
-//           } 
+//           }
 //           else
 //           {
 //       		dprintk(CVP_ERR, " %s: %s: Invalid subcache name %s\n",__func__,
 //       				sinfo->name);
 //       	   }
-//      
 //        }
-//
 //        //Display
 //	   rc = iommu_map(cb->domain,
 //                      device->res->display_iova,
@@ -4528,12 +4527,13 @@ static int __dev_regspace_mapping(struct iris_hfi_device *device)
        //                  device->res->device_iova + device->res->device_size);//device mem end va
 
     }
-    dprintk(CVP_INFO,"sssanjee iommu_map3\n");
+    //dprintk(CVP_INFO,"sssanjee iommu_map3\n");
     return rc;
-err_subcache_get:
-	__deinit_subcaches(device);
-	return rc;
+// err_subcache_get:
+//	__deinit_subcaches(device);
+//	return rc;
 }
+/*
 static int __dev_regspace_unmap(struct iris_hfi_device *device)
 {
     int rc = 0;
@@ -4555,6 +4555,7 @@ static int __dev_regspace_unmap(struct iris_hfi_device *device)
     return rc;
 
 }
+*/
 static int __load_fw(struct iris_hfi_device *device)
 {
 	int rc = 0;
@@ -4675,7 +4676,6 @@ static const char * const mid_names[16] = {
 	"Invalid",
 	"Invalid"
 };
-
 static void __print_reg_details(u32 val)
 {
 	u32 mid, sid;
@@ -4999,7 +4999,7 @@ static int iris_hfi_validate_session(void *sess, const char *func)
 	mutex_unlock(&device->lock);
 	return rc;
 }
-
+#if IS_REACHABLE(CONFIG_QCOM_KGSL)
 static int iris_hfi_notify_gpu_status(void *device, u32 packet_type)
 {
 	int rc = 0;
@@ -5023,7 +5023,7 @@ static int iris_hfi_notify_gpu_status(void *device, u32 packet_type)
 err_create_pkt:
 	return rc;
 }
-
+#endif
 static void iris_init_hfi_callbacks(struct cvp_hfi_device *hdev)
 {
 	hdev->core_init = iris_hfi_core_init;
@@ -5047,7 +5047,9 @@ static void iris_init_hfi_callbacks(struct cvp_hfi_device *hdev)
 	hdev->noc_error_info = iris_hfi_noc_error_info;
 	hdev->validate_session = iris_hfi_validate_session;
 	hdev->pm_qos_update = iris_pm_qos_update;
+	#if IS_REACHABLE(CONFIG_QCOM_KGSL)
 	hdev->notify_gpu_status = iris_hfi_notify_gpu_status;
+	#endif
 }
 
 int cvp_iris_hfi_initialize(struct cvp_hfi_device *hdev, u32 device_id,

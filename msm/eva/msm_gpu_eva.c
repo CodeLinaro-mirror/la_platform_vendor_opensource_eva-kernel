@@ -3,7 +3,7 @@
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
  * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
-
+#if IS_REACHABLE(CONFIG_QCOM_KGSL)
 #include <linux/kernel.h>
 #include <linux/notifier.h>
 #include <linux/msm_kgsl.h>
@@ -164,3 +164,4 @@ int __interface_gpu_deinit(void)
 	destroy_workqueue(gpu_eva_workq);
 	return rc;
 }
+#endif
