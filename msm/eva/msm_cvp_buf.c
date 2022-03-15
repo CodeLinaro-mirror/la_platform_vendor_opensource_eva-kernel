@@ -857,7 +857,87 @@ int msm_cvp_map_frame(struct msm_cvp_inst *inst,
 
 	return 0;
 }
+int msm_cvp_map_frame_lsr(struct msm_cvp_inst *inst,
+		struct eva_kmd_hfi_packet *in_pkt,
+		unsigned int offset, unsigned int buf_num)
+{
+	struct cvp_buf_type *buf;
+	struct cvp_fence_buf_type *fence_buf;
+	int i;
+	u32 iova;
+	u64 ktid;
+	struct msm_cvp_frame *frame;
+	struct cvp_hfi_cmd_session_hdr *cmd_hdr;
 
+	if (!offset || !buf_num)
+		return 0;
+	cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)in_pkt;
+	ktid = atomic64_inc_return(&inst->core->kernel_trans_id);
+	ktid &= (FENCE_BIT - 1);
+	cmd_hdr->client_data.kdata = ktid;
+	frame = kmem_cache_zalloc(cvp_driver->frame_cache, GFP_KERNEL);
+	if (!frame)
+		return -ENOMEM;
+	frame->ktid = ktid;
+	frame->nr = 0;
+	frame->pkt_type = cmd_hdr->packet_type;
+	if(in_pkt->pkt_data[1] == HFI_CMD_SESSION_EVA_LSR_FRAME){
+		for (i = 0; i < 4; i++) {
+			buf = (struct cvp_buf_type *)&in_pkt->pkt_data[offset];
+			offset += sizeof(*buf) >> 2;
+			if (buf->fd < 0 || !buf->size)
+				continue;
+	        iova = msm_cvp_map_frame_buf(inst, buf, frame);
+			if (!iova) {
+				dprintk(CVP_ERR,
+					"%s: buf %d register failed.\n",
+					__func__, i);
+				msm_cvp_unmap_frame_buf(inst, frame);
+				return -EINVAL;
+			}
+			buf->fd = iova;
+		}
+		for (i = 0; i < 19; i++) {
+			fence_buf = (struct cvp_fence_buf_type *)&in_pkt->pkt_data[offset];
+			offset += sizeof(*fence_buf) >> 2;
+			buf = (struct cvp_buf_type *)fence_buf;
+			if (buf->fd < 0 || !buf->size)
+				continue;
+	        iova = msm_cvp_map_frame_buf(inst, buf, frame);
+			if (!iova) {
+				dprintk(CVP_ERR,
+					"%s: fence_buf %d register failed.\n",
+					__func__, i);
+				msm_cvp_unmap_frame_buf(inst, frame);
+				return -EINVAL;
+			}
+			buf->fd = iova;
+		}
+	}
+	else if(in_pkt->pkt_data[1] == HFI_CMD_SESSION_EVA_LSR_SET_DISPLAY_BUFFER){
+		for (i = 0; i < 10; i++) {
+			fence_buf = (struct cvp_fence_buf_type *)&in_pkt->pkt_data[offset];
+			offset += sizeof(*fence_buf) >> 2;
+			buf = (struct cvp_buf_type *)fence_buf;
+			if (buf->fd < 0 || !buf->size)
+				continue;
+			iova = msm_cvp_map_frame_buf(inst, buf, frame);
+			if (!iova) {
+				dprintk(CVP_ERR,
+					"%s: fence_buf %d register failed.\n",
+					__func__, i);
+				msm_cvp_unmap_frame_buf(inst, frame);
+				return -EINVAL;
+			}
+			buf->fd = iova;
+		}
+	}
+	mutex_lock(&inst->frames.lock);
+	list_add_tail(&frame->list, &inst->frames.list);
+	mutex_unlock(&inst->frames.lock);
+	dprintk(CVP_MEM, "%s: map frame %llu\n", __func__, ktid);
+	return 0;
+}
 int msm_cvp_session_deinit_buffers(struct msm_cvp_inst *inst)
 {
 	int rc = 0, i;

@@ -479,6 +479,48 @@ const struct msm_cvp_hfi_defs cvp_hfi_defs[] = {
 		.is_config_pkt = false,
 		.resp = HAL_NO_RESP,
 	},
+	{
+		.size = 0xFFFFFFFF,
+		.type = HFI_CMD_SESSION_EVA_LSR_CONFIG,
+		.is_config_pkt = true,
+		.resp = HAL_NO_RESP,
+	},
+	{
+		.size = 0xFFFFFFFF,
+		.type = HFI_CMD_SESSION_EVA_LSR_FRAME,
+		.is_config_pkt = false,
+		.resp = HAL_NO_RESP,
+	},
+	{
+		.size = 0xFFFFFFFF,
+		.type = HFI_CMD_SESSION_EVA_LSR_SET_GAINMAP,
+		.is_config_pkt = true,
+		.resp = HAL_NO_RESP,
+	},
+	{
+		.size = 0xFFFFFFFF,
+		.type = HFI_CMD_SESSION_EVA_LSR_GPU_SHARED_BUFFER,
+		.is_config_pkt = true,
+		.resp = HAL_NO_RESP,
+	},
+	{
+		.size = 0xFFFFFFFF,
+		.type = HFI_CMD_SESSION_EVA_LSR_SET_MVBUFFER,
+		.is_config_pkt = true,
+		.resp = HAL_NO_RESP,
+	},
+	{
+		.size = 0xFFFFFFFF,
+		.type = HFI_CMD_SESSION_EVA_LSR_NSP_BUFFER,
+		.is_config_pkt = true,
+		.resp = HAL_NO_RESP,
+	},
+	{
+		.size = 0xFFFFFFFF,
+		.type = HFI_CMD_SESSION_EVA_LSR_SET_DISPLAY_BUFFER,
+		.is_config_pkt = true,
+		.resp = HAL_NO_RESP,
+	},
 
 };
 

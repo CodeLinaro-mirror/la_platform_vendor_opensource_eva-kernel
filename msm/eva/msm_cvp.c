@@ -219,17 +219,23 @@ static int msm_cvp_session_process_hfi(
 	pkt_type = in_pkt->pkt_data[1];
 	map_type = cvp_find_map_type(pkt_type);
 
-	cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)in_pkt;
-	/* The kdata will be overriden by transaction ID if the cmd has buf */
-	cmd_hdr->client_data.kdata = pkt_idx;
-
-	if (map_type == MAP_PERSIST)
-		rc = msm_cvp_map_user_persist(inst, in_pkt, offset, buf_num);
-	else if (map_type == UNMAP_PERSIST)
-		rc = msm_cvp_mark_user_persist(inst, in_pkt, offset, buf_num);
+	if((pkt_type == HFI_CMD_SESSION_EVA_LSR_FRAME)|| (pkt_type == HFI_CMD_SESSION_EVA_LSR_SET_DISPLAY_BUFFER))
+	{
+	    rc = msm_cvp_map_frame_lsr(inst, in_pkt, offset, buf_num);
+	}
 	else
-		rc = msm_cvp_map_frame(inst, in_pkt, offset, buf_num);
+	{
+	    cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)in_pkt;
+	    /* The kdata will be overriden by transaction ID if the cmd has buf */
+	    cmd_hdr->client_data.kdata = pkt_idx;
 
+	    if (map_type == MAP_PERSIST)
+	    	rc = msm_cvp_map_user_persist(inst, in_pkt, offset, buf_num);
+	    else if (map_type == UNMAP_PERSIST)
+	    	rc = msm_cvp_mark_user_persist(inst, in_pkt, offset, buf_num);
+	    else
+	    	rc = msm_cvp_map_frame(inst, in_pkt, offset, buf_num);
+	}
 	if (rc)
 		goto exit;
 
@@ -477,7 +483,11 @@ static int cvp_fence_proc(struct msm_cvp_inst *inst,
 	if (rc) {
 		dprintk(CVP_ERR, "%s %s: Failed in call_hfi_op %d, %x\n",
 			current->comm, __func__, pkt->size, pkt->packet_type);
+		#if IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX)
 		synx_state = SYNX_STATE_SIGNALED_ERROR;
+		#elif IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX_V2)
+		synx_state = SYNX_STATE_SIGNALED_CANCEL;
+		#endif
 		goto exit;
 	}
 
@@ -513,7 +523,11 @@ static int cvp_fence_proc(struct msm_cvp_inst *inst,
 	if (rc) {
 		dprintk(CVP_ERR, "%s %s: cvp_wait_process_message rc %d\n",
 			current->comm, __func__, rc);
+		#if IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX)
 		synx_state = SYNX_STATE_SIGNALED_ERROR;
+		#elif IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX_V2)
+		synx_state = SYNX_STATE_SIGNALED_CANCEL;
+		#endif
 		goto exit;
 	}
 	if (hfi_err == HFI_ERR_SESSION_FLUSHED) {
@@ -1618,7 +1632,11 @@ int cvp_clean_session_queues(struct msm_cvp_inst *inst)
 	mutex_lock(&q->lock);
 	if (q->state == QUEUE_START) {
 		mutex_unlock(&q->lock);
+	#if IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX)
 	cvp_clean_fence_queue(inst, SYNX_STATE_SIGNALED_ERROR);
+	#elif IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX_V2)
+	cvp_clean_fence_queue(inst, SYNX_STATE_SIGNALED_CANCEL);
+	#endif
 	} else {
 		dprintk(CVP_WARN, "Incorrect fence cmd queue state %d\n",
 			q->state);
