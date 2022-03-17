@@ -189,12 +189,12 @@ struct eva_kmd_hfi_fence_packet {
 };
 
 struct eva_kmd_fence {
-	#if IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX)
-	__s32 h_synx;
-	__u32 secure_key;
-	#elif IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX_V2)
+	//#if IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX)
+	//__s32 h_synx;
+	//__u32 secure_key;
+	//#elif IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX_V2)
 	__u32 h_synx;
-	#endif
+	//#endif
 };
 
 struct eva_kmd_fence_ctrl {
