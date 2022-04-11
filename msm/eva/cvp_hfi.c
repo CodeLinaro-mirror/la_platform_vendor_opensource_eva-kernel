@@ -32,7 +32,10 @@
 #include "msm_cvp_dsp.h"
 #include "msm_cvp_clocks.h"
 #include "cvp_dump.h"
+
+#if IS_REACHABLE(CONFIG_QCOM_KGSL)
 #include "msm_gpu_eva.h"
+#endif
 
 #define FIRMWARE_SIZE			0X00A00000
 #define REG_ADDR_OFFSET_BITMASK	0x000FFFFF
@@ -1732,12 +1735,13 @@ static int __interface_queues_init(struct iris_hfi_device *dev)
 		dprintk(CVP_ERR, "dsp_queues_init failed\n");
 		goto fail_alloc_queue;
 	} //TODO: Aurora-BU */
+#if IS_REACHABLE(CONFIG_QCOM_KGSL)
 	rc = __interface_gpu_init();
 	if(rc){
 		dprintk(CVP_ERR, "(kgsl/gpu)_eva_interface failed\n");
 		return -EINVAL;
 	}
-
+#endif
 	__setup_ucregion_memory_map(dev);
 	return 0;
 fail_alloc_queue:
@@ -2068,8 +2072,9 @@ static int iris_hfi_core_release(void *dev)
 
 	__resume(device);
 	__set_state(device, IRIS_STATE_DEINIT);
-
+#if IS_REACHABLE(CONFIG_QCOM_KGSL)
 	__interface_gpu_deinit();
+#endif
 	__dsp_shutdown(device, 0);
 
 	__disable_subcaches(device);
@@ -4999,12 +5004,12 @@ static int iris_hfi_validate_session(void *sess, const char *func)
 	mutex_unlock(&device->lock);
 	return rc;
 }
-
-static int iris_hfi_notify_gpu_status(void *device, u32 packet_type)
+#if IS_REACHABLE(CONFIG_QCOM_KGSL)
+static int iris_hfi_notify_gpu_status(void *device, u32 packet_type, void *session)
 {
 	int rc = 0;
 	struct iris_hfi_device *dev;
-	struct cvp_hfi_cmd_sys_gpu_packet pkt;
+	struct cvp_hfi_cmd_session_gpu_packet pkt;
 
 	if (!device) {
 		dprintk(CVP_ERR, "Invalid device\n");
@@ -5012,7 +5017,8 @@ static int iris_hfi_notify_gpu_status(void *device, u32 packet_type)
 	}
 
 	dev = device;
-	rc = call_hfi_pkt_op(dev, sys_gpu_cmd_prep, &pkt, packet_type);
+	rc = call_hfi_pkt_op(dev, session_gpu_cmd_prep, &pkt, packet_type,
+					(struct cvp_hal_session *)session);
 	if (rc) {
 		dprintk(CVP_ERR, "set_res: failed to create packet\n");
 		goto err_create_pkt;
@@ -5023,7 +5029,7 @@ static int iris_hfi_notify_gpu_status(void *device, u32 packet_type)
 err_create_pkt:
 	return rc;
 }
-
+#endif
 static void iris_init_hfi_callbacks(struct cvp_hfi_device *hdev)
 {
 	hdev->core_init = iris_hfi_core_init;
@@ -5047,7 +5053,9 @@ static void iris_init_hfi_callbacks(struct cvp_hfi_device *hdev)
 	hdev->noc_error_info = iris_hfi_noc_error_info;
 	hdev->validate_session = iris_hfi_validate_session;
 	hdev->pm_qos_update = iris_pm_qos_update;
+#if IS_REACHABLE(CONFIG_QCOM_KGSL)
 	hdev->notify_gpu_status = iris_hfi_notify_gpu_status;
+#endif
 }
 
 int cvp_iris_hfi_initialize(struct cvp_hfi_device *hdev, u32 device_id,

@@ -16,6 +16,7 @@
 #include "cvp_core_hfi.h"
 #include "msm_cvp_resources.h"
 #include "msm_cvp.h"
+#if IS_REACHABLE(CONFIG_QCOM_KGSL)
 #include "msm_gpu_eva.h"
 
 
@@ -66,37 +67,48 @@ static int msm_eva_notify_gpu_status( u32 status )
 	int rc = 0;
 	u32 res_msg_id = 0;
 	struct msm_cvp_core *core;
+	int wait_ret = 0;
+	struct msm_cvp_inst *inst = NULL;
+	struct cvp_hal_session *session = NULL;
 
 	core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
 	if (core){
-		dprintk(CVP_INFO, "Valid Core Identified\n");
+			dprintk(CVP_INFO, "Valid Core Identified\n");
+				list_for_each_entry(inst, &core->instances, list) {
+			if( (inst->state != MSM_CVP_CORE_INVALID ) &&
+					(inst->prop.type == HFI_SESSION_LSR ) ) {
+				session = inst->session;
+				break;
+				}
+			}
 	} else {
 		dprintk(CVP_ERR, "InValid Core \n");
 		return -EINVAL;
 	}
-	if ( status == HFI_CMD_SYS_STOP_GMU_CMD ) {
-		res_msg_id = HAL_SYS_GMU_STOP_DONE;
+	if ( status == HFI_CMD_SESSION_EVA_LSR_GMU_STOP ) {
+		res_msg_id = HAL_SESSION_GMU_STOP_DONE;
 	}
-	else if ( status == HFI_CMD_SYS_START_GMU_CMD ) {
-		res_msg_id = HAL_SYS_GMU_START_DONE;
+	else if ( status == HFI_CMD_SESSION_EVA_LSR_GMU_START ) {
+		res_msg_id = HAL_SESSION_GMU_START_DONE;
 	}
 	rc = call_hfi_op(core->device, notify_gpu_status,
-		core->device->hfi_device_data, status );
+		core->device->hfi_device_data, status,session );
 	if (rc) {
 		dprintk(CVP_ERR,"notify gpu status failed\n");
 		return -EINVAL;
 	}
 	else {
-		rc = wait_for_completion_timeout(
-			&core->completions[SYS_MSG_INDEX(res_msg_id)],
+		wait_ret = wait_for_completion_timeout(
+			&inst->completions[SESSION_MSG_INDEX(res_msg_id)],
 			msecs_to_jiffies(
-			core->resources.msm_cvp_hw_rsp_timeout));
+			inst->core->resources.msm_cvp_hw_rsp_timeout));
 
-		if (!rc) {
+		if (!wait_ret) {
 			dprintk(CVP_ERR, "Wait timed out for HFI_CMD_SYS_GMU_CMD: %d\n",
-			SYS_MSG_INDEX(res_msg_id));
+			SESSION_MSG_INDEX(res_msg_id));
 			rc = -ETIMEDOUT;
 		}
+
 	}
 	return rc;
 }
@@ -109,7 +121,7 @@ int kgsl_eva_notifier_callback( struct notifier_block *this, unsigned long event
 	{
 		case GPU_SSR_BEGIN:
 			dprintk(CVP_INFO, "Received GPU_SSR_BEGIN");
-			rc = msm_eva_notify_gpu_status( HFI_CMD_SYS_STOP_GMU_CMD );
+			rc = msm_eva_notify_gpu_status( HFI_CMD_SESSION_EVA_LSR_GMU_STOP );
 			if (rc){
 				dprintk(CVP_INFO, "Failed to notify gpu status");
 			}
@@ -121,9 +133,9 @@ int kgsl_eva_notifier_callback( struct notifier_block *this, unsigned long event
 			break;
 		case GPU_GMU_READY:
 		case GPU_SSR_END:
-			dprintk(CVP_INFO, "Received GPU_GMU_READY/GPU_SSR_END");;
+			dprintk(CVP_INFO, "Received GPU_GMU_READY/GPU_SSR_END");
 			cancel_delayed_work(&gpu_eva_work);
-			rc = msm_eva_notify_gpu_status( HFI_CMD_SYS_START_GMU_CMD );
+			rc = msm_eva_notify_gpu_status( HFI_CMD_SESSION_EVA_LSR_GMU_START );
 			if( rc ) {
 				dprintk(CVP_ERR, "EVA_GPU_SSR_END_ACK/EVA_GMU_READY_ACK failed \n");
 			}
@@ -164,3 +176,4 @@ int __interface_gpu_deinit(void)
 	destroy_workqueue(gpu_eva_workq);
 	return rc;
 }
+#endif

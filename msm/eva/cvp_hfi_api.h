@@ -15,6 +15,10 @@
 #include "msm_cvp_resources.h"
 #include "cvp_hfi_helper.h"
 
+#if IS_REACHABLE(CONFIG_QCOM_KGSL)
+#include "msm_gpu_eva.h"
+#endif
+
 #define CONTAINS(__a, __sz, __t) (\
 	(__t >= __a) && \
 	(__t < __a + __sz) \
@@ -74,7 +78,9 @@ enum hal_ssr_trigger_type {
 	SSR_SW_DIV_BY_ZERO,
 	SSR_HW_WDOG_IRQ,
 	SSR_SESSION_ABORT,
+#if IS_REACHABLE(CONFIG_QCOM_KGSL)
 	SSR_GPU,
+#endif
 };
 
 enum hal_intra_refresh_mode {
@@ -125,8 +131,6 @@ enum hal_command_response {
 	HAL_SYS_IDLE,
 	HAL_SYS_DEBUG,
 	HAL_SYS_WATCHDOG_TIMEOUT,
-	HAL_SYS_GMU_START_DONE,
-	HAL_SYS_GMU_STOP_DONE,
 	HAL_SYS_ERROR,
 	/* SESSION COMMANDS_DONE */
 	HAL_SESSION_EVENT_CHANGE,
@@ -147,6 +151,10 @@ enum hal_command_response {
 	HAL_SESSION_RELEASE_RESOURCE_DONE,
 	HAL_SESSION_PROPERTY_INFO,
 	HAL_SESSION_DUMP_NOTIFY,
+#if IS_REACHABLE(CONFIG_QCOM_KGSL)
+	HAL_SESSION_GMU_START_DONE,
+	HAL_SESSION_GMU_STOP_DONE,
+#endif
 	HAL_SESSION_ERROR,
 	HAL_RESPONSE_UNUSED = 0x10000000,
 };
@@ -269,7 +277,10 @@ struct cvp_hfi_device {
 	int (*noc_error_info)(void *dev);
 	int (*validate_session)(void *sess, const char *func);
 	int (*pm_qos_update)(void *device);
-	int (*notify_gpu_status)(void *device, u32 packet_type);
+#if IS_REACHABLE(CONFIG_QCOM_KGSL)
+	int (*notify_gpu_status)(void *device, u32 packet_type,
+						void *sess);
+#endif
 };
 
 typedef void (*hfi_cmd_response_callback) (enum hal_command_response cmd,
