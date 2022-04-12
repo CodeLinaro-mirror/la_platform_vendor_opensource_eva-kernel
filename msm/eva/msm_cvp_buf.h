@@ -113,13 +113,14 @@ struct cvp_fence_buf_type {
 	u32 size;
 	u32 offset;
 	u32 flags;
-	union {
-		struct dma_buf *dbuf;
-		struct {
+	//union {
+	//	struct dma_buf *dbuf;
+	//	struct {
 			u32 reserved1;
 			u32 reserved2;
-		};
-	};
+	//	};
+	//};
+	u32 fence_type;
 	u32 forward_fence_handle;
 	u32 reverse_fence_handle;
 };
