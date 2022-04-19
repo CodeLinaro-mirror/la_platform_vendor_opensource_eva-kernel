@@ -124,6 +124,8 @@ struct subcache_info {
 	bool isactive;
 	bool isset;
 	struct llcc_slice_desc *subcache;
+    u32 sc_clentid;//eEVA_LSR_SUBCACHE_IDX
+    u32 sc_ioaddr;
 };
 
 struct subcache_set {

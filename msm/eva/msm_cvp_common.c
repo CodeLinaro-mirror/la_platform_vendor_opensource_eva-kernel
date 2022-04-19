@@ -1437,7 +1437,7 @@ send_again:
 		 * user SSR as non-fatal.
 		 */
 		core->trigger_ssr = true;
-		msm_eva_set_sw_pc(SW_PC_ENABLE);
+		msm_eva_set_sw_pc(SW_PC_ENABLE)
 		rc = call_hfi_op(hdev, core_trigger_ssr,
 				hdev->hfi_device_data, core->ssr_type);
 		if (rc) {
@@ -1499,7 +1499,7 @@ int msm_cvp_comm_kill_session(struct msm_cvp_inst *inst)
 	if (inst->state >= MSM_CVP_OPEN_DONE &&
 			inst->state < MSM_CVP_CLOSE_DONE) {
 		rc = msm_comm_session_abort(inst);
-		if (rc) {
+	    if (rc) {
 			dprintk(CVP_ERR,
 				"%s: inst %pK session %x abort failed\n",
 				__func__, inst, hash32_ptr(inst->session));

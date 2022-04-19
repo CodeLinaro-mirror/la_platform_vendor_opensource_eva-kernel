@@ -175,6 +175,30 @@ static struct msm_cvp_qos_setting waipio_noc_qos = {
 	.dangerlut_low = 0x0,
 	.safelut_low = 0xffff,
 };
+struct msm_lsr_csc_gcx_qos_setting aurora_lsr_csc_gcx_qos = {
+	.l_prioritylut_low = 0x33333333,
+	.l_prioritylut_high = 0x33333333,
+	.l_urgency_low = 0x1033,
+	.l_dangerlut_low = 0x0,
+	.l_safelut_low = 0xFFFF,
+	.r_prioritylut_low = 0x33333333,
+	.r_prioritylut_high = 0x33333333,
+	.r_urgency_low = 0x1033,
+	.r_dangerlut_low = 0x0,
+	.r_safelut_low = 0xFFFF,
+};
+struct msm_lsr_ddl_qos_setting aurora_lsr_ddl_qos = {
+	.l_prioritylut_low = 0x33333333,
+	.l_prioritylut_high = 0x33333333,
+	.l_urgency_low = 0x1033,
+	.l_dangerlut_low = 0x0,
+	.l_safelut_low = 0xFFFF,
+	.r_prioritylut_low = 0x33333333,
+	.r_prioritylut_high = 0x33333333,
+	.r_urgency_low = 0x1033,
+	.r_dangerlut_low = 0x0,
+	.r_safelut_low = 0xFFFF,
+};
 
 static struct msm_cvp_qos_setting aurora_noc_qos = {
 	.axi_qos = 0x99,
@@ -210,6 +234,8 @@ static struct msm_cvp_platform_data aurora_data = {
 	.vpu_ver = VPU_VERSION_5,
 	.ubwc_config = aurora_ubwc_data,
 	.noc_qos = &aurora_noc_qos,	/*Reuse Waipio setting*/  //TODO: AURORA-BU
+	.lsr_noc_csc_gcx_qos = &aurora_lsr_csc_gcx_qos,
+	.lsr_noc_ddl_qos = &aurora_lsr_ddl_qos,
 };
 
 static struct msm_cvp_platform_data sm8550_data = {

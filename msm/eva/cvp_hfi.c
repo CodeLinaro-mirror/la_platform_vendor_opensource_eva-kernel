@@ -87,6 +87,7 @@ static int __iface_cmdq_write(struct iris_hfi_device *device,
 static int __load_fw(struct iris_hfi_device *device);
 static int __dev_regspace_mapping(struct iris_hfi_device *device);
 static int __dev_regspace_unmap(struct iris_hfi_device *device);
+static int __llcc_regspace_unmap(struct iris_hfi_device *device);
 static void __unload_fw(struct iris_hfi_device *device);
 static int __tzbsp_set_cvp_state(enum tzbsp_subsys_state state);
 static int __enable_subcaches(struct iris_hfi_device *device);
@@ -108,6 +109,9 @@ static int __enable_hw_power_collapse(struct iris_hfi_device *device);
 
 static int __power_off_controller(struct iris_hfi_device *device);
 
+static int __vote_spad_clks(struct iris_hfi_device *device);
+static int __unvote_spad(struct iris_hfi_device *device);
+static int map_llcc_iommu_addr(struct iris_hfi_device *device,struct subcache_info *sinfo);
 static struct iris_hfi_vpu_ops iris2_ops = {
 	.interrupt_init = interrupt_init_iris2,
 	.setup_dsp_uc_memmap = setup_dsp_uc_memmap_vpu5,
@@ -793,57 +797,79 @@ static void __set_registers(struct iris_hfi_device *device)
     //LSR QOS Settings from Video NOC HSR
     dprintk(CVP_INFO,
 			"Setting LSR NOC QOS settings .. E\n");
-  // __write_register(device, LSR_NOC_CSC_GCX_L_PRIORITYLUT_LOW,
-  //                  pdata->lsr_noc_csc_gcx_qos->l_prioritylut_low);
-  // __write_register(device, LSR_NOC_CSC_GCX_L_PRIORITYLUT_HIGH,
-  // 			pdata->lsr_noc_csc_gcx_qos->l_prioritylut_high);
-  // __write_register(device, LSR_NOC_CSC_GCX_L_URGENCY_LOW,
-  // 			pdata->lsr_noc_csc_gcx_qos->l_urgency_low);
-  // __write_register(device, LSR_NOC_CSC_GCX_L_DANGERLUT_LOW,
-  // 			pdata->lsr_noc_csc_gcx_qos->l_dangerlut_low);
-  // __write_register(device, LSR_NOC_CSC_GCX_L_SAFELUT_LOW,
-  // 			pdata->lsr_noc_csc_gcx_qos->l_safelut_low);
-  // dprintk(CVP_INFO,
-  // 		"Setting LSR NOC QOS settings cp1 ..\n");
-  // __write_register(device, LSR_NOC_CSC_GCX_R_PRIORITYLUT_LOW,
-  //                  pdata->lsr_noc_csc_gcx_qos->r_prioritylut_low);
-  // __write_register(device, LSR_NOC_CSC_GCX_R_PRIORITYLUT_HIGH,
-  // 			pdata->lsr_noc_csc_gcx_qos->r_prioritylut_high);
-  // __write_register(device, LSR_NOC_CSC_GCX_R_URGENCY_LOW,
-  // 			pdata->lsr_noc_csc_gcx_qos->r_urgency_low);
-  // __write_register(device, LSR_NOC_CSC_GCX_R_DANGERLUT_LOW,
-  // 			pdata->lsr_noc_csc_gcx_qos->r_dangerlut_low);
-  // __write_register(device, LSR_NOC_CSC_GCX_R_SAFELUT_LOW,
-  // 			pdata->lsr_noc_csc_gcx_qos->r_safelut_low);
-  // dprintk(CVP_INFO,
-  // 		"Setting LSR NOC QOS settings cp2 ..\n");
-  // __write_register(device, LSR_NOC_DDL_L_PRIORITYLUT_LOW,
-  //                  pdata->lsr_noc_ddl_qos->l_prioritylut_low);
-  // __write_register(device, LSR_NOC_DDL_L_PRIORITYLUT_HIGH,
-  // 			pdata->lsr_noc_ddl_qos->l_prioritylut_high);
-  // __write_register(device, LSR_NOC_DDL_L_URGENCY_LOW,
-  // 			pdata->lsr_noc_ddl_qos->l_urgency_low);
-  // __write_register(device, LSR_NOC_DDL_L_DANGERLUT_LOW,
-  // 			pdata->lsr_noc_ddl_qos->l_dangerlut_low);
-  // __write_register(device, LSR_NOC_DDL_L_SAFELUT_LOW,
-  // 			pdata->lsr_noc_ddl_qos->l_safelut_low);
-  // dprintk(CVP_INFO,
-  // 		"Setting LSR NOC QOS settings cp3 ..\n");
-  // __write_register(device, LSR_NOC_DDL_R_PRIORITYLUT_LOW,
-  //                  pdata->lsr_noc_ddl_qos->r_prioritylut_low);
-  // __write_register(device, LSR_NOC_DDL_R_PRIORITYLUT_HIGH,
-  // 			pdata->lsr_noc_ddl_qos->r_prioritylut_high);
-  // __write_register(device, LSR_NOC_DDL_R_URGENCY_LOW,
-  // 			pdata->lsr_noc_ddl_qos->r_urgency_low);
-  // __write_register(device, LSR_NOC_DDL_R_DANGERLUT_LOW,
-  // 			pdata->lsr_noc_ddl_qos->r_dangerlut_low);
-  // __write_register(device, LSR_NOC_DDL_R_SAFELUT_LOW,
-  // 			pdata->lsr_noc_ddl_qos->r_safelut_low);
+
     dprintk(CVP_INFO,
 			"Setting LSR NOC QOS settings.NOT YET .. X\n");
 #endif //EVA_LSR regs
 }
+static void __set_lsr_noc_registers(struct iris_hfi_device *device)
+{
+	struct msm_cvp_core *core;
+	struct msm_cvp_platform_data *pdata;;
 
+	if (!device->res) {
+		dprintk(CVP_ERR,
+			"device resources null, cannot set registers\n");
+		return;
+	}
+
+	core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
+	pdata = core->platform_data;
+
+#ifdef EVA_LSR//LSR regs
+    //LSR QOS Settings from Video NOC HSR
+    dprintk(CVP_INFO,
+			"Setting LSR NOC QOS settings .. E\n");
+  __write_register(device, LSR_NOC_CSC_GCX_L_PRIORITYLUT_LOW,
+                   pdata->lsr_noc_csc_gcx_qos->l_prioritylut_low);
+  __write_register(device, LSR_NOC_CSC_GCX_L_PRIORITYLUT_HIGH,
+  			pdata->lsr_noc_csc_gcx_qos->l_prioritylut_high);
+  __write_register(device, LSR_NOC_CSC_GCX_L_URGENCY_LOW,
+  			pdata->lsr_noc_csc_gcx_qos->l_urgency_low);
+  __write_register(device, LSR_NOC_CSC_GCX_L_DANGERLUT_LOW,
+  			pdata->lsr_noc_csc_gcx_qos->l_dangerlut_low);
+  __write_register(device, LSR_NOC_CSC_GCX_L_SAFELUT_LOW,
+  			pdata->lsr_noc_csc_gcx_qos->l_safelut_low);
+  dprintk(CVP_INFO,
+  		"Setting LSR NOC QOS settings cp1 ..\n");
+  __write_register(device, LSR_NOC_CSC_GCX_R_PRIORITYLUT_LOW,
+                   pdata->lsr_noc_csc_gcx_qos->r_prioritylut_low);
+  __write_register(device, LSR_NOC_CSC_GCX_R_PRIORITYLUT_HIGH,
+  			pdata->lsr_noc_csc_gcx_qos->r_prioritylut_high);
+  __write_register(device, LSR_NOC_CSC_GCX_R_URGENCY_LOW,
+  			pdata->lsr_noc_csc_gcx_qos->r_urgency_low);
+  __write_register(device, LSR_NOC_CSC_GCX_R_DANGERLUT_LOW,
+  			pdata->lsr_noc_csc_gcx_qos->r_dangerlut_low);
+  __write_register(device, LSR_NOC_CSC_GCX_R_SAFELUT_LOW,
+  			pdata->lsr_noc_csc_gcx_qos->r_safelut_low);
+  dprintk(CVP_INFO,
+  		"Setting LSR NOC QOS settings cp2 ..\n");
+  __write_register(device, LSR_NOC_DDL_L_PRIORITYLUT_LOW,
+                   pdata->lsr_noc_ddl_qos->l_prioritylut_low);
+  __write_register(device, LSR_NOC_DDL_L_PRIORITYLUT_HIGH,
+  			pdata->lsr_noc_ddl_qos->l_prioritylut_high);
+  __write_register(device, LSR_NOC_DDL_L_URGENCY_LOW,
+  			pdata->lsr_noc_ddl_qos->l_urgency_low);
+  __write_register(device, LSR_NOC_DDL_L_DANGERLUT_LOW,
+  			pdata->lsr_noc_ddl_qos->l_dangerlut_low);
+  __write_register(device, LSR_NOC_DDL_L_SAFELUT_LOW,
+  			pdata->lsr_noc_ddl_qos->l_safelut_low);
+  dprintk(CVP_INFO,
+  		"Setting LSR NOC QOS settings cp3 ..\n");
+  __write_register(device, LSR_NOC_DDL_R_PRIORITYLUT_LOW,
+                   pdata->lsr_noc_ddl_qos->r_prioritylut_low);
+  __write_register(device, LSR_NOC_DDL_R_PRIORITYLUT_HIGH,
+  			pdata->lsr_noc_ddl_qos->r_prioritylut_high);
+  __write_register(device, LSR_NOC_DDL_R_URGENCY_LOW,
+  			pdata->lsr_noc_ddl_qos->r_urgency_low);
+  __write_register(device, LSR_NOC_DDL_R_DANGERLUT_LOW,
+  			pdata->lsr_noc_ddl_qos->r_dangerlut_low);
+  __write_register(device, LSR_NOC_DDL_R_SAFELUT_LOW,
+  			pdata->lsr_noc_ddl_qos->r_safelut_low);
+    dprintk(CVP_INFO,
+			"Setting LSR NOC QOS settings.DONE .. X\n");
+#endif //EVA_LSR regs
+}
 /*
  * The existence of this function is a hack for 8996 (or certain Iris versions)
  * to overcome a hardware bug.  Whenever the GDSCs momentarily power collapse
@@ -1048,7 +1074,7 @@ static inline int __boot_firmware(struct iris_hfi_device *device)
 
 	ctrl_init_val = BIT(0) + BIT(1);   //TODO: AURORA-BU
 	__write_register(device, CVP_CTRL_INIT, ctrl_init_val);
-	while (!ctrl_status && count < max_tries) {
+	while (!(ctrl_status&1) && count < max_tries) {
 		ctrl_status = __read_register(device, CVP_CTRL_STATUS);
 		if ((ctrl_status & CVP_CTRL_ERROR_STATUS__M) == 0x4) {
 			dprintk(CVP_ERR, "invalid setting for UC_REGION\n");
@@ -2079,7 +2105,7 @@ static int iris_hfi_core_release(void *dev)
 
 	__disable_subcaches(device);
 	__unload_fw(device);
-
+        __dev_regspace_unmap(device);
 	if (msm_cvp_mmrm_enabled) {
 		rc = msm_cvp_mmrm_deregister(device);
 		if (rc) {
@@ -3428,15 +3454,103 @@ static void __deinit_subcaches(struct iris_hfi_device *device)
 		if (sinfo->subcache) {
 			dprintk(CVP_CORE, "deinit_subcaches: %s\n",
 				sinfo->name);
-			// llcc_slice_putd(sinfo->subcache);  //TODO: AURORA-BU
+			 llcc_slice_putd(sinfo->subcache);  //TODO: AURORA-BU
 			sinfo->subcache = NULL;
 		}
 	}
+    __llcc_regspace_unmap(device);
 
 exit:
 	return;
 }
+static int map_llcc_iommu_addr(struct iris_hfi_device *device, struct subcache_info *sinfo)
+{
+    u32 iova= 0;
+    u32 scid = 0;
+    int rc = 0;
+    struct context_bank_info *cb;
+    //non-secure context bank
+    cb = msm_cvp_smem_get_context_bank(device->res, 0);
+        if (!cb) {
+                dprintk(CVP_ERR," %s: failed to get context bank\n", __func__);
+                return 0;
+        }
+    if (cb)
+    {
+           //LLCC
+      	dprintk(CVP_CORE, " %s: init_subcaches: %s\n", __func__,
+      		sinfo->name);
+     
+      	if (!strcmp("eva_left", sinfo->name))
+          {
+      	      scid = sinfo->subcache->slice_id;
+             rc = iommu_map(cb->domain, 
+                            device->res->llccevaleft_iova,
+                            device->res->llccevaleft_phyaddr + (0x1000*scid),
+                            device->res->llccevaleft_size ,
+                            IOMMU_CACHE | IOMMU_READ | IOMMU_WRITE);
+             if (rc) {
+                     dprintk(CVP_ERR," %s:  iommu_map llcc eva left failed, rc:%d\n", __func__, rc);
+             }
+             else{
+		             dprintk(CVP_INFO," %s:  iommu_map llcc eva left Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
+				            device->res->llccevaleft_iova,
+                            device->res->llccevaleft_phyaddr + (0x1000*scid),
+                            device->res->llccevaleft_size);
 
+                     iova = device->res->llccevaleft_iova;
+             }
+
+          } 
+          else if (!strcmp("eva_right", sinfo->name)) 
+          {
+      	      scid = sinfo->subcache->slice_id;
+             rc = iommu_map(cb->domain, 
+                            device->res->llccevaright_iova,
+                            device->res->llccevaright_phyaddr + (0x1000*scid),
+                            device->res->llccevaright_size ,
+                            IOMMU_CACHE | IOMMU_READ | IOMMU_WRITE);
+             if (rc) {
+                     dprintk(CVP_ERR,"  %s: iommu_map llcc eva right failed, rc:%d\n", __func__, rc);
+             }
+             else{
+		             dprintk(CVP_INFO," %s:  iommu_map llcc eva right Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
+				            device->res->llccevaright_iova,
+                            device->res->llccevaright_phyaddr + (0x1000*scid),
+                            device->res->llccevaright_size);
+
+                     iova = device->res->llccevaright_iova;
+             }
+          } 
+          else if (!strcmp("eva_gain", sinfo->name)) 
+          {
+      	      scid = sinfo->subcache->slice_id;
+             rc = iommu_map(cb->domain, 
+                            device->res->llccevagain_iova,
+                            device->res->llccevagain_phyaddr + (0x1000*scid),
+                            device->res->llccevagain_size ,
+                            IOMMU_CACHE | IOMMU_READ | IOMMU_WRITE);
+             if (rc) {
+                     dprintk(CVP_ERR," %s:  iommu_map eva gain failed, rc:%d\n", __func__, rc);
+             }
+             else{
+		             dprintk(CVP_INFO," %s:  iommu_map llcc eva gain Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
+				            device->res->llccevagain_iova,
+                            device->res->llccevagain_phyaddr + (0x1000*scid),
+                            device->res->llccevagain_size);
+
+                     iova = device->res->llccevagain_iova;
+             }
+          } 
+          else
+          {
+      		dprintk(CVP_ERR, " %s: %s: Invalid subcache name %s\n",__func__,
+      				sinfo->name);
+      	   }
+    }
+        return iova;
+     
+}
 static int __init_subcaches(struct iris_hfi_device *device)
 {
 	int rc = 0;
@@ -3453,9 +3567,20 @@ static int __init_subcaches(struct iris_hfi_device *device)
 
 	iris_hfi_for_each_subcache(device, sinfo) {
 		if (!strcmp("cvp", sinfo->name)) {
-			// sinfo->subcache = llcc_slice_getd(LLCC_CVP);  //TODO: AURORA-BU
+			 sinfo->subcache = llcc_slice_getd(LLCC_CVP);  //TODO: AURORA-BU
+             sinfo->sc_clentid = EVA;
 		} else if (!strcmp("cvpfw", sinfo->name)) {
-			// sinfo->subcache = llcc_slice_getd(LLCC_CVPFW);  //TODO: AURORA-BU
+			sinfo->subcache = llcc_slice_getd(LLCC_CVPFW);
+            sinfo->sc_clentid = LLCC_CVPFW;
+		} else if (!strcmp("eva_left", sinfo->name)) {
+			sinfo->subcache = llcc_slice_getd(LLCC_EVALFT);
+            sinfo->sc_clentid = LSR_LEFT;
+                } else if (!strcmp("eva_right", sinfo->name)) {
+			sinfo->subcache = llcc_slice_getd(LLCC_EVARGHT);
+            sinfo->sc_clentid = LSR_RIGHT;
+                } else if (!strcmp("eva_gain", sinfo->name)) {
+			sinfo->subcache = llcc_slice_getd(LLCC_EVAGAIN);
+            sinfo->sc_clentid = GAIN_MESH;
 		} else {
 			dprintk(CVP_ERR, "Invalid subcache name %s\n",
 					sinfo->name);
@@ -3471,6 +3596,8 @@ static int __init_subcaches(struct iris_hfi_device *device)
 		}
 		dprintk(CVP_CORE, "init_subcaches: %s\n",
 			sinfo->name);
+
+        sinfo->sc_ioaddr = map_llcc_iommu_addr(device, sinfo);
 	}
 
 	return 0;
@@ -3662,7 +3789,7 @@ static int __enable_subcaches(struct iris_hfi_device *device)
 
 	/* Activate subcaches */
 	iris_hfi_for_each_subcache(device, sinfo) {
-		// rc = llcc_slice_activate(sinfo->subcache);   //TODO: AURORA-BU
+		 rc = llcc_slice_activate(sinfo->subcache);   //TODO: AURORA-BU
 		if (rc) {
 			dprintk(CVP_WARN, "Failed to activate %s: %d\n",
 				sinfo->name, rc);
@@ -3707,7 +3834,9 @@ static int __set_subcaches(struct iris_hfi_device *device)
 	iris_hfi_for_each_subcache(device, sinfo) {
 		if (sinfo->isactive) {
 			sc_res[c].size = sinfo->subcache->slice_size;
-			sc_res[c].sc_id = sinfo->subcache->slice_id;
+			sc_res[c].sc_id = (msm_cvp_llcc_enable == 1) ? sinfo->subcache->slice_id : 0;
+            sc_res[c].scid_Client = sinfo->sc_clentid;
+            sc_res[c].scid_RegAddr = sinfo->sc_ioaddr;
 			c++;
 		}
 	}
@@ -3802,7 +3931,7 @@ static int __disable_subcaches(struct iris_hfi_device *device)
 		if (sinfo->isactive) {
 			dprintk(CVP_CORE, "De-activate subcache %s\n",
 				sinfo->name);
-			// rc = llcc_slice_deactivate(sinfo->subcache);   //TODO: AURORA-BU
+			 rc = llcc_slice_deactivate(sinfo->subcache);   //TODO: AURORA-BU
 			if (rc) {
 				dprintk(CVP_WARN,
 					"Failed to de-activate %s: %d\n",
@@ -3873,7 +4002,30 @@ static int __set_ubwc_config(struct iris_hfi_device *device)
 fail_to_set_ubwc_config:
 	return rc;
 }
+static int __vote_spad_clks(struct iris_hfi_device *device)
+{
+    int rc = 0;
+	rc = msm_cvp_prepare_enable_clk(device, "gcc_ddrss_spad_clk");
+	if (rc) {
+		dprintk(CVP_ERR, "Failed to vote spad clk: %d\n", rc);
+		goto fail_reset_spad_clks;
+	}
 
+    dprintk(CVP_PWR,
+            "Voting gcc_ddrss_spad_clk : Calling msm_cvp_vote_clk .....\n");
+        rc =  msm_cvp_vote_clk(device,"gcc_ddrss_spad_clk", 400000000);
+
+        if (rc) {
+            dprintk(CVP_ERR, "Failed to vote gcc_ddrss_spad_clk clk: %d\n", rc);
+            goto fail_reset_spad_clks;
+        }
+	dprintk(CVP_PWR, "EVA-LSR voted spad clks\n");
+	return 0;
+
+fail_reset_spad_clks:
+	msm_cvp_disable_unprepare_clk(device, "gcc_ddrss_spad_clk");
+    return rc;
+}
 static int __power_on_controller(struct iris_hfi_device *device)
 {
 	int rc = 0;
@@ -3901,6 +4053,41 @@ static int __power_on_controller(struct iris_hfi_device *device)
 		dprintk(CVP_ERR, "Failed to enable cvp_clk: %d\n", rc);
 		goto fail_enable_clk;
 	}
+dprintk(CVP_PWR,
+		"Voting gcc_iris_ss_hf_axi1_clk\n");
+	rc = msm_cvp_prepare_enable_clk(device, "gcc_iris_ss_hf_axi1_clk");
+	if (rc) {
+		dprintk(CVP_ERR, "Failed to enable gcc_iris_ss_hf_axi1_clk clk: %d\n", rc);
+		goto fail_reset_clks;
+	}
+dprintk(CVP_PWR,
+		"Enabled gcc_iris_ss_hf_axi1_clk rc %d\n",rc);
+dprintk(CVP_PWR,
+		"Voting gcc_iris_ss_hf_axi1_clk : Calling msm_cvp_vote_clk .....\n");
+    rc =  msm_cvp_vote_clk(device,"gcc_iris_ss_hf_axi1_clk", 250000000);
+
+	if (rc) {
+		dprintk(CVP_ERR, "Failed to vote gcc_iris_ss_hf_axi1_clk clk: %d\n", rc);
+		goto fail_reset_clks;
+	}
+
+dprintk(CVP_PWR,
+		"Voting gcc_iris_ss_spd_axi1_clk\n");
+	rc = msm_cvp_prepare_enable_clk(device, "gcc_iris_ss_spd_axi1_clk");
+dprintk(CVP_PWR,
+		"Enabled gcc_iris_ss_spd_axi1_clk rc %d\n",rc);
+	if (rc) {
+		dprintk(CVP_ERR, "Failed to enable gcc_iris_ss_spd_axi1_clk: %d\n", rc);
+		goto fail_enable_clk;
+	}
+    dprintk(CVP_PWR,
+            "Voting gcc_iris_ss_spd_axi1_clk : Calling msm_cvp_vote_clk .....\n");
+        rc =  msm_cvp_vote_clk(device,"gcc_iris_ss_spd_axi1_clk", 400000000);
+
+        if (rc) {
+            dprintk(CVP_ERR, "Failed to vote gcc_iris_ss_spd_axi1_clk clk: %d\n", rc);
+            goto fail_reset_clks;
+        }
 
 	dprintk(CVP_PWR, "EVA controller powered on\n");
 	return 0;
@@ -3964,7 +4151,11 @@ static int __iris_power_on(struct iris_hfi_device *device)
 	rc = __power_on_core(device);
 	if (rc)
 		goto fail_enable_core;
-
+dprintk(CVP_PWR, "Calling __vote_spad_clks\n");
+	rc = __vote_spad_clks(device);
+	if (rc)
+		goto fail_voting_spad;
+dprintk(CVP_PWR, "Done __vote_spad_clks\n");
 	rc = msm_cvp_scale_clocks(device);
 	if (rc) {
 		dprintk(CVP_WARN,
@@ -3992,7 +4183,8 @@ static int __iris_power_on(struct iris_hfi_device *device)
 		CVP_WRAPPER_DEBUG_BRIDGE_LPI_CONTROL, 0x7);
 	pr_info(CVP_DBG_TAG "cvp (eva) powered on\n", "pwr");
 	return 0;
-
+fail_voting_spad:
+    __unvote_spad(device);
 fail_enable_core:
 	__power_off_controller(device);
 fail_enable_controller:
@@ -4145,7 +4337,19 @@ static int __power_off_controller(struct iris_hfi_device *device)
 
 		__print_sidebandmanager_regs(device);
 	}
-
+#ifdef EVA_LSR
+    /* HPG 6.2.2 Step 3, Set LSR NOC to Low power*/
+	__write_register(device, CVP_AON_WRAPPER_LSR_NOC_LPI_CONTROL, 0x1);
+	while (!reg_status && count < max_count) {
+		lpi_status =
+			 __read_register(device,
+				CVP_AON_WRAPPER_LSR_NOC_LPI_STATUS);
+		reg_status = lpi_status & BIT(0);
+		/* Wait for CPU noc lpi status to be set */
+		usleep_range(50, 100);
+		count++;
+	}
+#endif 
 
 	/* HPG 6.2.2 Step 3, debug bridge to low power BYPASSED */
 
@@ -4175,6 +4379,11 @@ static int __power_off_controller(struct iris_hfi_device *device)
 	__write_register(device, CVP_WRAPPER_QNS4PDXFIFO_RESET, 0x0);
 	__write_register(device, CVP_WRAPPER_AXI_CLOCK_CONFIG, 0x0);
 #endif
+
+	msm_cvp_disable_unprepare_clk(device, "gcc_iris_ss_spd_axi1_clk");
+
+	msm_cvp_disable_unprepare_clk(device, "gcc_iris_ss_hf_axi1_clk");
+
 	/* HPG 6.2.2 Step 5 */
 	msm_cvp_disable_unprepare_clk(device, "cvp_clk");
 
@@ -4284,7 +4493,80 @@ static int __power_off_core(struct iris_hfi_device *device)
 
 	if (warn_flag)
 		__print_sidebandmanager_regs(device);
-
+#ifdef EVA_LSR
+//// LSR_NoC Partial-Reset
+//
+//// Check for LSR IDLE -- GCX_DONE_IDLE_INT, CSC_DONE_IDLE_INT
+//
+//reg_poll(`CVP_LSR0_LSR_SS_IRQ_STATUS, 32'h0000_0202,32'h0000_0202);      
+//
+//reg_poll(`CVP_LSR1_LSR_SS_IRQ_STATUS, 32'h0000_0202,32'h0000_0202);   
+//
+//
+//
+//// Program Ack Sel and apply partial reset on MSF intf for GCX, CSC, DDL and wait for ACK
+//
+//reg_write(`AON_WRAPPER_LSR_NOC_RESET_REQ, 32'h00FF_FFFF);
+__write_register(device, AON_WRAPPER_LSR_NOC_RESET_REQ, 0x00FFFFFF);
+//
+//
+//// AON_WRAPPER_LSR_NOC_RESET_ACK
+//
+//reg_poll(`AON_WRAPPER_LSR_NOC_RESET_ACK, 32'h0000_0FFF, 32'h0000_0FFF);
+	count = 0;
+	do {
+		value = __read_register(device, AON_WRAPPER_LSR_NOC_RESET_ACK);
+		if ((value & 0xFFF) == 0xFFF)
+			break;
+		else
+			usleep_range(100, 200);
+		count++;
+	} while (count < max_count);     
+//
+//
+//
+//// Apply partial reset pulse
+//
+//reg_write(`CVP_VPU_WRAPPER_CORE_SW_RESET_H, 32'h0000_0000);
+__write_register(device, CVP_WRAPPER_CORE_SW_RESET_H, 0x00000000);
+//reg_write(`CVP_VPU_WRAPPER_CORE_SW_RESET_L, 32'h0007_FF80);
+__write_register(device, CVP_WRAPPER_CORE_SW_RESET_L, 0x0007FF80);
+//reg_write(`CVP_VPU_WRAPPER_CORE_SW_RESET_TRIGGER, 32'h0000_0001);
+__write_register(device, CVP_WRAPPER_CORE_SW_RESET_TRIGGER, 0x1);
+//reg_write(`CVP_VPU_WRAPPER_CORE_SW_RESET_H, 32'h0000_0000); // Optional
+__write_register(device, CVP_WRAPPER_CORE_SW_RESET_H, 0x00000000);
+//reg_write(`CVP_VPU_WRAPPER_CORE_SW_RESET_L, 32'h0000_0000); 
+__write_register(device, CVP_WRAPPER_CORE_SW_RESET_L, 0x00000000);
+//reg_write(`CVP_VPU_WRAPPER_CORE_SW_RESET_TRIGGER, 32'h0000_0000);
+__write_register(device, CVP_WRAPPER_CORE_SW_RESET_TRIGGER, 0x00000000);
+//
+//
+//// De-assert partial reset REQ on MSF interface for GCX, CSC, DDL
+//
+//reg_write(`AON_WRAPPER_LSR_NOC_RESET_REQ, 32'h00FF_F000);
+__write_register(device, AON_WRAPPER_LSR_NOC_RESET_REQ, 0x00FFF000);
+//
+//
+//// AON_WRAPPER_LSR_NOC_RESET_ACK
+//
+//reg_poll(`AON_WRAPPER_LSR_NOC_RESET_ACK, 32'h0000_0000, 32'h0000_0FFF);       
+	count = 0;
+	do {
+		value = __read_register(device, AON_WRAPPER_LSR_NOC_RESET_ACK);
+		if ((value & 0xFFF) == 0x000)
+			break;
+		else
+			usleep_range(100, 200);
+		count++;
+	} while (count < max_count);
+//
+//
+//// Reset Ack Sel 
+//
+//reg_write(`AON_WRAPPER_LSR_NOC_RESET_REQ, 32'h0000_0000);
+__write_register(device, AON_WRAPPER_LSR_NOC_RESET_REQ, 0x00000000);
+//// End LSR NoC Partial Reset
+#endif
 	/* Reset both sides of 2 ahb2ahb_bridges (TZ and non-TZ) */
 	__write_register(device, CVP_AHB_BRIDGE_SYNC_RESET, 0x3);
 	__write_register(device, CVP_AHB_BRIDGE_SYNC_RESET, 0x2);
@@ -4297,7 +4579,11 @@ static int __power_off_core(struct iris_hfi_device *device)
 	msm_cvp_disable_unprepare_clk(device, "video_cc_mvs1_clk_src");
 	return 0;
 }
-
+static int __unvote_spad(struct iris_hfi_device *device)
+{
+    msm_cvp_disable_unprepare_clk(device, "gcc_ddrss_spad_clk");
+    return 0;
+}
 static void power_off_iris2(struct iris_hfi_device *device)
 {
 	if (!device->power_enabled || !device->res->sw_power_collapsible)
@@ -4306,7 +4592,7 @@ static void power_off_iris2(struct iris_hfi_device *device)
 	if (!(device->intr_status & CVP_WRAPPER_INTR_STATUS_A2HWD_BMSK))
 		disable_irq_nosync(device->cvp_hal_data->irq);
 	device->intr_status = 0;
-
+        __unvote_spad(device);
 	__power_off_core(device);
 
 	__power_off_controller(device);
@@ -4428,87 +4714,44 @@ static int __dev_regspace_mapping(struct iris_hfi_device *device)
 				      device->res->ipclite_iova ,
                       device->res->ipclite_phyaddr,
                       device->res->ipclite_size);
+       }
+
+       //Device Region
+
+        //Display
+	   rc = iommu_map(cb->domain,
+                      device->res->display_iova,
+                      device->res->display_phyaddr,
+                      device->res->display_size,
+                      IOMMU_MMIO | IOMMU_READ | IOMMU_WRITE);
+       if (rc) {
+            dprintk(CVP_ERR," %s:  iommu_map display failed, rc:%d\n", __func__, rc);
+       }
+	   else
+	   {
+		   dprintk(CVP_INFO," %s:  iommu_map display Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
+				      device->res->display_iova ,
+                      device->res->display_phyaddr,
+                      device->res->display_size);
 
 	   }
-       //Device Region
-       //LLCC
-//       iris_hfi_for_each_subcache(device, sinfo) 
-//       {
-//
-//       	if (IS_ERR_OR_NULL(sinfo->subcache)) {
-//       		rc = PTR_ERR(sinfo->subcache) ?
-//       			PTR_ERR(sinfo->subcache) : -EBADHANDLE;
-//       		dprintk(CVP_ERR,
-//       			 "init_subcaches: invalid subcache: %s rc %d\n",
-//       			sinfo->name, rc);
-//       		sinfo->subcache = NULL;
-//       		goto err_subcache_get;
-//       	}
-//       	dprintk(CVP_CORE, " %s: init_subcaches: %s\n", __func__,
-//       		sinfo->name);
-//      
-//       	if (!strcmp("eva_left", sinfo->name))
-//           {
-//       	      scid = sinfo->subcache->slice_id;
-//              rc = iommu_map(cb->domain, 
-//                             device->res->llccevaleft_iova,
-//                             device->res->llccevaleft_phyaddr + (0x1000*scid),
-//                             device->res->llccevaleft_size ,
-//                             IOMMU_MMIO | IOMMU_READ | IOMMU_WRITE);
-//              if (rc) {
-//                      dprintk(CVP_ERR," %s:  iommu_map llcc eva left failed, rc:%d\n", __func__, rc);
-//              }
-//           } 
-//           else if (!strcmp("eva_right", sinfo->name)) 
-//           {
-//       	      scid = sinfo->subcache->slice_id;
-//              rc = iommu_map(cb->domain, 
-//                             device->res->llccevaright_iova,
-//                             device->res->llccevaright_phyaddr + (0x1000*scid),
-//                             device->res->llccevaright_size ,
-//                             IOMMU_MMIO | IOMMU_READ | IOMMU_WRITE);
-//              if (rc) {
-//                      dprintk(CVP_ERR,"  %s: iommu_map llcc eva right failed, rc:%d\n", __func__, rc);
-//              }
-//           } 
-//           else if (!strcmp("eva_gain", sinfo->name)) 
-//           {
-//       	      scid = sinfo->subcache->slice_id;
-//              rc = iommu_map(cb->domain, 
-//                             device->res->llccevagain_iova,
-//                             device->res->llccevagain_phyaddr + (0x1000*scid),
-//                             device->res->llccevagain_size ,
-//                             IOMMU_MMIO | IOMMU_READ | IOMMU_WRITE);
-//              if (rc) {
-//                      dprintk(CVP_ERR," %s:  iommu_map eva gain failed, rc:%d\n", __func__, rc);
-//              }
-//           } 
-//           else
-//           {
-//       		dprintk(CVP_ERR, " %s: %s: Invalid subcache name %s\n",__func__,
-//       				sinfo->name);
-//       	   }
-//      
-//        }
-//
-//        //Display
-//	   rc = iommu_map(cb->domain,
-//                      device->res->display_iova,
-//                      device->res->display_phyaddr,
-//                      device->res->display_size,
-//                      IOMMU_MMIO | IOMMU_READ | IOMMU_WRITE);
-//       if (rc) {
-//            dprintk(CVP_ERR," %s:  iommu_map display failed, rc:%d\n", __func__, rc);
-//       }
-//        //Always ON Timers
-//	   rc = iommu_map(cb->domain,
-//                      device->res->aontimers_iova,
-//                      device->res->aontimers_phyaddr,
-//                      device->res->aontimers_size,
-//                      IOMMU_MMIO | IOMMU_READ | IOMMU_WRITE);
-//       if (rc) {
-//            dprintk(CVP_ERR," %s:  iommu_map always-on timers failed, rc:%d\n", __func__, rc);
-//       }
+        //Always ON Timers
+	   rc = iommu_map(cb->domain,
+                      device->res->aontimers_iova,
+                      device->res->aontimers_phyaddr,
+                      device->res->aontimers_size,
+                      IOMMU_MMIO | IOMMU_READ | IOMMU_WRITE);
+       if (rc) {
+            dprintk(CVP_ERR," %s:  iommu_map always-on timers failed, rc:%d\n", __func__, rc);
+       }
+	   else
+	   {
+		   dprintk(CVP_INFO," %s:  iommu_map aon-timers Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
+				      device->res->aontimers_iova ,
+                      device->res->aontimers_phyaddr,
+                      device->res->aontimers_size);
+
+	   }
        //hwmutex iova
 	   rc = iommu_map(cb->domain,
                       device->res->hwmutex_iova,// 0xFFB00000 or 0xde000000,
@@ -4533,7 +4776,6 @@ static int __dev_regspace_mapping(struct iris_hfi_device *device)
        //                  device->res->device_iova + device->res->device_size);//device mem end va
 
     }
-    dprintk(CVP_INFO,"sssanjee iommu_map3\n");
     return rc;
 err_subcache_get:
 	__deinit_subcaches(device);
@@ -4543,20 +4785,32 @@ static int __dev_regspace_unmap(struct iris_hfi_device *device)
 {
     int rc = 0;
     struct context_bank_info *cb;
-
     //non-secure context bank
     cb = msm_cvp_smem_get_context_bank(device->res, 0);
     if (!cb) {
             dprintk(CVP_ERR," %s: failed to get context bank\n", __func__);
     }
     iommu_unmap(cb->domain, device->res->ipclite_iova, device->res->ipclite_size);//
-
-//    iommu_unmap(cb->domain, device->res->llccevaleft_iova, device->res->llccevaleft_size);//
-//    iommu_unmap(cb->domain, device->res->llccevaright_iova, device->res->llccevaright_size);//
-//    iommu_unmap(cb->domain, device->res->llccevagain_iova, device->res->llccevagain_size);//
-//    iommu_unmap(cb->domain, device->res->display_iova, device->res->display_size);//
-//    iommu_unmap(cb->domain, device->res->aontimers_iova, device->res->aontimers_size);//
+    iommu_unmap(cb->domain, device->res->display_iova, device->res->display_size);//
+    iommu_unmap(cb->domain, device->res->aontimers_iova, device->res->aontimers_size);//
     iommu_unmap(cb->domain, device->res->hwmutex_iova, device->res->hwmutex_size);//
+    return rc;
+
+}
+static int __llcc_regspace_unmap(struct iris_hfi_device *device)
+{
+    int rc = 0;
+    struct context_bank_info *cb;
+    //non-secure context bank
+    cb = msm_cvp_smem_get_context_bank(device->res, 0);
+    if (!cb) {
+            dprintk(CVP_ERR," %s: failed to get context bank\n", __func__);
+    }
+
+    iommu_unmap(cb->domain, device->res->llccevaleft_iova, device->res->llccevaleft_size);//
+    iommu_unmap(cb->domain, device->res->llccevaright_iova, device->res->llccevaright_size);//
+    iommu_unmap(cb->domain, device->res->llccevagain_iova, device->res->llccevagain_size);//
+
     return rc;
 
 }
@@ -4680,7 +4934,6 @@ static const char * const mid_names[16] = {
 	"Invalid",
 	"Invalid"
 };
-
 static void __print_reg_details(u32 val)
 {
 	u32 mid, sid;

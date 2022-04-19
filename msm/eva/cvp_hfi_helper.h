@@ -141,9 +141,19 @@ struct cvp_hfi_enable {
 
 #define HFI_RESOURCE_SYSCACHE 0x00000002
 
+typedef enum eEVA_LSR_SUBCACHE_IDX
+{
+EVA = 0,
+LSR_LEFT = 1,
+LSR_RIGHT = 2,
+GAIN_MESH = 3
+}eEVA_LSR_SUBCACHE_IDX;
+
 struct cvp_hfi_resource_subcache_type {
 	u32 size;
 	u32 sc_id;
+    u32 scid_Client;//eEVA_LSR_SUBCACHE_IDX
+    u32 scid_RegAddr;
 };
 
 struct cvp_hfi_resource_syscache_info_type {

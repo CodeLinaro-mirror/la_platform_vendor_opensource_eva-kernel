@@ -156,6 +156,9 @@ struct eva_kmd_hfi_packet {
 #define EVA_KMD_PROP_PWR_FPS_ICA	0x21
 
 #define EVA_KMD_PROP_PWR_SW_PC	0x22
+#define EVA_KMD_PROP_PWR_LSR	0x23
+#define EVA_KMD_PROP_PWR_LSR_OP	0x24
+#define EVA_KMD_PROP_PWR_FPS_LSR	0x25
 #define MAX_KMD_PROP_NUM_PER_PACKET		8
 #define MAX_KMD_PROP_TYPE	(EVA_KMD_PROP_PWR_FPS_ICA + 1)
 

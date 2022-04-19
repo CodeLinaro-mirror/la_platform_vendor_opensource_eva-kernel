@@ -60,6 +60,7 @@ extern int msm_cvp_fw_low_power_mode;
 extern bool msm_cvp_fw_coverage;
 extern bool msm_cvp_thermal_mitigation_disabled;
 extern bool msm_cvp_cacheop_disabled;
+extern int msm_cvp_llcc_enable;
 extern int msm_cvp_clock_voting;
 extern bool msm_cvp_syscache_disable;
 extern bool msm_cvp_dsp_disable;

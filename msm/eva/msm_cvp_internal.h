@@ -129,6 +129,30 @@ struct msm_cvp_qos_setting {
 	u32 dangerlut_low;
 	u32 safelut_low;
 };
+struct msm_lsr_csc_gcx_qos_setting {
+	u32 l_prioritylut_low;
+	u32 l_prioritylut_high;
+	u32 l_urgency_low;
+	u32 l_dangerlut_low;
+	u32 l_safelut_low;
+	u32 r_prioritylut_low;
+	u32 r_prioritylut_high;
+	u32 r_urgency_low;
+	u32 r_dangerlut_low;
+	u32 r_safelut_low;
+};
+struct msm_lsr_ddl_qos_setting {
+	u32 l_prioritylut_low;
+	u32 l_prioritylut_high;
+	u32 l_urgency_low;
+	u32 l_dangerlut_low;
+	u32 l_safelut_low;
+	u32 r_prioritylut_low;
+	u32 r_prioritylut_high;
+	u32 r_urgency_low;
+	u32 r_dangerlut_low;
+	u32 r_safelut_low;
+};
 
 struct msm_cvp_platform_data {
 	struct msm_cvp_common_data *common_data;
@@ -137,6 +161,8 @@ struct msm_cvp_platform_data {
 	uint32_t vpu_ver;
 	struct msm_cvp_ubwc_config_data *ubwc_config;
 	struct msm_cvp_qos_setting *noc_qos;
+	struct msm_lsr_csc_gcx_qos_setting *lsr_noc_csc_gcx_qos;
+	struct msm_lsr_ddl_qos_setting *lsr_noc_ddl_qos;
 };
 
 struct msm_cvp_drv {
@@ -205,7 +231,7 @@ enum msm_cvp_modes {
 };
 
 #define MAX_NUM_MSGS_PER_SESSION	128
-#define CVP_MAX_WAIT_TIME	20000   // 2000 TODO: AURORA-BU
+#define CVP_MAX_WAIT_TIME	10000   // 2000 TODO: AURORA-BU
 
 struct cvp_session_msg {
 	struct list_head node;

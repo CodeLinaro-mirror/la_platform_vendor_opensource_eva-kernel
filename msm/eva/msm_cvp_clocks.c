@@ -361,6 +361,48 @@ int msm_cvp_prepare_enable_clk(struct iris_hfi_device *device,
 	return -EINVAL;
 }
 
+int msm_cvp_vote_clk(struct iris_hfi_device *device,
+		const char *name, u32 freq)
+{
+	struct clock_info *cl = NULL;
+	int rc = 0;
+
+	if (!device) {
+		dprintk(CVP_ERR, "Invalid params: %pK\n", device);
+		return -EINVAL;
+	}
+
+	iris_hfi_for_each_clock(device, cl) {
+		if (strcmp(cl->name, name))
+                        continue;
+		/*
+		* For the clocks we control, set the rate prior to preparing
+		* them.  Since we don't really have a load at this point,
+		* scale it to the lowest frequency possible
+		*/
+        dprintk(CVP_PWR,
+				"%s: clock source to be set with rate: %ld for %s\n",
+				__func__, freq,name);
+				dprintk(CVP_PWR,
+					"%s: set clock with clk_set_rate\n",
+					__func__);
+				rc = clk_set_rate(cl->clk,freq);
+				if (rc) {
+					dprintk(CVP_ERR,
+						"Failed set clock %u %s: %d\n",
+						freq, cl->name, rc);
+					return rc;
+				}
+		dprintk(CVP_PWR, "Clock: %s is Voted : clk_set_rate rc %d\n",
+				cl->name,rc);
+		return 0;
+	}
+
+	dprintk(CVP_ERR, "%s clock %s not found\n", __func__, name);
+	return -EINVAL;
+}
+
+
 int msm_cvp_disable_unprepare_clk(struct iris_hfi_device *device,
 		const char *name)
 {

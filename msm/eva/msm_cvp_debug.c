@@ -23,6 +23,7 @@ int msm_cvp_fw_debug_mode = 1;
 int msm_cvp_fw_low_power_mode = 1;
 bool msm_cvp_fw_coverage = !true;
 bool msm_cvp_cacheop_enabled = true;
+int msm_cvp_llcc_enable = 0;
 bool msm_cvp_thermal_mitigation_disabled = !true;
 bool msm_cvp_cacheop_disabled = !true;
 int msm_cvp_clock_voting = !1;
@@ -259,6 +260,8 @@ struct dentry *msm_cvp_debugfs_init_drv(void)
 			&msm_cvp_thermal_mitigation_disabled);
 	debugfs_create_bool("enable_cacheop", 0644, dir,
 			&msm_cvp_cacheop_enabled);
+	debugfs_create_x32("enable_llcc", 0644, dir,
+			&msm_cvp_llcc_enable);
 	debugfs_create_bool("disable_cvp_syscache", 0644, dir,
 			&msm_cvp_syscache_disable);
 	debugfs_create_bool("disable_dcvs", 0644, dir,
