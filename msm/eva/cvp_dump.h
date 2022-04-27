@@ -85,7 +85,7 @@ void add_queue_header_to_va_md_list(void *device);
  * @va_md_buff_size: Size of the buffer which needs to be dumped
  * @region_name: Dump will be collected with this name
  * @copy: Flag to indicate if the buffer data needs to be copied
- *		to the intermidiate buffer allocated by kzmalloc.
+ *	  to the intermidiate buffer allocated by kzmalloc.
 */
 struct eva_va_md_queue {
 	struct list_head list;

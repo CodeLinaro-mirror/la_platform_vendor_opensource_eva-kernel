@@ -15,16 +15,11 @@
 #include "msm_cvp_clocks.h"
 #include "msm_cvp.h"
 #include "cvp_core_hfi.h"
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-#include <linux/notifier.h>
-#include <linux/msm_kgsl.h>
-#include "msm_gpu_eva.h"
-#endif
+
 #define IS_ALREADY_IN_STATE(__p, __d) (\
 	(__p >= __d)\
 )
 
-#define SW_PC_ENABLE	(1)
 static void handle_session_error(enum hal_command_response cmd, void *data);
 
 static void msm_cvp_comm_generate_session_error(struct msm_cvp_inst *inst)
@@ -325,43 +320,7 @@ static void handle_sys_release_res_done(
 	complete(&core->completions[
 			SYS_MSG_INDEX(HAL_SYS_RELEASE_RESOURCE_DONE)]);
 }
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-static void handle_sys_gmu_stop_done(enum hal_command_response cmd, void *data)
-{
-	struct msm_cvp_cb_cmd_done *response = data;
-	struct msm_cvp_core *core;
 
-	if (!response) {
-	dprintk(CVP_ERR,
-		"Failed to get valid response for sys init\n");
-	return;
-	}
-	core = get_cvp_core(response->device_id);
-	if (!core) {
-		dprintk(CVP_ERR, "Wrong device_id received\n");
-		return;
-	}
-	complete(&core->completions[
-		SYS_MSG_INDEX(HAL_SYS_GMU_STOP_DONE)]);
-}
-static void handle_sys_gmu_start_done(enum hal_command_response cmd, void *data)
-{
-	struct msm_cvp_cb_cmd_done *response = data;
-	struct msm_cvp_core *core;
-	if (!response) {
-		dprintk(CVP_ERR,
-			"Failed to get valid response for sys init\n");
-		return;
-	}
-	core = get_cvp_core(response->device_id);
-	if (!core) {
-		dprintk(CVP_ERR, "Wrong device_id received\n");
-		return;
-	}
-	complete(&core->completions[
-		SYS_MSG_INDEX(HAL_SYS_GMU_START_DONE)]);
-}
-#endif
 void change_cvp_inst_state(struct msm_cvp_inst *inst, enum instance_state state)
 {
 	if (!inst) {
@@ -805,14 +764,6 @@ void cvp_handle_cmd_response(enum hal_command_response cmd, void *data)
         case HAL_SESSION_DUMP_NOTIFY:
 		handle_session_dump_notify(cmd, data);
 		break;
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-	case HAL_SYS_GMU_STOP_DONE:
-		handle_sys_gmu_stop_done(cmd, data);
-		break;
-	case HAL_SYS_GMU_START_DONE:
-		handle_sys_gmu_start_done(cmd, data);
-		break;
-#endif
 	default:
 		dprintk(CVP_HFI, "response unhandled: %d\n", cmd);
 		break;
@@ -1359,21 +1310,7 @@ void msm_cvp_ssr_handler(struct work_struct *work)
 		return;
 	}
 	hdev = core->device;
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-	/*
-	 * To validate GPU SSR Flow by triggering
-	 * GPU SSR from Debug node
-	 */
-	if( core->ssr_type == SSR_GPU ) {
-		dprintk(CVP_INFO, "%s: GPU SSSR BEGIN \n", __func__);
-		rc = kgsl_eva_notifier_callback( NULL,GPU_SSR_BEGIN, NULL );
-		if(rc == 0) {
-			rc = kgsl_eva_notifier_callback(NULL,GPU_SSR_END, NULL );
-			dprintk(CVP_INFO, "%s: GPU SSSR END \n", __func__);
-		}
-		return;
-	}
-#endif
+
 	if (core->ssr_type == SSR_SESSION_ABORT) {
 		struct msm_cvp_inst *inst = NULL, *s;
 
@@ -1467,7 +1404,6 @@ int msm_cvp_comm_kill_session(struct msm_cvp_inst *inst)
 	}
 	dprintk(CVP_WARN, "%s: inst %pK, session %x state %d\n", __func__,
 		inst, hash32_ptr(inst->session), inst->state);
-	msm_eva_set_sw_pc(SW_PC_ENABLE);
 	/*
 	 * We're internally forcibly killing the session, if fw is aware of
 	 * the session send session_abort to firmware to clean up and release

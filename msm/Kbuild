@@ -25,6 +25,16 @@ KBUILD_CPPFLAGS += -DCONFIG_EVA_KALAMA=1
 ccflags-y += -DCONFIG_EVA_KALAMA=1
 endif
 
+ifeq ($(CONFIG_ARCH_NEO), y)
+# include $(EVA_ROOT)/config/neoeva.conf
+# LINUXINCLUDE    += -include $(EVA_ROOT)/config/neoevaconf.h
+
+$(info within KBUILD file CONFIG_ARCH_NEO = $(CONFIG_ARCH_NEO))
+# include $(EVA_ROOT)/config/waipio.mk
+KBUILD_CPPFLAGS += -DCONFIG_EVA_NEO=1
+ccflags-y += -DCONFIG_EVA_NEO=1
+endif
+
 msm-eva-objs := eva/cvp.o \
         eva/msm_cvp_ioctl.o \
         eva/msm_cvp_platform.o \
@@ -36,7 +46,6 @@ msm-eva-objs := eva/cvp.o \
         eva/msm_cvp_res_parse.o \
         eva/cvp_dump.o \
         eva/cvp_hfi.o \
-        eva/msm_gpu_eva.o \
         eva/hfi_response_handler.o \
         eva/hfi_packetization.o \
         eva/cvp_core_hfi.o \

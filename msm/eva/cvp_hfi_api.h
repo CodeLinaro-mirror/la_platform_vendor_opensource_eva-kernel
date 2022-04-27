@@ -74,9 +74,6 @@ enum hal_ssr_trigger_type {
 	SSR_SW_DIV_BY_ZERO,
 	SSR_HW_WDOG_IRQ,
 	SSR_SESSION_ABORT,
-	#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-	SSR_GPU,
-	#endif
 };
 
 enum hal_intra_refresh_mode {
@@ -127,10 +124,6 @@ enum hal_command_response {
 	HAL_SYS_IDLE,
 	HAL_SYS_DEBUG,
 	HAL_SYS_WATCHDOG_TIMEOUT,
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-	HAL_SYS_GMU_START_DONE,
-	HAL_SYS_GMU_STOP_DONE,
-#endif
 	HAL_SYS_ERROR,
 	/* SESSION COMMANDS_DONE */
 	HAL_SESSION_EVENT_CHANGE,
@@ -273,9 +266,6 @@ struct cvp_hfi_device {
 	int (*noc_error_info)(void *dev);
 	int (*validate_session)(void *sess, const char *func);
 	int (*pm_qos_update)(void *device);
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-	int (*notify_gpu_status)(void *device, u32 packet_type);
-#endif
 };
 
 typedef void (*hfi_cmd_response_callback) (enum hal_command_response cmd,

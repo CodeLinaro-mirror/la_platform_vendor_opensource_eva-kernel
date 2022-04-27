@@ -631,7 +631,6 @@ static int __init msm_cvp_init(void)
 
 static void __exit msm_cvp_exit(void)
 {
-if (0) {
 	cvp_dsp_device_exit();
 	kmem_cache_destroy(cvp_driver->msg_cache);
 	kmem_cache_destroy(cvp_driver->frame_cache);
@@ -643,7 +642,6 @@ if (0) {
 	mutex_destroy(&cvp_driver->lock);
 	kfree(cvp_driver);
 	cvp_driver = NULL;
-} // TODO: AURORA-BU
 }
 
 module_init(msm_cvp_init);

@@ -108,21 +108,6 @@ struct cvp_buf_type {
 	};
 };
 
-struct cvp_fence_buf_type {
-	s32 fd;
-	u32 size;
-	u32 offset;
-	u32 flags;
-	union {
-		struct dma_buf *dbuf;
-		struct {
-			u32 reserved1;
-			u32 reserved2;
-		};
-	};
-	u32 forward_fence_handle;
-	u32 reverse_fence_handle;
-};
 enum buffer_owner {
 	DRIVER,
 	FIRMWARE,
@@ -214,9 +199,6 @@ int msm_cvp_unmap_user_persist(struct msm_cvp_inst *inst,
 			struct eva_kmd_hfi_packet *in_pkt,
 			unsigned int offset, unsigned int buf_num);
 int msm_cvp_map_frame(struct msm_cvp_inst *inst,
-		struct eva_kmd_hfi_packet *in_pkt,
-		unsigned int offset, unsigned int buf_num);
-int msm_cvp_map_frame_lsr(struct msm_cvp_inst *inst,
 		struct eva_kmd_hfi_packet *in_pkt,
 		unsigned int offset, unsigned int buf_num);
 void msm_cvp_unmap_frame(struct msm_cvp_inst *inst, u64 ktid);
