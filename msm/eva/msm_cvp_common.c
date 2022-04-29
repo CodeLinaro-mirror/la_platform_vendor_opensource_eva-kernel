@@ -1437,7 +1437,7 @@ send_again:
 		 * user SSR as non-fatal.
 		 */
 		core->trigger_ssr = true;
-		msm_eva_set_sw_pc(SW_PC_ENABLE)
+		msm_eva_set_sw_pc(SW_PC_ENABLE);
 		rc = call_hfi_op(hdev, core_trigger_ssr,
 				hdev->hfi_device_data, core->ssr_type);
 		if (rc) {
