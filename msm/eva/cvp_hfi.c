@@ -802,7 +802,7 @@ static void __set_registers(struct iris_hfi_device *device)
 			"Setting LSR NOC QOS settings.NOT YET .. X\n");
 #endif //EVA_LSR regs
 }
-static void __set_lsr_noc_registers(struct iris_hfi_device *device)
+/*static void __set_lsr_noc_registers(struct iris_hfi_device *device)
 {
 	struct msm_cvp_core *core;
 	struct msm_cvp_platform_data *pdata;;
@@ -869,7 +869,7 @@ static void __set_lsr_noc_registers(struct iris_hfi_device *device)
     dprintk(CVP_INFO,
 			"Setting LSR NOC QOS settings.DONE .. X\n");
 #endif //EVA_LSR regs
-}
+}*/
 /*
  * The existence of this function is a hack for 8996 (or certain Iris versions)
  * to overcome a hardware bug.  Whenever the GDSCs momentarily power collapse
@@ -4688,8 +4688,6 @@ static int __dev_regspace_mapping(struct iris_hfi_device *device)
 {
     int rc = 0;
     struct context_bank_info *cb;
-    struct subcache_info *sinfo = NULL;
-    uint32_t scid = 0;
     //non-secure context bank
     cb = msm_cvp_smem_get_context_bank(device->res, 0);
         if (!cb) {
@@ -4769,17 +4767,8 @@ static int __dev_regspace_mapping(struct iris_hfi_device *device)
                       device->res->hwmutex_size);
 
 	   }
-
-       // __write_register(device, CVP_CPU_CS_SCIACMDARG1, device->res->uncached_iova);//uncached mem start va
-       // __write_register(device, CVP_CPU_CS_SCIACMDARG2, device->res->device_iova);// device mem start va
-       // __write_register(device, CVP_CPU_CS_SCIACMDARG3, 
-       //                  device->res->device_iova + device->res->device_size);//device mem end va
-
     }
     return rc;
-err_subcache_get:
-	__deinit_subcaches(device);
-	return rc;
 }
 static int __dev_regspace_unmap(struct iris_hfi_device *device)
 {
