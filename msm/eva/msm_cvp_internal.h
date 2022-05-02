@@ -43,7 +43,8 @@
 #define SYS_MSG_INDEX(__msg) (__msg - SYS_MSG_START)
 #define SESSION_MSG_INDEX(__msg) (__msg - SESSION_MSG_START)
 
-#define ARP_BUF_SIZE 0x300000
+// increased size for LSR
+#define ARP_BUF_SIZE 0x600000
 
 #define CVP_RT_PRIO_THRESHOLD 1
 
