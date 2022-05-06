@@ -552,6 +552,12 @@ const struct msm_cvp_hfi_defs cvp_hfi_defs[] = {
 		.type = HFI_CMD_SESSION_STOP,
 		.is_config_pkt = false,
 		.resp = HAL_NO_RESP,
+	},
+	{
+		.size = 0xFFFFFFFF,
+		.type = HFI_CMD_SESSION_CVP_SYNX,
+		.is_config_pkt = true,
+		.resp = HAL_NO_RESP,
 	}
 };
 
