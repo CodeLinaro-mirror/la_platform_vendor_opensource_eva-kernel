@@ -857,13 +857,16 @@ int msm_cvp_map_frame(struct msm_cvp_inst *inst,
 
 	return 0;
 }
+//To DO:remove this hack after L0
+u32 display_iova[8];
+u8 display_fd_map = 0;
 int msm_cvp_map_frame_lsr(struct msm_cvp_inst *inst,
 		struct eva_kmd_hfi_packet *in_pkt,
 		unsigned int offset, unsigned int buf_num)
 {
 	struct cvp_buf_type *buf;
 	struct cvp_fence_buf_type *fence_buf;
-	int i;
+	int i,j=0;
 	u32 iova;
 	u64 ktid;
 	struct msm_cvp_frame *frame;
@@ -903,6 +906,33 @@ int msm_cvp_map_frame_lsr(struct msm_cvp_inst *inst,
 			buf = (struct cvp_buf_type *)fence_buf;
 			if (buf->fd < 0 || !buf->size)
 				continue;
+#if 1
+			if ( (  (i >= 10)&&(i <= 15)  ) && (display_fd_map == 1))
+			{
+				dprintk(CVP_ERR,"NAGESH:%s: LSR buf %d not mapping \n",__func__, i);
+				switch( i )
+				{
+					case 10:
+					 buf->fd  = display_iova[0];
+					 break;
+					case 11:
+					 buf->fd  = display_iova[5];
+					 break;
+					case 12:
+					 buf->fd  = display_iova[1];
+					 break;
+					case 13:
+					 buf->fd  = display_iova[6];
+					 break;
+					case 14:
+					 buf->fd  = display_iova[2];
+					 break;
+					case 15:
+					 buf->fd  = display_iova[7];
+					 break;
+				}
+			}else{
+#endif
 	        iova = msm_cvp_map_frame_buf(inst, buf, frame);
 			if (!iova) {
 				dprintk(CVP_ERR,
@@ -911,7 +941,10 @@ int msm_cvp_map_frame_lsr(struct msm_cvp_inst *inst,
 				msm_cvp_unmap_frame_buf(inst, frame);
 				return -EINVAL;
 			}
-			buf->fd = iova;
+                        buf->fd = iova;
+#if 1
+}
+#endif
 		}
 	}
 	else if(in_pkt->pkt_data[1] == HFI_CMD_SESSION_EVA_LSR_SET_DISPLAY_BUFFER){
@@ -930,6 +963,18 @@ int msm_cvp_map_frame_lsr(struct msm_cvp_inst *inst,
 				return -EINVAL;
 			}
 			buf->fd = iova;
+			if ( (i == 0) ||
+			      (i == 1) ||
+				  (i == 2 ) ||
+				  ( i == 5) ||
+				  ( i == 6) ||
+				  ( i == 7) )
+				  {
+
+			display_iova[j] = buf->fd;
+			display_fd_map = 1;
+			     j++;
+				  }
 		}
 	}
 	mutex_lock(&inst->frames.lock);
