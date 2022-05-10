@@ -21,12 +21,8 @@ struct cvp_fence_queue {
 };
 
 struct cvp_fence_type {
-	#if IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX)
 	s32 h_synx;
 	u32 secure_key;
-	#elif IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX_V2)
-	u32 h_synx;
-	#endif
 };
 
 struct cvp_fence_command {

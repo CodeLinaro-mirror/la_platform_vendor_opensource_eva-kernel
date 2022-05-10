@@ -107,7 +107,7 @@ static int __load_fw_to_memory(struct platform_device *pdev,
 	}
 	rc = md_eva_static_dump_register("evafwdata", (uintptr_t)virt, phys, EVAFW_IMAGE_SIZE);
 	if (rc) {
-		dprintk(CVP_ERR, "%s: error %d in dumping \"%s\"\n",
+		dprintk(CVP_ERR, "%s: error %d, Minidump register fail for FW \"%s\"\n",
 				__func__, rc, firmware_name);
 	}
 

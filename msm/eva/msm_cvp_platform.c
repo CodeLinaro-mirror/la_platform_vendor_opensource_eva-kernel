@@ -83,7 +83,7 @@ static struct msm_cvp_common_data sm8450_common_data[] = {
 	},
 	{
 		.key = "qcom,hw-resp-timeout",
-		.value = 20000,					//2000 TODO: Aurora_BU
+		.value = 2000,
 	},
 	{
 		.key = "qcom,dsp-resp-timeout",
@@ -95,7 +95,7 @@ static struct msm_cvp_common_data sm8450_common_data[] = {
 	},
 	{
 		.key = "qcom,dsp-enabled",
-		.value = 0,     //1 TODO: Aurora_BU
+		.value = 1,
 	}
 };
 
@@ -477,48 +477,6 @@ const struct msm_cvp_hfi_defs cvp_hfi_defs[] = {
 		.size = 0xFFFFFFFF,
 		.type = HFI_CMD_SESSION_CVP_FD_FRAME,
 		.is_config_pkt = false,
-		.resp = HAL_NO_RESP,
-	},
-	{
-		.size = 0xFFFFFFFF,
-		.type = HFI_CMD_SESSION_EVA_LSR_CONFIG,
-		.is_config_pkt = true,
-		.resp = HAL_NO_RESP,
-	},
-	{
-		.size = 0xFFFFFFFF,
-		.type = HFI_CMD_SESSION_EVA_LSR_FRAME,
-		.is_config_pkt = false,
-		.resp = HAL_NO_RESP,
-	},
-	{
-		.size = 0xFFFFFFFF,
-		.type = HFI_CMD_SESSION_EVA_LSR_SET_GAINMAP,
-		.is_config_pkt = true,
-		.resp = HAL_NO_RESP,
-	},
-	{
-		.size = 0xFFFFFFFF,
-		.type = HFI_CMD_SESSION_EVA_LSR_GPU_SHARED_BUFFER,
-		.is_config_pkt = true,
-		.resp = HAL_NO_RESP,
-	},
-	{
-		.size = 0xFFFFFFFF,
-		.type = HFI_CMD_SESSION_EVA_LSR_SET_MVBUFFER,
-		.is_config_pkt = true,
-		.resp = HAL_NO_RESP,
-	},
-	{
-		.size = 0xFFFFFFFF,
-		.type = HFI_CMD_SESSION_EVA_LSR_NSP_BUFFER,
-		.is_config_pkt = true,
-		.resp = HAL_NO_RESP,
-	},
-	{
-		.size = 0xFFFFFFFF,
-		.type = HFI_CMD_SESSION_EVA_LSR_SET_DISPLAY_BUFFER,
-		.is_config_pkt = true,
 		.resp = HAL_NO_RESP,
 	},
 

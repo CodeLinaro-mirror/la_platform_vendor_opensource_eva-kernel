@@ -219,23 +219,17 @@ static int msm_cvp_session_process_hfi(
 	pkt_type = in_pkt->pkt_data[1];
 	map_type = cvp_find_map_type(pkt_type);
 
-	if((pkt_type == HFI_CMD_SESSION_EVA_LSR_FRAME)|| (pkt_type == HFI_CMD_SESSION_EVA_LSR_SET_DISPLAY_BUFFER))
-	{
-	    rc = msm_cvp_map_frame_lsr(inst, in_pkt, offset, buf_num);
-	}
-	else
-	{
-	    cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)in_pkt;
-	    /* The kdata will be overriden by transaction ID if the cmd has buf */
-	    cmd_hdr->client_data.kdata = pkt_idx;
+	cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)in_pkt;
+	/* The kdata will be overriden by transaction ID if the cmd has buf */
+	cmd_hdr->client_data.kdata = pkt_idx;
 
-	    if (map_type == MAP_PERSIST)
-	    	rc = msm_cvp_map_user_persist(inst, in_pkt, offset, buf_num);
-	    else if (map_type == UNMAP_PERSIST)
-	    	rc = msm_cvp_mark_user_persist(inst, in_pkt, offset, buf_num);
-	    else
-	    	rc = msm_cvp_map_frame(inst, in_pkt, offset, buf_num);
-	}
+	if (map_type == MAP_PERSIST)
+		rc = msm_cvp_map_user_persist(inst, in_pkt, offset, buf_num);
+	else if (map_type == UNMAP_PERSIST)
+		rc = msm_cvp_mark_user_persist(inst, in_pkt, offset, buf_num);
+	else
+		rc = msm_cvp_map_frame(inst, in_pkt, offset, buf_num);
+
 	if (rc)
 		goto exit;
 
@@ -483,11 +477,7 @@ static int cvp_fence_proc(struct msm_cvp_inst *inst,
 	if (rc) {
 		dprintk(CVP_ERR, "%s %s: Failed in call_hfi_op %d, %x\n",
 			current->comm, __func__, pkt->size, pkt->packet_type);
-		#if IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX)
 		synx_state = SYNX_STATE_SIGNALED_ERROR;
-		#elif IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX_V2)
-		synx_state = SYNX_STATE_SIGNALED_CANCEL;
-		#endif
 		goto exit;
 	}
 
@@ -523,11 +513,7 @@ static int cvp_fence_proc(struct msm_cvp_inst *inst,
 	if (rc) {
 		dprintk(CVP_ERR, "%s %s: cvp_wait_process_message rc %d\n",
 			current->comm, __func__, rc);
-		#if IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX)
 		synx_state = SYNX_STATE_SIGNALED_ERROR;
-		#elif IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX_V2)
-		synx_state = SYNX_STATE_SIGNALED_CANCEL;
-		#endif
 		goto exit;
 	}
 	if (hfi_err == HFI_ERR_SESSION_FLUSHED) {
@@ -1399,30 +1385,6 @@ static int msm_cvp_get_sysprop(struct msm_cvp_inst *inst,
 	return rc;
 }
 
-
-int msm_eva_set_sw_pc(u32 data)
-{
-	struct iris_hfi_device *hfi_device = NULL;
-	struct msm_cvp_core *core = NULL;
-	int rc = 0;
-
-	core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
-	if (core) {
-		hfi_device = core->device->hfi_device_data;
-		if ((hfi_device) && (hfi_device->res)) {
-			hfi_device->res->sw_power_collapsible = (bool)data;
-		} else {
-			dprintk(CVP_ERR, "unable to fetch hfi_device\n");
-			rc = -EINVAL;
-		}
-	} else {
-		dprintk(CVP_ERR, "unable to fetch core\n");
-		rc = -EINVAL;
-	}
-	return rc;
-}
-
-
 static int msm_cvp_set_sysprop(struct msm_cvp_inst *inst,
 		struct eva_kmd_arg *arg)
 {
@@ -1526,10 +1488,6 @@ static int msm_cvp_set_sysprop(struct msm_cvp_inst *inst,
 		case EVA_KMD_PROP_SESSION_DUMPSIZE:
 			session_prop->dump_size = prop_array[i].data;
 			break;
-		case EVA_KMD_PROP_PWR_SW_PC:
-			rc = msm_eva_set_sw_pc(prop_array[i].data);
-			break;
-
 		default:
 			dprintk(CVP_ERR,
 				"unrecognized sys property to set %d\n",
@@ -1632,11 +1590,7 @@ int cvp_clean_session_queues(struct msm_cvp_inst *inst)
 	mutex_lock(&q->lock);
 	if (q->state == QUEUE_START) {
 		mutex_unlock(&q->lock);
-	#if IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX)
 	cvp_clean_fence_queue(inst, SYNX_STATE_SIGNALED_ERROR);
-	#elif IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX_V2)
-	cvp_clean_fence_queue(inst, SYNX_STATE_SIGNALED_CANCEL);
-	#endif
 	} else {
 		dprintk(CVP_WARN, "Incorrect fence cmd queue state %d\n",
 			q->state);

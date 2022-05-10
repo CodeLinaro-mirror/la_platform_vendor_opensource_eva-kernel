@@ -596,51 +596,7 @@ static int hfi_process_sys_property_info(u32 device_id,
 	}
 
 }
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-static int hfi_process_sys_gmu_stop_done(u32 device_id,
-	void *hdr, struct msm_cvp_cb_info *info)
-{
-	struct cvp_hfi_msg_sys_gpu_packet *pkt =
-	(struct cvp_hfi_msg_sys_gpu_packet *)hdr;
-	struct msm_cvp_cb_cmd_done cmd_done = {0};
-	dprintk(CVP_INFO, "RECEIVED: HFI_MSG_SYS_STOP_GMU_CMD_DONE\n");
 
-	if (!pkt || pkt->size <
-		sizeof(struct cvp_hfi_msg_sys_gpu_packet)) {
-		dprintk(CVP_ERR, "%s: bad packet/packet size: %d\n",
-		__func__, pkt ? pkt->size : 0);
-		return -E2BIG;
-	}
-	cmd_done.device_id = device_id;
-	cmd_done.status = hfi_map_err_status(pkt->error_type);
-	cmd_done.size = 0;
-	info->response_type = HAL_SYS_GMU_STOP_DONE;
-	info->response.cmd = cmd_done;
-	return 0;
-}
-static int hfi_process_sys_gmu_start_done(u32 device_id,
-	void *hdr, struct msm_cvp_cb_info *info)
-{
-	struct cvp_hfi_msg_sys_gpu_packet *pkt =
-	(struct cvp_hfi_msg_sys_gpu_packet *)hdr;
-	struct msm_cvp_cb_cmd_done cmd_done = {0};
-
-	dprintk(CVP_INFO, "RECEIVED: HFI_MSG_SYS_START_GMU_CMD_DONE \n");
-
-	if (!pkt || pkt->size <
-		sizeof(struct cvp_hfi_msg_sys_gpu_packet)) {
-		dprintk(CVP_ERR, "%s: bad packet/packet size: %d\n",
-		__func__, pkt ? pkt->size : 0);
-		return -E2BIG;
-	}
-	cmd_done.device_id = device_id;
-	cmd_done.status = hfi_map_err_status(pkt->error_type);
-	cmd_done.size = 0;
-	info->response_type = HAL_SYS_GMU_START_DONE;
-	info->response.cmd = cmd_done;
-	return 0;
-}
-#endif
 int cvp_hfi_process_msg_packet(u32 device_id, void *hdr,
 			struct msm_cvp_cb_info *info)
 {
@@ -686,14 +642,6 @@ int cvp_hfi_process_msg_packet(u32 device_id, void *hdr,
 	case HFI_MSG_EVENT_NOTIFY_SNAPSHOT_READY:
 		pkt_func = (pkt_func_def)hfi_process_session_dump_notify;
 		break;
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-	case HFI_MSG_SYS_STOP_GMU_CMD_DONE:
-		pkt_func = (pkt_func_def)hfi_process_sys_gmu_stop_done;
-		break;
-	case HFI_MSG_SYS_START_GMU_CMD_DONE:
-		pkt_func = (pkt_func_def)hfi_process_sys_gmu_start_done;
-		break;
-#endif
 	default:
 		dprintk(CVP_HFI, "Use default msg handler: %#x\n",
 				msg_hdr->packet);
