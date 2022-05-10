@@ -83,7 +83,7 @@ static struct msm_cvp_common_data sm8450_common_data[] = {
 	},
 	{
 		.key = "qcom,hw-resp-timeout",
-		.value = 20000,					//2000 TODO: Aurora_BU
+		.value = 2000,
 	},
 	{
 		.key = "qcom,dsp-resp-timeout",
@@ -95,7 +95,7 @@ static struct msm_cvp_common_data sm8450_common_data[] = {
 	},
 	{
 		.key = "qcom,dsp-enabled",
-		.value = 0,     //1 TODO: Aurora_BU
+		.value = 1,
 	}
 };
 

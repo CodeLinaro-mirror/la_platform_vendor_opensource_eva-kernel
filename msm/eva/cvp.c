@@ -450,6 +450,8 @@ static int msm_probe_cvp_device(struct platform_device *pdev)
 		rc = cvp_dsp_device_init();
 		if (rc)
 			dprintk(CVP_WARN, "Failed to initialize DSP driver\n");
+		else
+			dprintk(CVP_DSP, "DSP interface enabled! \n");
 	} else {
 		dprintk(CVP_DSP, "DSP interface not enabled\n");
 	}

@@ -30,6 +30,7 @@ enum queue_state {
 #define CVP_MINIDUMP_ENABLED 1
 #endif
 
+#define CVP_FASTRPC_ENABLED 1  //TODO: AURORA-SOD
 #ifdef CONFIG_EVA_NEO
 #define CVP_SYNX_ENABLED 0  //1 TODO: AURORA-BU
 #define CVP_MMRM_ENABLED 0  //1 TODO: AURORA-BU

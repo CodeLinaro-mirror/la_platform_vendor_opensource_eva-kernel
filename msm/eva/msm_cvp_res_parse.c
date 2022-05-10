@@ -405,7 +405,7 @@ static int msm_cvp_load_subcache_info(struct msm_cvp_platform_resources *res)
 	struct subcache_set *subcaches = &res->subcache_set;
 
 	num_subcaches = of_property_count_strings(pdev->dev.of_node,
-		"cache-slice-names");   // TODO: AURORA-BU
+		"cache-slice-names");
 	if (num_subcaches <= 0) {
 		dprintk(CVP_CORE, "No subcaches found\n");
 		goto err_load_subcache_table_fail;
