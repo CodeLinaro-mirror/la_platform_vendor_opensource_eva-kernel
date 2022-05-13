@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef __CVP_HFI_API_H__
@@ -277,6 +278,8 @@ struct cvp_hfi_device {
 	int (*noc_error_info)(void *dev);
 	int (*validate_session)(void *sess, const char *func);
 	int (*pm_qos_update)(void *device);
+    int (*spad_activate)(void *dev);
+    int (*spad_deactivate)(void *dev);
 #if IS_REACHABLE(CONFIG_QCOM_KGSL)
 	int (*notify_gpu_status)(void *device, u32 packet_type,
 						void *sess);

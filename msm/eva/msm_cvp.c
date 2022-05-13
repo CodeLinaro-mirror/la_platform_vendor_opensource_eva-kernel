@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "msm_cvp.h"
@@ -1181,6 +1182,12 @@ static int msm_cvp_session_start(struct msm_cvp_inst *inst,
 		hdev = inst->core->device;
 		call_hfi_op(hdev, pm_qos_update, hdev->hfi_device_data);
 	}
+    if (inst->prop.type == HFI_SESSION_LSR)
+    {
+       dprintk(CVP_INFO, "msm_cvp_session_start : Calling spad activate ..\n");
+       hdev = inst->core->device;
+       call_hfi_op(hdev, spad_activate, hdev->hfi_device_data);
+    }
 	return cvp_fence_thread_start(inst);
 }
 
@@ -1189,7 +1196,7 @@ static int msm_cvp_session_stop(struct msm_cvp_inst *inst,
 {
 	struct cvp_session_queue *sq;
 	struct eva_kmd_session_control *sc = &arg->data.session_ctrl;
-
+    struct cvp_hfi_device *hdev;
 	sq = &inst->session_queue;
 
 	spin_lock(&sq->lock);
@@ -1207,7 +1214,12 @@ static int msm_cvp_session_stop(struct msm_cvp_inst *inst,
 	spin_unlock(&sq->lock);
 
 	wake_up_all(&inst->session_queue.wq);
-
+    if (inst->prop.type == HFI_SESSION_LSR)
+    {
+        dprintk(CVP_INFO, "msm_cvp_session_stop : Calling spad deactivate ..\n");
+        hdev = inst->core->device;
+        call_hfi_op(hdev, spad_deactivate, hdev->hfi_device_data);
+    }
 	return cvp_fence_thread_stop(inst);
 }
 

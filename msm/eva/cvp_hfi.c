@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <asm/memory.h>
@@ -3581,7 +3582,13 @@ static int __init_subcaches(struct iris_hfi_device *device)
                 } else if (!strcmp("eva_gain", sinfo->name)) {
 			sinfo->subcache = llcc_slice_getd(LLCC_EVAGAIN);
             sinfo->sc_clentid = GAIN_MESH;
-		} else {
+		} else if (!strcmp("spad", sinfo->name)) 
+               {
+            sinfo->subcache = llcc_slice_getd(LLCC_SPAD);
+            // Only Activation and DeActivation of SPAD is enough. No need to pass the scids to FW
+               }
+               else 
+               {
 			dprintk(CVP_ERR, "Invalid subcache name %s\n",
 					sinfo->name);
 		}
@@ -3789,6 +3796,8 @@ static int __enable_subcaches(struct iris_hfi_device *device)
 
 	/* Activate subcaches */
 	iris_hfi_for_each_subcache(device, sinfo) {
+		if(!strcmp("spad", sinfo->name))
+			continue;
 		 rc = llcc_slice_activate(sinfo->subcache);   //TODO: AURORA-BU
 		if (rc) {
 			dprintk(CVP_WARN, "Failed to activate %s: %d\n",
@@ -3811,6 +3820,51 @@ err_activate_fail:
 	return 0;
 }
 
+static int iris_enable_spad_subcache(void *dev)
+{
+	int rc = 0;
+	u32 c = 0;
+    struct iris_hfi_device *device;
+	struct subcache_info *sinfo;
+    dprintk(CVP_PWR, "%s E\n", __func__);
+
+	if (!dev) {
+		dprintk(CVP_ERR, "%s: null device\n", __func__);
+		return -EINVAL;
+	}
+	device = dev;
+
+	mutex_lock(&device->lock);
+
+	if (msm_cvp_syscache_disable || !is_sys_cache_present(device))
+		return 0;
+	/* Activate subcaches */
+	iris_hfi_for_each_subcache(device, sinfo) {
+		if(strcmp("spad", sinfo->name))
+			continue;//skip sending the spad related to FW
+		 rc = llcc_slice_activate(sinfo->subcache);   //TODO: AURORA-BU
+		if (rc) {
+			dprintk(CVP_WARN, "Failed to activate %s: %d\n",
+				sinfo->name, rc);
+			msm_cvp_res_handle_fatal_hw_error(device->res, true);
+			goto err_activate_fail;
+		}
+
+		sinfo->isactive = true;
+		dprintk(CVP_CORE, "Activated subcache %s : rc : %d \n", sinfo->name,rc);
+		c++;
+	}
+    mutex_unlock(&device->lock);
+	dprintk(CVP_CORE, "Activated %d Subcaches to CVP\n", c);
+	dprintk(CVP_PWR, "%s X\n", __func__);
+	return 0;
+
+err_activate_fail:
+	__release_subcaches(device);
+	__disable_subcaches(device);
+	mutex_unlock(&device->lock);
+	return 0;
+}
 static int __set_subcaches(struct iris_hfi_device *device)
 {
 	int rc = 0;
@@ -3832,11 +3886,13 @@ static int __set_subcaches(struct iris_hfi_device *device)
 	sc_res = &(sc_res_info->rg_subcache_entries[0]);
 
 	iris_hfi_for_each_subcache(device, sinfo) {
+		if(!strcmp("spad", sinfo->name))
+			continue;//skip sending the spad related to FW
 		if (sinfo->isactive) {
 			sc_res[c].size = sinfo->subcache->slice_size;
 			sc_res[c].sc_id = (msm_cvp_llcc_enable == 1) ? sinfo->subcache->slice_id : 0;
-            sc_res[c].scid_Client = sinfo->sc_clentid;
-            sc_res[c].scid_RegAddr = sinfo->sc_ioaddr;
+			sc_res[c].scid_Client = sinfo->sc_clentid;
+			sc_res[c].scid_RegAddr = sinfo->sc_ioaddr;
 			c++;
 		}
 	}
@@ -3893,6 +3949,8 @@ static int __release_subcaches(struct iris_hfi_device *device)
 
 	/* Release resource command to Iris */
 	iris_hfi_for_each_subcache_reverse(device, sinfo) {
+		if(!strcmp("spad", sinfo->name))
+			continue;//skip sending the spad related to FW
 		if (sinfo->isset) {
 			/* Update the entry */
 			sc_res[c].size = sinfo->subcache->slice_size;
@@ -3928,6 +3986,8 @@ static int __disable_subcaches(struct iris_hfi_device *device)
 
 	/* De-activate subcaches */
 	iris_hfi_for_each_subcache_reverse(device, sinfo) {
+		if(!strcmp("spad", sinfo->name))
+			continue;
 		if (sinfo->isactive) {
 			dprintk(CVP_CORE, "De-activate subcache %s\n",
 				sinfo->name);
@@ -3941,6 +4001,44 @@ static int __disable_subcaches(struct iris_hfi_device *device)
 		}
 	}
 
+	return 0;
+}
+static int iris_disable_spad_subcache(void *dev)
+{
+	struct subcache_info *sinfo;
+	struct iris_hfi_device *device;
+	int rc = 0;
+	dprintk(CVP_PWR, "%s E\n", __func__);
+
+	if (!dev) {
+		dprintk(CVP_ERR, "%s: null device\n", __func__);
+		return -EINVAL;
+	}
+	device = dev;
+
+	mutex_lock(&device->lock);
+
+	if (msm_cvp_syscache_disable || !is_sys_cache_present(device))
+		return 0;
+
+	/* De-activate subcaches */
+	iris_hfi_for_each_subcache_reverse(device, sinfo) {
+		if(strcmp("spad", sinfo->name))
+			continue;
+		if (sinfo->isactive) {
+			dprintk(CVP_CORE, "De-activate subcache %s\n",
+				sinfo->name);
+			 rc = llcc_slice_deactivate(sinfo->subcache);   //TODO: AURORA-BU
+
+				dprintk(CVP_WARN,
+					"de-activate %s status: %d\n",
+					sinfo->name, rc);
+
+			sinfo->isactive = false;
+		}
+	}
+	mutex_unlock(&device->lock);
+	dprintk(CVP_PWR, "%s X\n", __func__);
 	return 0;
 }
 
@@ -5295,6 +5393,8 @@ static void iris_init_hfi_callbacks(struct cvp_hfi_device *hdev)
 	hdev->noc_error_info = iris_hfi_noc_error_info;
 	hdev->validate_session = iris_hfi_validate_session;
 	hdev->pm_qos_update = iris_pm_qos_update;
+    hdev->spad_activate = iris_enable_spad_subcache;
+    hdev->spad_deactivate = iris_disable_spad_subcache;
 #if IS_REACHABLE(CONFIG_QCOM_KGSL)
 	hdev->notify_gpu_status = iris_hfi_notify_gpu_status;
 #endif
