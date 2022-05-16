@@ -906,10 +906,10 @@ int msm_cvp_map_frame_lsr(struct msm_cvp_inst *inst,
 			buf = (struct cvp_buf_type *)fence_buf;
 			if (buf->fd < 0 || !buf->size)
 				continue;
-#if 1
+//#ifdef DISPLAY_BUF_IGNORE
 			if ( (  (i >= 10)&&(i <= 15)  ) && (display_fd_map == 1))
 			{
-				dprintk(CVP_ERR,"NAGESH:%s: LSR buf %d not mapping \n",__func__, i);
+				dprintk(CVP_MEM,":%s: LSR buf %d not mapping \n",__func__, i);
 				switch( i )
 				{
 					case 10:
@@ -932,7 +932,7 @@ int msm_cvp_map_frame_lsr(struct msm_cvp_inst *inst,
 					 break;
 				}
 			}else{
-#endif
+//#endif
 	        iova = msm_cvp_map_frame_buf(inst, buf, frame);
 			if (!iova) {
 				dprintk(CVP_ERR,
@@ -942,9 +942,9 @@ int msm_cvp_map_frame_lsr(struct msm_cvp_inst *inst,
 				return -EINVAL;
 			}
                         buf->fd = iova;
-#if 1
+//#ifdef DISPLAY_BUF_IGNORE
 }
-#endif
+//#endif
 		}
 	}
 	else if(in_pkt->pkt_data[1] == HFI_CMD_SESSION_EVA_LSR_SET_DISPLAY_BUFFER){
