@@ -421,6 +421,12 @@ int msm_cvp_disable_unprepare_clk(struct iris_hfi_device *device,
 		dprintk(CVP_PWR, "Clock: %s disable and unprepare\n",
 			cl->name);
 
+		if (__clk_is_enabled(cl->clk)) {
+			dprintk(CVP_ERR, "%s: clock %s could not be disabled\n",
+					__func__, cl->name);
+			return -EINVAL;
+		}
+
 		if (cl->has_scaling) {
 			if (device->mmrm_cvp != NULL) {
 				// set min freq and cur freq to 0;

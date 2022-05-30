@@ -261,6 +261,9 @@
 #define CVP_CC_MVS1_GDSCR			(CVP_CC_BASE_OFFS + 0xCC)
 #define CVP_CC_MVS1_CBCR			(CVP_CC_BASE_OFFS + 0xE0)
 
+#define CVP_VIDEO_CC_MVS1C_DIV_DCDR       (CVP_CC_BASE_OFFS + 0x8C)
+#define CVP_VIDEO_CC_XO_CBCR              (CVP_CC_BASE_OFFS + 0x124)
+
 #ifdef EVA_LSR//LSR regs
 /*
  * --------------------------------------------------------------------------
@@ -321,5 +324,7 @@
 #endif
 #define CVP_CORE_POWER_STATUS	(CVP_WRAPPER_BASE_OFFS + 0x80)
 
-#define CVP_GCC_VIDEO_AXI1_CBCR		(0x142024)
+#define CVP_GCC_VIDEO_AXI1_CBCR           (0x32024)
+#define GCC_IRIS_SS_HF_AXI1_CBCR          (0x32030)
+#define GCC_IRIS_SS_SPD_AXI1_CBCR         (0x60020)
 #endif
