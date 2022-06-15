@@ -792,14 +792,14 @@ static void __set_registers(struct iris_hfi_device *device)
 				pdata->noc_qos->dangerlut_low);
 	__write_register(device, CVP_NOC_SAFELUT_LOW,
 				pdata->noc_qos->safelut_low);
-    dprintk(CVP_INFO,
+	dprintk(CVP_INFO,
 			"Setting EVA NOC QOS settings ..\n");
 #ifdef EVA_LSR//LSR regs
-    //LSR QOS Settings from Video NOC HSR
-    dprintk(CVP_INFO,
+	//LSR QOS Settings from Video NOC HSR
+	dprintk(CVP_INFO,
 			"Setting LSR NOC QOS settings .. E\n");
 
-    dprintk(CVP_INFO,
+	dprintk(CVP_INFO,
 			"Setting LSR NOC QOS settings.NOT YET .. X\n");
 #endif //EVA_LSR regs
 }
@@ -818,56 +818,56 @@ static void __set_registers(struct iris_hfi_device *device)
 	pdata = core->platform_data;
 
 #ifdef EVA_LSR//LSR regs
-    //LSR QOS Settings from Video NOC HSR
-    dprintk(CVP_INFO,
+	//LSR QOS Settings from Video NOC HSR
+	dprintk(CVP_INFO,
 			"Setting LSR NOC QOS settings .. E\n");
   __write_register(device, LSR_NOC_CSC_GCX_L_PRIORITYLUT_LOW,
-                   pdata->lsr_noc_csc_gcx_qos->l_prioritylut_low);
+				   pdata->lsr_noc_csc_gcx_qos->l_prioritylut_low);
   __write_register(device, LSR_NOC_CSC_GCX_L_PRIORITYLUT_HIGH,
-  			pdata->lsr_noc_csc_gcx_qos->l_prioritylut_high);
+			pdata->lsr_noc_csc_gcx_qos->l_prioritylut_high);
   __write_register(device, LSR_NOC_CSC_GCX_L_URGENCY_LOW,
-  			pdata->lsr_noc_csc_gcx_qos->l_urgency_low);
+			pdata->lsr_noc_csc_gcx_qos->l_urgency_low);
   __write_register(device, LSR_NOC_CSC_GCX_L_DANGERLUT_LOW,
-  			pdata->lsr_noc_csc_gcx_qos->l_dangerlut_low);
+			pdata->lsr_noc_csc_gcx_qos->l_dangerlut_low);
   __write_register(device, LSR_NOC_CSC_GCX_L_SAFELUT_LOW,
-  			pdata->lsr_noc_csc_gcx_qos->l_safelut_low);
+			pdata->lsr_noc_csc_gcx_qos->l_safelut_low);
   dprintk(CVP_INFO,
-  		"Setting LSR NOC QOS settings cp1 ..\n");
+		"Setting LSR NOC QOS settings cp1 ..\n");
   __write_register(device, LSR_NOC_CSC_GCX_R_PRIORITYLUT_LOW,
-                   pdata->lsr_noc_csc_gcx_qos->r_prioritylut_low);
+				   pdata->lsr_noc_csc_gcx_qos->r_prioritylut_low);
   __write_register(device, LSR_NOC_CSC_GCX_R_PRIORITYLUT_HIGH,
-  			pdata->lsr_noc_csc_gcx_qos->r_prioritylut_high);
+			pdata->lsr_noc_csc_gcx_qos->r_prioritylut_high);
   __write_register(device, LSR_NOC_CSC_GCX_R_URGENCY_LOW,
-  			pdata->lsr_noc_csc_gcx_qos->r_urgency_low);
+			pdata->lsr_noc_csc_gcx_qos->r_urgency_low);
   __write_register(device, LSR_NOC_CSC_GCX_R_DANGERLUT_LOW,
-  			pdata->lsr_noc_csc_gcx_qos->r_dangerlut_low);
+			pdata->lsr_noc_csc_gcx_qos->r_dangerlut_low);
   __write_register(device, LSR_NOC_CSC_GCX_R_SAFELUT_LOW,
-  			pdata->lsr_noc_csc_gcx_qos->r_safelut_low);
+			pdata->lsr_noc_csc_gcx_qos->r_safelut_low);
   dprintk(CVP_INFO,
-  		"Setting LSR NOC QOS settings cp2 ..\n");
+		"Setting LSR NOC QOS settings cp2 ..\n");
   __write_register(device, LSR_NOC_DDL_L_PRIORITYLUT_LOW,
-                   pdata->lsr_noc_ddl_qos->l_prioritylut_low);
+				   pdata->lsr_noc_ddl_qos->l_prioritylut_low);
   __write_register(device, LSR_NOC_DDL_L_PRIORITYLUT_HIGH,
-  			pdata->lsr_noc_ddl_qos->l_prioritylut_high);
+			pdata->lsr_noc_ddl_qos->l_prioritylut_high);
   __write_register(device, LSR_NOC_DDL_L_URGENCY_LOW,
-  			pdata->lsr_noc_ddl_qos->l_urgency_low);
+			pdata->lsr_noc_ddl_qos->l_urgency_low);
   __write_register(device, LSR_NOC_DDL_L_DANGERLUT_LOW,
-  			pdata->lsr_noc_ddl_qos->l_dangerlut_low);
+			pdata->lsr_noc_ddl_qos->l_dangerlut_low);
   __write_register(device, LSR_NOC_DDL_L_SAFELUT_LOW,
-  			pdata->lsr_noc_ddl_qos->l_safelut_low);
+			pdata->lsr_noc_ddl_qos->l_safelut_low);
   dprintk(CVP_INFO,
-  		"Setting LSR NOC QOS settings cp3 ..\n");
+		"Setting LSR NOC QOS settings cp3 ..\n");
   __write_register(device, LSR_NOC_DDL_R_PRIORITYLUT_LOW,
-                   pdata->lsr_noc_ddl_qos->r_prioritylut_low);
+				   pdata->lsr_noc_ddl_qos->r_prioritylut_low);
   __write_register(device, LSR_NOC_DDL_R_PRIORITYLUT_HIGH,
-  			pdata->lsr_noc_ddl_qos->r_prioritylut_high);
+			pdata->lsr_noc_ddl_qos->r_prioritylut_high);
   __write_register(device, LSR_NOC_DDL_R_URGENCY_LOW,
-  			pdata->lsr_noc_ddl_qos->r_urgency_low);
+			pdata->lsr_noc_ddl_qos->r_urgency_low);
   __write_register(device, LSR_NOC_DDL_R_DANGERLUT_LOW,
-  			pdata->lsr_noc_ddl_qos->r_dangerlut_low);
+			pdata->lsr_noc_ddl_qos->r_dangerlut_low);
   __write_register(device, LSR_NOC_DDL_R_SAFELUT_LOW,
-  			pdata->lsr_noc_ddl_qos->r_safelut_low);
-    dprintk(CVP_INFO,
+			pdata->lsr_noc_ddl_qos->r_safelut_low);
+	dprintk(CVP_INFO,
 			"Setting LSR NOC QOS settings.DONE .. X\n");
 #endif //EVA_LSR regs
 }*/
@@ -1936,11 +1936,11 @@ static int iris_hfi_core_init(void *device)
 
 	dev->bus_vote.data_count = 1;
 	dev->bus_vote.data->power_mode = CVP_POWER_TURBO;
-    rc = __dev_regspace_mapping(dev);
-    if (rc) {
-        dprintk(CVP_ERR, "Failed to do Devices RegisterSpace Mapping FW\n");
-      //  goto err_load_fw;
-    }
+	rc = __dev_regspace_mapping(dev);
+	if (rc) {
+		dprintk(CVP_ERR, "Failed to do Devices RegisterSpace Mapping FW\n");
+	  //  goto err_load_fw;
+	}
 
 	rc = __load_fw(dev);
 	if (rc) {
@@ -2051,7 +2051,7 @@ pm_qos_bail:
 
 	pm_relax(dev->res->pdev->dev.parent);
 	dprintk(CVP_CORE, "Core inited successfully\n");
-	
+
 	core_status = __read_register(device, CVP_CORE_POWER_STATUS);
 	dprintk(CVP_SESS, "At the end of iris_hfi_core_init: Core status: %x\n", core_status);
 
@@ -2106,7 +2106,7 @@ static int iris_hfi_core_release(void *dev)
 
 	__disable_subcaches(device);
 	__unload_fw(device);
-        __dev_regspace_unmap(device);
+		__dev_regspace_unmap(device);
 	if (msm_cvp_mmrm_enabled) {
 		rc = msm_cvp_mmrm_deregister(device);
 		if (rc) {
@@ -2191,7 +2191,7 @@ static void __set_default_sys_properties(struct iris_hfi_device *device)
 	u32 core_status = 0;
 	if (__sys_set_debug(device, msm_cvp_fw_debug))
 		dprintk(CVP_WARN, "Setting fw_debug msg ON failed\n");
-	
+
 	core_status = __read_register(device, CVP_CORE_POWER_STATUS);
 	dprintk(CVP_SESS, "Before __sys_set_power_control: Core status: %x\n", core_status);
 	if (__sys_set_power_control(device, msm_cvp_fw_low_power_mode))
@@ -3459,98 +3459,109 @@ static void __deinit_subcaches(struct iris_hfi_device *device)
 			sinfo->subcache = NULL;
 		}
 	}
-    __llcc_regspace_unmap(device);
+	__llcc_regspace_unmap(device);
 
 exit:
 	return;
 }
 static int map_llcc_iommu_addr(struct iris_hfi_device *device, struct subcache_info *sinfo)
 {
-    u32 iova= 0;
-    u32 scid = 0;
-    int rc = 0;
-    struct context_bank_info *cb;
-    //non-secure context bank
-    cb = msm_cvp_smem_get_context_bank(device->res, 0);
-        if (!cb) {
-                dprintk(CVP_ERR," %s: failed to get context bank\n", __func__);
-                return 0;
-        }
-    if (cb)
-    {
-           //LLCC
-      	dprintk(CVP_CORE, " %s: init_subcaches: %s\n", __func__,
-      		sinfo->name);
-     
-      	if (!strcmp("eva_left", sinfo->name))
-          {
-      	      scid = sinfo->subcache->slice_id;
-             rc = iommu_map(cb->domain, 
-                            device->res->llccevaleft_iova,
-                            device->res->llccevaleft_phyaddr + (0x1000*scid),
-                            device->res->llccevaleft_size ,
-                            IOMMU_CACHE | IOMMU_READ | IOMMU_WRITE);
-             if (rc) {
-                     dprintk(CVP_ERR," %s:  iommu_map llcc eva left failed, rc:%d\n", __func__, rc);
-             }
-             else{
+	u32 iova= 0;
+	u32 scid = 0;
+	int rc = 0;
+	struct context_bank_info *cb;
+	//non-secure context bank
+	cb = msm_cvp_smem_get_context_bank(device->res, 0);
+		if (!cb) {
+				dprintk(CVP_ERR," %s: failed to get context bank\n", __func__);
+				return 0;
+		}
+	if (cb)
+	{
+		   //LLCC
+		dprintk(CVP_CORE, " %s: init_subcaches: %s\n", __func__,
+			sinfo->name);
+
+		if (!strcmp("eva_left", sinfo->name))
+		  {
+			  scid = sinfo->subcache->slice_id;
+			 rc = iommu_map(cb->domain,
+							device->res->llccevaleft_iova,
+							device->res->llccevaleft_phyaddr + (0x1000*scid),
+							device->res->llccevaleft_size ,
+							IOMMU_CACHE | IOMMU_READ | IOMMU_WRITE);
+			 if (rc) {
+					 dprintk(CVP_ERR," %s:  iommu_map llcc eva left failed, rc:%d\n", __func__, rc);
+			 }
+			 else{
 		             dprintk(CVP_INFO," %s:  iommu_map llcc eva left Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
 				            device->res->llccevaleft_iova,
-                            device->res->llccevaleft_phyaddr + (0x1000*scid),
-                            device->res->llccevaleft_size);
+							device->res->llccevaleft_phyaddr + (0x1000*scid),
+							device->res->llccevaleft_size);
 
-                     iova = device->res->llccevaleft_iova;
-             }
+					 iova = device->res->llccevaleft_iova;
+			 }
 
-          } 
-          else if (!strcmp("eva_right", sinfo->name)) 
-          {
-      	      scid = sinfo->subcache->slice_id;
-             rc = iommu_map(cb->domain, 
-                            device->res->llccevaright_iova,
-                            device->res->llccevaright_phyaddr + (0x1000*scid),
-                            device->res->llccevaright_size ,
-                            IOMMU_CACHE | IOMMU_READ | IOMMU_WRITE);
-             if (rc) {
-                     dprintk(CVP_ERR,"  %s: iommu_map llcc eva right failed, rc:%d\n", __func__, rc);
-             }
-             else{
+		  }
+		  else if (!strcmp("eva_right", sinfo->name))
+		  {
+			  scid = sinfo->subcache->slice_id;
+			 rc = iommu_map(cb->domain,
+							device->res->llccevaright_iova,
+							device->res->llccevaright_phyaddr + (0x1000*scid),
+							device->res->llccevaright_size ,
+							IOMMU_CACHE | IOMMU_READ | IOMMU_WRITE);
+			 if (rc) {
+					 dprintk(CVP_ERR,"  %s: iommu_map llcc eva right failed, rc:%d\n", __func__, rc);
+			 }
+			 else{
 		             dprintk(CVP_INFO," %s:  iommu_map llcc eva right Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
 				            device->res->llccevaright_iova,
-                            device->res->llccevaright_phyaddr + (0x1000*scid),
-                            device->res->llccevaright_size);
+							device->res->llccevaright_phyaddr + (0x1000*scid),
+							device->res->llccevaright_size);
 
-                     iova = device->res->llccevaright_iova;
-             }
-          } 
-          else if (!strcmp("eva_gain", sinfo->name)) 
-          {
-      	      scid = sinfo->subcache->slice_id;
-             rc = iommu_map(cb->domain, 
-                            device->res->llccevagain_iova,
-                            device->res->llccevagain_phyaddr + (0x1000*scid),
-                            device->res->llccevagain_size ,
-                            IOMMU_CACHE | IOMMU_READ | IOMMU_WRITE);
-             if (rc) {
-                     dprintk(CVP_ERR," %s:  iommu_map eva gain failed, rc:%d\n", __func__, rc);
-             }
-             else{
+					 iova = device->res->llccevaright_iova;
+			 }
+		  }
+		  else if (!strcmp("eva_gain", sinfo->name))
+		  {
+			  scid = sinfo->subcache->slice_id;
+			 rc = iommu_map(cb->domain,
+							device->res->llccevagain_iova,
+							device->res->llccevagain_phyaddr + (0x1000*scid),
+							device->res->llccevagain_size ,
+							IOMMU_CACHE | IOMMU_READ | IOMMU_WRITE);
+			 if (rc) {
+					 dprintk(CVP_ERR," %s:  iommu_map eva gain failed, rc:%d\n", __func__, rc);
+			 }
+			 else{
 		             dprintk(CVP_INFO," %s:  iommu_map llcc eva gain Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
 				            device->res->llccevagain_iova,
-                            device->res->llccevagain_phyaddr + (0x1000*scid),
-                            device->res->llccevagain_size);
+							device->res->llccevagain_phyaddr + (0x1000*scid),
+							device->res->llccevagain_size);
 
-                     iova = device->res->llccevagain_iova;
-             }
-          } 
-          else
-          {
-      		dprintk(CVP_ERR, " %s: %s: Invalid subcache name %s\n",__func__,
-      				sinfo->name);
-      	   }
-    }
-        return iova;
-     
+					 iova = device->res->llccevagain_iova;
+			 }
+		}else if (!strcmp("spad", sinfo->name))
+			{
+			dprintk(CVP_INFO, " %s: subcache name %s : no iova map needed \n",__func__,
+			sinfo->name);
+		  }else if (!strcmp("eva_csc_left", sinfo->name))
+		  {
+			dprintk(CVP_INFO, " %s: subcache name %s : no iova map needed \n",__func__,
+					sinfo->name);
+		  }else if (!strcmp("eva_csc_right", sinfo->name))
+		  {
+			dprintk(CVP_INFO, " %s: subcache name %s : no iova map needed \n",__func__,
+					sinfo->name);
+		  }else
+		  {
+			dprintk(CVP_ERR, " %s: %s: Invalid subcache name %s\n",__func__,
+					sinfo->name);
+		   }
+	}
+		return iova;
+
 }
 static int __init_subcaches(struct iris_hfi_device *device)
 {
@@ -3569,26 +3580,36 @@ static int __init_subcaches(struct iris_hfi_device *device)
 	iris_hfi_for_each_subcache(device, sinfo) {
 		if (!strcmp("cvp", sinfo->name)) {
 			 sinfo->subcache = llcc_slice_getd(LLCC_CVP);  //TODO: AURORA-BU
-             sinfo->sc_clentid = EVA;
+			 sinfo->sc_clentid = EVA;
 		} else if (!strcmp("cvpfw", sinfo->name)) {
 			sinfo->subcache = llcc_slice_getd(LLCC_CVPFW);
-            sinfo->sc_clentid = LLCC_CVPFW;
+			sinfo->sc_clentid = LLCC_CVPFW;
 		} else if (!strcmp("eva_left", sinfo->name)) {
 			sinfo->subcache = llcc_slice_getd(LLCC_EVALFT);
-            sinfo->sc_clentid = LSR_LEFT;
-                } else if (!strcmp("eva_right", sinfo->name)) {
+			sinfo->sc_clentid = LSR_LEFT;
+				} else if (!strcmp("eva_right", sinfo->name)) {
 			sinfo->subcache = llcc_slice_getd(LLCC_EVARGHT);
-            sinfo->sc_clentid = LSR_RIGHT;
-                } else if (!strcmp("eva_gain", sinfo->name)) {
+			sinfo->sc_clentid = LSR_RIGHT;
+				} else if (!strcmp("eva_gain", sinfo->name)) {
 			sinfo->subcache = llcc_slice_getd(LLCC_EVAGAIN);
-            sinfo->sc_clentid = GAIN_MESH;
-		} else if (!strcmp("spad", sinfo->name)) 
-               {
-            sinfo->subcache = llcc_slice_getd(LLCC_SPAD);
-            // Only Activation and DeActivation of SPAD is enough. No need to pass the scids to FW
-               }
-               else 
-               {
+			sinfo->sc_clentid = GAIN_MESH;
+		} else if (!strcmp("spad", sinfo->name))
+			   {
+			sinfo->subcache = llcc_slice_getd(LLCC_SPAD);
+			// Only Activation and DeActivation of SPAD is enough. No need to pass the scids to FW
+			   }
+		 else if (!strcmp("eva_csc_left", sinfo->name))
+			   {
+			sinfo->subcache = llcc_slice_getd(LLCC_EVCSLFT);
+			sinfo->sc_clentid = CSC_LEFT;
+			   }
+		 else if (!strcmp("eva_csc_right", sinfo->name))
+			   {
+			sinfo->subcache = llcc_slice_getd(LLCC_EVCSRGHT);
+			sinfo->sc_clentid = CSC_RIGHT;
+			   }
+			   else
+			   {
 			dprintk(CVP_ERR, "Invalid subcache name %s\n",
 					sinfo->name);
 		}
@@ -3604,7 +3625,7 @@ static int __init_subcaches(struct iris_hfi_device *device)
 		dprintk(CVP_CORE, "init_subcaches: %s\n",
 			sinfo->name);
 
-        sinfo->sc_ioaddr = map_llcc_iommu_addr(device, sinfo);
+		sinfo->sc_ioaddr = map_llcc_iommu_addr(device, sinfo);
 	}
 
 	return 0;
@@ -3824,9 +3845,9 @@ static int iris_enable_spad_subcache(void *dev)
 {
 	int rc = 0;
 	u32 c = 0;
-    struct iris_hfi_device *device;
+	struct iris_hfi_device *device;
 	struct subcache_info *sinfo;
-    dprintk(CVP_PWR, "%s E\n", __func__);
+	dprintk(CVP_PWR, "%s E\n", __func__);
 
 	if (!dev) {
 		dprintk(CVP_ERR, "%s: null device\n", __func__);
@@ -3854,7 +3875,7 @@ static int iris_enable_spad_subcache(void *dev)
 		dprintk(CVP_CORE, "Activated subcache %s : rc : %d \n", sinfo->name,rc);
 		c++;
 	}
-    mutex_unlock(&device->lock);
+	mutex_unlock(&device->lock);
 	dprintk(CVP_CORE, "Activated %d Subcaches to CVP\n", c);
 	dprintk(CVP_PWR, "%s X\n", __func__);
 	return 0;
@@ -4102,27 +4123,27 @@ fail_to_set_ubwc_config:
 }
 static int __vote_spad_clks(struct iris_hfi_device *device)
 {
-    int rc = 0;
+	int rc = 0;
 	rc = msm_cvp_prepare_enable_clk(device, "gcc_ddrss_spad_clk");
 	if (rc) {
 		dprintk(CVP_ERR, "Failed to vote spad clk: %d\n", rc);
 		goto fail_reset_spad_clks;
 	}
 
-    dprintk(CVP_PWR,
-            "Voting gcc_ddrss_spad_clk : Calling msm_cvp_vote_clk .....\n");
-        rc =  msm_cvp_vote_clk(device,"gcc_ddrss_spad_clk", 400000000);
+	dprintk(CVP_PWR,
+			"Voting gcc_ddrss_spad_clk : Calling msm_cvp_vote_clk .....\n");
+		rc =  msm_cvp_vote_clk(device,"gcc_ddrss_spad_clk", 400000000);
 
-        if (rc) {
-            dprintk(CVP_ERR, "Failed to vote gcc_ddrss_spad_clk clk: %d\n", rc);
-            goto fail_reset_spad_clks;
-        }
+		if (rc) {
+			dprintk(CVP_ERR, "Failed to vote gcc_ddrss_spad_clk clk: %d\n", rc);
+			goto fail_reset_spad_clks;
+		}
 	dprintk(CVP_PWR, "EVA-LSR voted spad clks\n");
 	return 0;
 
 fail_reset_spad_clks:
 	msm_cvp_disable_unprepare_clk(device, "gcc_ddrss_spad_clk");
-    return rc;
+	return rc;
 }
 static int __power_on_controller(struct iris_hfi_device *device)
 {
@@ -4162,7 +4183,7 @@ dprintk(CVP_PWR,
 		"Enabled gcc_iris_ss_hf_axi1_clk rc %d\n",rc);
 dprintk(CVP_PWR,
 		"Voting gcc_iris_ss_hf_axi1_clk : Calling msm_cvp_vote_clk .....\n");
-    rc =  msm_cvp_vote_clk(device,"gcc_iris_ss_hf_axi1_clk", 250000000);
+	rc =  msm_cvp_vote_clk(device,"gcc_iris_ss_hf_axi1_clk", 250000000);
 
 	if (rc) {
 		dprintk(CVP_ERR, "Failed to vote gcc_iris_ss_hf_axi1_clk clk: %d\n", rc);
@@ -4178,14 +4199,14 @@ dprintk(CVP_PWR,
 		dprintk(CVP_ERR, "Failed to enable gcc_iris_ss_spd_axi1_clk: %d\n", rc);
 		goto fail_enable_clk;
 	}
-    dprintk(CVP_PWR,
-            "Voting gcc_iris_ss_spd_axi1_clk : Calling msm_cvp_vote_clk .....\n");
-        rc =  msm_cvp_vote_clk(device,"gcc_iris_ss_spd_axi1_clk", 400000000);
+	dprintk(CVP_PWR,
+			"Voting gcc_iris_ss_spd_axi1_clk : Calling msm_cvp_vote_clk .....\n");
+		rc =  msm_cvp_vote_clk(device,"gcc_iris_ss_spd_axi1_clk", 400000000);
 
-        if (rc) {
-            dprintk(CVP_ERR, "Failed to vote gcc_iris_ss_spd_axi1_clk clk: %d\n", rc);
-            goto fail_reset_clks;
-        }
+		if (rc) {
+			dprintk(CVP_ERR, "Failed to vote gcc_iris_ss_spd_axi1_clk clk: %d\n", rc);
+			goto fail_reset_clks;
+		}
 
 	dprintk(CVP_PWR, "EVA controller powered on\n");
 	return 0;
@@ -4282,7 +4303,7 @@ dprintk(CVP_PWR, "Done __vote_spad_clks\n");
 	pr_info(CVP_DBG_TAG "cvp (eva) powered on\n", "pwr");
 	return 0;
 fail_voting_spad:
-    __unvote_spad(device);
+	__unvote_spad(device);
 fail_enable_core:
 	__power_off_controller(device);
 fail_enable_controller:
@@ -4436,7 +4457,7 @@ static int __power_off_controller(struct iris_hfi_device *device)
 		__print_sidebandmanager_regs(device);
 	}
 #ifdef EVA_LSR
-    /* HPG 6.2.2 Step 3, Set LSR NOC to Low power*/
+	/* HPG 6.2.2 Step 3, Set LSR NOC to Low power*/
 	__write_register(device, CVP_AON_WRAPPER_LSR_NOC_LPI_CONTROL, 0x1);
 	while (!reg_status && count < max_count) {
 		lpi_status =
@@ -4447,7 +4468,7 @@ static int __power_off_controller(struct iris_hfi_device *device)
 		usleep_range(50, 100);
 		count++;
 	}
-#endif 
+#endif
 
 	/* HPG 6.2.2 Step 3, debug bridge to low power BYPASSED */
 
@@ -4596,9 +4617,9 @@ static int __power_off_core(struct iris_hfi_device *device)
 //
 //// Check for LSR IDLE -- GCX_DONE_IDLE_INT, CSC_DONE_IDLE_INT
 //
-//reg_poll(`CVP_LSR0_LSR_SS_IRQ_STATUS, 32'h0000_0202,32'h0000_0202);      
+//reg_poll(`CVP_LSR0_LSR_SS_IRQ_STATUS, 32'h0000_0202,32'h0000_0202);
 //
-//reg_poll(`CVP_LSR1_LSR_SS_IRQ_STATUS, 32'h0000_0202,32'h0000_0202);   
+//reg_poll(`CVP_LSR1_LSR_SS_IRQ_STATUS, 32'h0000_0202,32'h0000_0202);
 //
 //
 //
@@ -4619,7 +4640,7 @@ __write_register(device, AON_WRAPPER_LSR_NOC_RESET_REQ, 0x00FFFFFF);
 		else
 			usleep_range(100, 200);
 		count++;
-	} while (count < max_count);     
+	} while (count < max_count);
 //
 //
 //
@@ -4633,7 +4654,7 @@ __write_register(device, CVP_WRAPPER_CORE_SW_RESET_L, 0x0007FF80);
 __write_register(device, CVP_WRAPPER_CORE_SW_RESET_TRIGGER, 0x1);
 //reg_write(`CVP_VPU_WRAPPER_CORE_SW_RESET_H, 32'h0000_0000); // Optional
 __write_register(device, CVP_WRAPPER_CORE_SW_RESET_H, 0x00000000);
-//reg_write(`CVP_VPU_WRAPPER_CORE_SW_RESET_L, 32'h0000_0000); 
+//reg_write(`CVP_VPU_WRAPPER_CORE_SW_RESET_L, 32'h0000_0000);
 __write_register(device, CVP_WRAPPER_CORE_SW_RESET_L, 0x00000000);
 //reg_write(`CVP_VPU_WRAPPER_CORE_SW_RESET_TRIGGER, 32'h0000_0000);
 __write_register(device, CVP_WRAPPER_CORE_SW_RESET_TRIGGER, 0x00000000);
@@ -4647,7 +4668,7 @@ __write_register(device, AON_WRAPPER_LSR_NOC_RESET_REQ, 0x00FFF000);
 //
 //// AON_WRAPPER_LSR_NOC_RESET_ACK
 //
-//reg_poll(`AON_WRAPPER_LSR_NOC_RESET_ACK, 32'h0000_0000, 32'h0000_0FFF);       
+//reg_poll(`AON_WRAPPER_LSR_NOC_RESET_ACK, 32'h0000_0000, 32'h0000_0FFF);
 	count = 0;
 	do {
 		value = __read_register(device, AON_WRAPPER_LSR_NOC_RESET_ACK);
@@ -4659,7 +4680,7 @@ __write_register(device, AON_WRAPPER_LSR_NOC_RESET_REQ, 0x00FFF000);
 	} while (count < max_count);
 //
 //
-//// Reset Ack Sel 
+//// Reset Ack Sel
 //
 //reg_write(`AON_WRAPPER_LSR_NOC_RESET_REQ, 32'h0000_0000);
 __write_register(device, AON_WRAPPER_LSR_NOC_RESET_REQ, 0x00000000);
@@ -4679,8 +4700,8 @@ __write_register(device, AON_WRAPPER_LSR_NOC_RESET_REQ, 0x00000000);
 }
 static int __unvote_spad(struct iris_hfi_device *device)
 {
-    msm_cvp_disable_unprepare_clk(device, "gcc_ddrss_spad_clk");
-    return 0;
+	msm_cvp_disable_unprepare_clk(device, "gcc_ddrss_spad_clk");
+	return 0;
 }
 static void power_off_iris2(struct iris_hfi_device *device)
 {
@@ -4690,7 +4711,7 @@ static void power_off_iris2(struct iris_hfi_device *device)
 	if (!(device->intr_status & CVP_WRAPPER_INTR_STATUS_A2HWD_BMSK))
 		disable_irq_nosync(device->cvp_hal_data->irq);
 	device->intr_status = 0;
-        __unvote_spad(device);
+		__unvote_spad(device);
 	__power_off_core(device);
 
 	__power_off_controller(device);
@@ -4784,121 +4805,121 @@ err_iris_power_on:
 }
 static int __dev_regspace_mapping(struct iris_hfi_device *device)
 {
-    int rc = 0;
-    struct context_bank_info *cb;
-    //non-secure context bank
-    cb = msm_cvp_smem_get_context_bank(device->res, 0);
-        if (!cb) {
-                dprintk(CVP_ERR," %s: failed to get context bank\n", __func__);
-        }
-    if (cb)
-    {
-       if (cb->name)
-            dprintk(CVP_ERR," %s:  cb name:%s\n", __func__,cb->name);
-       //ipclite Global Memory iova - UC region
-       rc = iommu_map(cb->domain, 
-                      device->res->ipclite_iova ,//0xFE500000 or 0xdd000000
-                      device->res->ipclite_phyaddr,// 0xa6f00000,
-                      device->res->ipclite_size,// 0x100000,
-                       IOMMU_READ | IOMMU_WRITE);
-       if (rc) {
-           dprintk(CVP_ERR," %s: iommu_map ipclite 0x000000 failed, rc:%d\n", __func__, rc);
-       }
+	int rc = 0;
+	struct context_bank_info *cb;
+	//non-secure context bank
+	cb = msm_cvp_smem_get_context_bank(device->res, 0);
+		if (!cb) {
+				dprintk(CVP_ERR," %s: failed to get context bank\n", __func__);
+		}
+	if (cb)
+	{
+	   if (cb->name)
+			dprintk(CVP_ERR," %s:  cb name:%s\n", __func__,cb->name);
+	   //ipclite Global Memory iova - UC region
+	   rc = iommu_map(cb->domain,
+					  device->res->ipclite_iova ,//0xFE500000 or 0xdd000000
+					  device->res->ipclite_phyaddr,// 0xa6f00000,
+					  device->res->ipclite_size,// 0x100000,
+					   IOMMU_READ | IOMMU_WRITE);
+	   if (rc) {
+		   dprintk(CVP_ERR," %s: iommu_map ipclite 0x000000 failed, rc:%d\n", __func__, rc);
+	   }
 	   else
 	   {
 		   dprintk(CVP_INFO," %s:  iommu_map ipclite Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
 				      device->res->ipclite_iova ,
-                      device->res->ipclite_phyaddr,
-                      device->res->ipclite_size);
-       }
+					  device->res->ipclite_phyaddr,
+					  device->res->ipclite_size);
+	   }
 
-       //Device Region
+	   //Device Region
 
-        //Display
+		//Display
 	   rc = iommu_map(cb->domain,
-                      device->res->display_iova,
-                      device->res->display_phyaddr,
-                      device->res->display_size,
-                      IOMMU_MMIO | IOMMU_READ | IOMMU_WRITE);
-       if (rc) {
-            dprintk(CVP_ERR," %s:  iommu_map display failed, rc:%d\n", __func__, rc);
-       }
+					  device->res->display_iova,
+					  device->res->display_phyaddr,
+					  device->res->display_size,
+					  IOMMU_MMIO | IOMMU_READ | IOMMU_WRITE);
+	   if (rc) {
+			dprintk(CVP_ERR," %s:  iommu_map display failed, rc:%d\n", __func__, rc);
+	   }
 	   else
 	   {
 		   dprintk(CVP_INFO," %s:  iommu_map display Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
 				      device->res->display_iova ,
-                      device->res->display_phyaddr,
-                      device->res->display_size);
+					  device->res->display_phyaddr,
+					  device->res->display_size);
 
 	   }
-        //Always ON Timers
+		//Always ON Timers
 	   rc = iommu_map(cb->domain,
-                      device->res->aontimers_iova,
-                      device->res->aontimers_phyaddr,
-                      device->res->aontimers_size,
-                      IOMMU_MMIO | IOMMU_READ | IOMMU_WRITE);
-       if (rc) {
-            dprintk(CVP_ERR," %s:  iommu_map always-on timers failed, rc:%d\n", __func__, rc);
-       }
+					  device->res->aontimers_iova,
+					  device->res->aontimers_phyaddr,
+					  device->res->aontimers_size,
+					  IOMMU_MMIO | IOMMU_READ | IOMMU_WRITE);
+	   if (rc) {
+			dprintk(CVP_ERR," %s:  iommu_map always-on timers failed, rc:%d\n", __func__, rc);
+	   }
 	   else
 	   {
 		   dprintk(CVP_INFO," %s:  iommu_map aon-timers Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
 				      device->res->aontimers_iova ,
-                      device->res->aontimers_phyaddr,
-                      device->res->aontimers_size);
+					  device->res->aontimers_phyaddr,
+					  device->res->aontimers_size);
 
 	   }
-       //hwmutex iova
+	   //hwmutex iova
 	   rc = iommu_map(cb->domain,
-                      device->res->hwmutex_iova,// 0xFFB00000 or 0xde000000,
-                      device->res->hwmutex_phyaddr,// 0x1f4a000,
-                      device->res->hwmutex_size,// 0x2000,
-                      IOMMU_MMIO | IOMMU_READ | IOMMU_WRITE);
-       if (rc) {
-            dprintk(CVP_ERR," %s:  iommu_map hwmutex 0xde000000 failed, rc:%d\n", __func__, rc);
-       }
+					  device->res->hwmutex_iova,// 0xFFB00000 or 0xde000000,
+					  device->res->hwmutex_phyaddr,// 0x1f4a000,
+					  device->res->hwmutex_size,// 0x2000,
+					  IOMMU_MMIO | IOMMU_READ | IOMMU_WRITE);
+	   if (rc) {
+			dprintk(CVP_ERR," %s:  iommu_map hwmutex 0xde000000 failed, rc:%d\n", __func__, rc);
+	   }
 	   else
 	   {
 		   dprintk(CVP_INFO," %s:  iommu_map hwmutex Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
 				      device->res->hwmutex_iova ,
-                      device->res->hwmutex_phyaddr,
-                      device->res->hwmutex_size);
+					  device->res->hwmutex_phyaddr,
+					  device->res->hwmutex_size);
 
 	   }
-    }
-    return rc;
+	}
+	return rc;
 }
 static int __dev_regspace_unmap(struct iris_hfi_device *device)
 {
-    int rc = 0;
-    struct context_bank_info *cb;
-    //non-secure context bank
-    cb = msm_cvp_smem_get_context_bank(device->res, 0);
-    if (!cb) {
-            dprintk(CVP_ERR," %s: failed to get context bank\n", __func__);
-    }
-    iommu_unmap(cb->domain, device->res->ipclite_iova, device->res->ipclite_size);//
-    iommu_unmap(cb->domain, device->res->display_iova, device->res->display_size);//
-    iommu_unmap(cb->domain, device->res->aontimers_iova, device->res->aontimers_size);//
-    iommu_unmap(cb->domain, device->res->hwmutex_iova, device->res->hwmutex_size);//
-    return rc;
+	int rc = 0;
+	struct context_bank_info *cb;
+	//non-secure context bank
+	cb = msm_cvp_smem_get_context_bank(device->res, 0);
+	if (!cb) {
+			dprintk(CVP_ERR," %s: failed to get context bank\n", __func__);
+	}
+	iommu_unmap(cb->domain, device->res->ipclite_iova, device->res->ipclite_size);//
+	iommu_unmap(cb->domain, device->res->display_iova, device->res->display_size);//
+	iommu_unmap(cb->domain, device->res->aontimers_iova, device->res->aontimers_size);//
+	iommu_unmap(cb->domain, device->res->hwmutex_iova, device->res->hwmutex_size);//
+	return rc;
 
 }
 static int __llcc_regspace_unmap(struct iris_hfi_device *device)
 {
-    int rc = 0;
-    struct context_bank_info *cb;
-    //non-secure context bank
-    cb = msm_cvp_smem_get_context_bank(device->res, 0);
-    if (!cb) {
-            dprintk(CVP_ERR," %s: failed to get context bank\n", __func__);
-    }
+	int rc = 0;
+	struct context_bank_info *cb;
+	//non-secure context bank
+	cb = msm_cvp_smem_get_context_bank(device->res, 0);
+	if (!cb) {
+			dprintk(CVP_ERR," %s: failed to get context bank\n", __func__);
+	}
 
-    iommu_unmap(cb->domain, device->res->llccevaleft_iova, device->res->llccevaleft_size);//
-    iommu_unmap(cb->domain, device->res->llccevaright_iova, device->res->llccevaright_size);//
-    iommu_unmap(cb->domain, device->res->llccevagain_iova, device->res->llccevagain_size);//
+	iommu_unmap(cb->domain, device->res->llccevaleft_iova, device->res->llccevaleft_size);//
+	iommu_unmap(cb->domain, device->res->llccevaright_iova, device->res->llccevaright_size);//
+	iommu_unmap(cb->domain, device->res->llccevagain_iova, device->res->llccevagain_size);//
 
-    return rc;
+	return rc;
 
 }
 static int __load_fw(struct iris_hfi_device *device)
@@ -5133,7 +5154,7 @@ static void __noc_error_info_iris2(struct iris_hfi_device *device)
 	__err_log(log_required, &noc_log->err_core_errlog2_high,
 			"CVP_NOC_CORE_ERL_MAIN_ERRLOG2_HIGH", val);
 	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG3_LOW_OFFS);
-	__err_log(log_required, &noc_log->err_core_errlog3_low, 
+	__err_log(log_required, &noc_log->err_core_errlog3_low,
 			"CORE ERRLOG3_LOW, below details", val);
 	__print_reg_details(val);
 	val = __read_register(device, CVP_NOC_CORE_ERR_ERRLOG3_HIGH_OFFS);
@@ -5393,8 +5414,8 @@ static void iris_init_hfi_callbacks(struct cvp_hfi_device *hdev)
 	hdev->noc_error_info = iris_hfi_noc_error_info;
 	hdev->validate_session = iris_hfi_validate_session;
 	hdev->pm_qos_update = iris_pm_qos_update;
-    hdev->spad_activate = iris_enable_spad_subcache;
-    hdev->spad_deactivate = iris_disable_spad_subcache;
+	hdev->spad_activate = iris_enable_spad_subcache;
+	hdev->spad_deactivate = iris_disable_spad_subcache;
 #if IS_REACHABLE(CONFIG_QCOM_KGSL)
 	hdev->notify_gpu_status = iris_hfi_notify_gpu_status;
 #endif

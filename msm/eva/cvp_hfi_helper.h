@@ -146,7 +146,9 @@ typedef enum eEVA_LSR_SUBCACHE_IDX
 EVA = 0,
 LSR_LEFT = 1,
 LSR_RIGHT = 2,
-GAIN_MESH = 3
+GAIN_MESH = 3,
+CSC_LEFT = 4,
+CSC_RIGHT = 5
 }eEVA_LSR_SUBCACHE_IDX;
 
 struct cvp_hfi_resource_subcache_type {
