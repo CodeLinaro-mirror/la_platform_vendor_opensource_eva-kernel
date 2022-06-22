@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _MSM_COMM_DEF_H_
@@ -31,10 +32,10 @@ enum queue_state {
 #endif
 
 #ifdef CONFIG_EVA_NEO
-#define CVP_SYNX_ENABLED 1  //1 TODO: AURORA-BU
-#define CVP_MMRM_ENABLED 0  //1 TODO: AURORA-BU
-#define CVP_FASTRPC_ENABLED 1  //1 TODO: AURORA-BU
-#define CVP_MINIDUMP_ENABLED 1 //1 TODO: AURORA-BU
+#define CVP_SYNX_ENABLED 1
+#define CVP_MMRM_ENABLED 1
+#define CVP_FASTRPC_ENABLED 1
+#define CVP_MINIDUMP_ENABLED 1
 #endif
 
 #endif
