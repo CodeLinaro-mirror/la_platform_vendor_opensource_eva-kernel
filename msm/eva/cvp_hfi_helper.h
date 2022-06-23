@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef __H_CVP_HFI_HELPER_H__
@@ -9,7 +10,7 @@
 #if IS_REACHABLE(CONFIG_QCOM_KGSL)
 #include "msm_gpu_eva.h"
 #endif
-
+#include <media/msm_eva_private.h>
 #define HFI_COMMON_BASE				(0)
 #define HFI_DOMAIN_BASE_COMMON		(HFI_COMMON_BASE + 0)
 #define HFI_DOMAIN_BASE_CVP			(HFI_COMMON_BASE + 0x04000000)
@@ -380,13 +381,20 @@ struct cvp_hfi_dumpmsg_session_hdr {
 } __packed;
 
 #define HFI_MAX_HW_ACTIVATIONS_PER_FRAME (6)
+#ifdef LSR_SPLIT_VOTING
+#define HFI_MAX_HW_THREADS (5)
+#else
 #define HFI_MAX_HW_THREADS (4)
+#endif
 
 enum hfi_hw_thread {
 	HFI_HW_FDU,
 	HFI_HW_MPU,
 	HFI_HW_OD,
-	HFI_HW_ICA
+	HFI_HW_ICA,
+#ifdef LSR_SPLIT_VOTING
+	HFI_HW_LSR
+#endif
 };
 
 struct cvp_hfi_msg_session_hdr_ext {

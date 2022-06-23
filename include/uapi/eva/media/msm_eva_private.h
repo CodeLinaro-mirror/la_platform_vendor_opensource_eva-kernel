@@ -1,12 +1,13 @@
 /* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 #ifndef __MSM_EVA_PRIVATE_H__
 #define __MSM_EVA_PRIVATE_H__
 
 #include <linux/types.h>
-
+#define LSR_SPLIT_VOTING
 /* Commands type */
 #define EVA_KMD_CMD_BASE		0x10000000
 #define EVA_KMD_CMD_START		(EVA_KMD_CMD_BASE + 0x1000)
@@ -159,7 +160,18 @@ struct eva_kmd_hfi_packet {
 #define EVA_KMD_PROP_PWR_LSR	0x23
 #define EVA_KMD_PROP_PWR_LSR_OP	0x24
 #define EVA_KMD_PROP_PWR_FPS_LSR	0x25
+#ifdef LSR_SPLIT_VOTING
+#define EVA_KMD_PROP_PWR_LSR_LLCC 0x26
+#define EVA_KMD_PROP_PWR_LSR_DDR  0x27
+#define EVA_KMD_PROP_PWR_LSR_LLCC_OP 0x28
+#define EVA_KMD_PROP_PWR_LSR_DDR_OP  0x29
+#endif
+
+#ifdef LSR_SPLIT_VOTING
+#define MAX_KMD_PROP_NUM_PER_PACKET		12
+#else
 #define MAX_KMD_PROP_NUM_PER_PACKET		8
+#endif //LSR_SPLIT_VOTING
 #define MAX_KMD_PROP_TYPE	(EVA_KMD_PROP_PWR_FPS_ICA + 1)
 
 struct eva_kmd_sys_property {

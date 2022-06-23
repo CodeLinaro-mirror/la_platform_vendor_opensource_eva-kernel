@@ -13,6 +13,10 @@ struct cvp_power_level {
 	unsigned long core_sum;
 	unsigned long op_core_sum;
 	unsigned long bw_sum;
+#ifdef LSR_SPLIT_VOTING
+	unsigned long lsr_llcc_bw_sum;
+	unsigned long lsr_ddr_bw_sum;
+#endif
 };
 
 int msm_cvp_get_session_info(struct msm_cvp_inst *inst, u32 *session)
@@ -775,7 +779,10 @@ static bool is_subblock_profile_existed(struct msm_cvp_inst *inst)
 	return (inst->prop.od_cycles ||
 			inst->prop.mpu_cycles ||
 			inst->prop.fdu_cycles ||
-			inst->prop.ica_cycles);
+#ifdef LSR_SPLIT_VOTING
+			inst->prop.lsr_cycles ||
+#endif
+			inst->prop.ica_cycles  );
 }
 
 static void aggregate_power_update(struct msm_cvp_core *core,
@@ -790,10 +797,19 @@ static void aggregate_power_update(struct msm_cvp_core *core,
 	unsigned long op_fdu_max[2] = {0}, op_od_max[2] = {0};
 	unsigned long op_mpu_max[2] = {0}, op_ica_max[2] = {0};
 	unsigned long op_fw_max[2] = {0}, bw_sum[2] = {0}, op_bw_max[2] = {0};
+#ifdef LSR_SPLIT_VOTING
+
+	unsigned long lsr_llcc_bw_sum[2] = {0}, lsr_llcc_op_bw_max[2] = {0};
+	unsigned long lsr_ddr_bw_sum[2] = {0}, lsr_ddr_op_bw_max[2] = {0};
+	unsigned long lsr_sum[2] = {0};
+	unsigned long op_lsr_max[2] = {0};
+	core->dyn_clk.sum_fps[HFI_HW_LSR] = 0;
+#endif
 	core->dyn_clk.sum_fps[HFI_HW_FDU] = 0;
 	core->dyn_clk.sum_fps[HFI_HW_MPU] = 0;
 	core->dyn_clk.sum_fps[HFI_HW_OD]  = 0;
 	core->dyn_clk.sum_fps[HFI_HW_ICA] = 0;
+
 
 	list_for_each_entry(inst, &core->instances, list) {
 		if (inst->state == MSM_CVP_CORE_INVALID ||
@@ -811,24 +827,63 @@ static void aggregate_power_update(struct msm_cvp_core *core,
 			inst->prop.od_cycles,
 			inst->prop.mpu_cycles,
 			inst->prop.ica_cycles);
+#ifdef LSR_SPLIT_VOTING
+
+		dprintk(CVP_PROF, "pwrUpdate fdu %u od %u mpu %u ica %u lsr = %u\n",
+			inst->prop.fdu_cycles,
+			inst->prop.od_cycles,
+			inst->prop.mpu_cycles,
+			inst->prop.ica_cycles,
+			inst->prop.lsr_cycles);
+
+#endif
 
 		dprintk(CVP_PROF, "pwrUpdate fw %u fdu_o %u od_o %u mpu_o %u\n",
 			inst->prop.fw_cycles,
 			inst->prop.fdu_op_cycles,
 			inst->prop.od_op_cycles,
 			inst->prop.mpu_op_cycles);
+#ifdef LSR_SPLIT_VOTING
+		dprintk(CVP_PROF, "pwrUpdate fw %u fdu_o %u od_o %u mpu_o %u lsr_o = %u\n",
+			inst->prop.fw_cycles,
+			inst->prop.fdu_op_cycles,
+			inst->prop.od_op_cycles,
+			inst->prop.mpu_op_cycles,
+			inst->prop.lsr_op_cycles);
+
+#endif
 
 		dprintk(CVP_PROF, "pwrUpdate ica_o %u fw_o %u bw %u bw_o %u\n",
 			inst->prop.ica_op_cycles,
 			inst->prop.fw_op_cycles,
 			inst->prop.ddr_bw,
 			inst->prop.ddr_op_bw);
+#ifdef LSR_SPLIT_VOTING
 
+		dprintk(CVP_PROF, "pwrUpdate ica_o %u fw_o %u bw %u bw_o %u lsr_llcc_bw = %u \
+			               lsr_llcc_op_bw = %u lsr_ddr_bw = %u lsr_ddr_op_bw = %u \n",
+			inst->prop.ica_op_cycles,
+			inst->prop.fw_op_cycles,
+			inst->prop.ddr_bw,
+			inst->prop.ddr_op_bw,
+			inst->prop.nBwLsr_LLCC,
+			inst->prop.nOpBwLsr_LLCC,
+			inst->prop.nBwLsr_Ddr,
+			inst->prop.nOpBwLsr_Ddr);
+
+#endif
 		fdu_sum[i] += inst->prop.fdu_cycles;
 		od_sum[i] += inst->prop.od_cycles;
 		mpu_sum[i] += inst->prop.mpu_cycles;
 		ica_sum[i] += inst->prop.ica_cycles;
 		fw_sum[i] += inst->prop.fw_cycles;
+#ifdef LSR_SPLIT_VOTING
+		lsr_sum[i] += inst->prop.lsr_cycles;
+		op_lsr_max[i] += (op_lsr_max[i] >= inst->prop.lsr_op_cycles) ?
+		op_lsr_max[i] : inst->prop.lsr_op_cycles;
+		dprintk(CVP_PROF, " i = %d lsr_sum[i] = %d, op_lsr_max[i] = %d \n",
+				i, lsr_sum[i], op_lsr_max[i] );
+#endif
 		op_fdu_max[i] =
 			(op_fdu_max[i] >= inst->prop.fdu_op_cycles) ?
 			op_fdu_max[i] : inst->prop.fdu_op_cycles;
@@ -848,46 +903,115 @@ static void aggregate_power_update(struct msm_cvp_core *core,
 		op_bw_max[i] =
 			(op_bw_max[i] >= inst->prop.ddr_op_bw) ?
 			op_bw_max[i] : inst->prop.ddr_op_bw;
+#ifdef LSR_SPLIT_VOTING
+		lsr_llcc_bw_sum[i] += inst->prop.nBwLsr_LLCC;
+		lsr_ddr_bw_sum[i] += inst->prop.nBwLsr_Ddr;
+		lsr_llcc_op_bw_max[i] =
+			(lsr_llcc_op_bw_max[i] >= inst->prop.nOpBwLsr_LLCC) ?
+			lsr_llcc_op_bw_max[i] : inst->prop.nOpBwLsr_LLCC;
+		lsr_ddr_op_bw_max[i] =
+			(lsr_ddr_op_bw_max[i] >= inst->prop.nOpBwLsr_Ddr) ?
+			lsr_ddr_op_bw_max[i] : inst->prop.nOpBwLsr_Ddr;
 
+		dprintk(CVP_PROF, " i = %d lsr_llcc_bw_sum[i] = %d, lsr_ddr_bw_sum[i] = %d \n",
+			i, lsr_llcc_bw_sum[i], lsr_ddr_bw_sum[i] );
+		dprintk(CVP_PROF, " i = %d lsr_llcc_op_bw_max[i] = %d, lsr_ddr_op_bw_max[i] = %d \n",
+			i, lsr_llcc_op_bw_max[i], lsr_ddr_op_bw_max[i] );
+#endif
 		dprintk(CVP_PWR, "%s:%d - fps fdu %d mpu %d od %d ica %d\n",
 			__func__, __LINE__,
 			inst->prop.fps[HFI_HW_FDU], inst->prop.fps[HFI_HW_MPU],
 			inst->prop.fps[HFI_HW_OD], inst->prop.fps[HFI_HW_ICA]);
+
+#ifdef LSR_SPLIT_VOTING
+		dprintk(CVP_PWR, "%s:%d - fps fdu %d mpu %d od %d ica %d lsr =%d\n",
+			__func__, __LINE__,
+			inst->prop.fps[HFI_HW_FDU], inst->prop.fps[HFI_HW_MPU],
+			inst->prop.fps[HFI_HW_OD], inst->prop.fps[HFI_HW_ICA],
+			inst->prop.fps[HFI_HW_LSR]);
+#endif
 		core->dyn_clk.sum_fps[HFI_HW_FDU] += inst->prop.fps[HFI_HW_FDU];
 		core->dyn_clk.sum_fps[HFI_HW_MPU] += inst->prop.fps[HFI_HW_MPU];
 		core->dyn_clk.sum_fps[HFI_HW_OD] += inst->prop.fps[HFI_HW_OD];
 		core->dyn_clk.sum_fps[HFI_HW_ICA] += inst->prop.fps[HFI_HW_ICA];
+#ifdef LSR_SPLIT_VOTING
+		core->dyn_clk.sum_fps[HFI_HW_LSR] += inst->prop.fps[HFI_HW_LSR];
+#endif
 		dprintk(CVP_PWR, "%s:%d - sum_fps fdu %d mpu %d od %d ica %d\n",
 			__func__, __LINE__,
 			core->dyn_clk.sum_fps[HFI_HW_FDU],
 			core->dyn_clk.sum_fps[HFI_HW_MPU],
 			core->dyn_clk.sum_fps[HFI_HW_OD],
 			core->dyn_clk.sum_fps[HFI_HW_ICA]);
+#ifdef LSR_SPLIT_VOTING
+
+		dprintk(CVP_PWR, "%s:%d - sum_fps fdu %d mpu %d od %d ica %d lsr = %d\n",
+			__func__, __LINE__,
+			core->dyn_clk.sum_fps[HFI_HW_FDU],
+			core->dyn_clk.sum_fps[HFI_HW_MPU],
+			core->dyn_clk.sum_fps[HFI_HW_OD],
+			core->dyn_clk.sum_fps[HFI_HW_ICA],
+			core->dyn_clk.sum_fps[HFI_HW_LSR]);
+
+#endif
 	}
 
 	for (i = 0; i < 2; i++) {
 		fdu_sum[i] = max_3(fdu_sum[i], od_sum[i], mpu_sum[i]);
 		fdu_sum[i] = max_3(fdu_sum[i], ica_sum[i], fw_sum[i]);
+#ifdef LSR_SPLIT_VOTING
+		fdu_sum[i] = max_3(fdu_sum[i], lsr_sum[i], fw_sum[i]);
+#endif
 
 		op_fdu_max[i] = max_3(op_fdu_max[i], op_od_max[i],
 			op_mpu_max[i]);
 		op_fdu_max[i] = max_3(op_fdu_max[i],
 			op_ica_max[i], op_fw_max[i]);
+#ifdef LSR_SPLIT_VOTING
+		op_fdu_max[i] = max_3(op_fdu_max[i],
+		op_lsr_max[i], op_fw_max[i]);
+#endif
 		op_fdu_max[i] =
 			(op_fdu_max[i] > max_clk_rate) ?
 			max_clk_rate : op_fdu_max[i];
 		bw_sum[i] = (bw_sum[i] >= op_bw_max[i]) ?
 			bw_sum[i] : op_bw_max[i];
+#ifdef LSR_SPLIT_VOTING
+		lsr_llcc_bw_sum[i] = (lsr_llcc_bw_sum[i] >= lsr_llcc_op_bw_max[i]) ?
+			lsr_llcc_bw_sum[i] : lsr_llcc_op_bw_max[i];
+		lsr_ddr_bw_sum[i] = (lsr_ddr_bw_sum[i] >= lsr_ddr_op_bw_max[i]) ?
+			lsr_ddr_bw_sum[i] : lsr_ddr_op_bw_max[i];
+
+		dprintk(CVP_PROF, " i = %d lsr_llcc_bw_sum[i] = %d, lsr_ddr_bw_sum[i] = %d \n",
+			i, lsr_llcc_bw_sum[i], lsr_ddr_bw_sum[i] );
+
+#endif
+
 	}
 
-	nrt_pwr->core_sum += fdu_sum[0];
-	nrt_pwr->op_core_sum = (nrt_pwr->op_core_sum >= op_fdu_max[0]) ?
+		nrt_pwr->core_sum += fdu_sum[0];
+		nrt_pwr->op_core_sum = (nrt_pwr->op_core_sum >= op_fdu_max[0]) ?
 			nrt_pwr->op_core_sum : op_fdu_max[0];
-	nrt_pwr->bw_sum += bw_sum[0];
-	rt_pwr->core_sum += fdu_sum[1];
-	rt_pwr->op_core_sum = (rt_pwr->op_core_sum >= op_fdu_max[1]) ?
+		nrt_pwr->bw_sum += bw_sum[0];
+#ifdef LSR_SPLIT_VOTING
+
+		nrt_pwr->lsr_llcc_bw_sum += lsr_llcc_bw_sum[0];
+		nrt_pwr->lsr_ddr_bw_sum += lsr_ddr_bw_sum[0];
+		dprintk(CVP_PROF, "nrt_pwr->lsr_llcc_bw_sum = %d,  nrt_pwr->lsr_ddr_bw_sum = %d ",
+			nrt_pwr->lsr_llcc_bw_sum,  nrt_pwr->lsr_ddr_bw_sum );
+#endif
+		rt_pwr->core_sum += fdu_sum[1];
+		rt_pwr->op_core_sum = (rt_pwr->op_core_sum >= op_fdu_max[1]) ?
 			rt_pwr->op_core_sum : op_fdu_max[1];
-	rt_pwr->bw_sum += bw_sum[1];
+		rt_pwr->bw_sum += bw_sum[1];
+#ifdef LSR_SPLIT_VOTING
+		rt_pwr->lsr_llcc_bw_sum += lsr_llcc_bw_sum[1];
+		rt_pwr->lsr_ddr_bw_sum += lsr_ddr_bw_sum[1];
+		dprintk(CVP_PROF, " rt_pwr->lsr_llcc_bw_sum = %d,  rt_pwr->lsr_ddr_bw_sum  = %d ",
+			rt_pwr->lsr_llcc_bw_sum,  rt_pwr->lsr_ddr_bw_sum );
+		dprintk(CVP_PROF, "nrt_pwr->lsr_llcc_bw_sum = %d,  nrt_pwr->lsr_ddr_bw_sum = %d ",
+			nrt_pwr->lsr_llcc_bw_sum,  nrt_pwr->lsr_ddr_bw_sum );
+#endif
 }
 
 /**
@@ -908,13 +1032,25 @@ static int adjust_bw_freqs(void)
 	struct msm_cvp_core *core;
 	struct iris_hfi_device *hdev;
 	struct bus_info *bus;
+
+#ifdef LSR_SPLIT_VOTING
+	struct bus_info *lsr_llcc_bus = NULL;
+	struct bus_info *lsr_ddr_bus = NULL;
+	unsigned int lsr_llcc_max_bw = 0, lsr_llcc_min_bw = 0;
+	unsigned int lsr_ddr_max_bw = 0, lsr_ddr_min_bw = 0;
+#endif
+
 	struct clock_set *clocks;
 	struct clock_info *cl;
 	struct allowed_clock_rates_table *tbl = NULL;
 	unsigned int tbl_size;
 	unsigned int cvp_min_rate, cvp_max_rate, max_bw, min_bw;
+
 	struct cvp_power_level rt_pwr = {0}, nrt_pwr = {0};
 	unsigned long tmp, core_sum, op_core_sum, bw_sum;
+#ifdef LSR_SPLIT_VOTING
+	unsigned long lsr_llcc_bw_sum = 0, lsr_ddr_bw_sum = 0;
+#endif
 	int i, rc = 0;
 	unsigned long ctrl_freq;
 
@@ -928,8 +1064,18 @@ static int adjust_bw_freqs(void)
 	cvp_min_rate = tbl[0].clock_rate;
 	cvp_max_rate = tbl[tbl_size - 1].clock_rate;
 	bus = &core->resources.bus_set.bus_tbl[1];
+#ifdef LSR_SPLIT_VOTING
+	lsr_llcc_bus = &core->resources.bus_set.bus_tbl[2];
+	lsr_ddr_bus = &core->resources.bus_set.bus_tbl[3];
+#endif
 	max_bw = bus->range[1];
 	min_bw = max_bw/10;
+#ifdef LSR_SPLIT_VOTING
+	lsr_llcc_max_bw = lsr_llcc_bus->range[1];
+	lsr_llcc_min_bw = lsr_llcc_bus->range[0];
+	lsr_ddr_max_bw = lsr_ddr_bus->range[1];
+	lsr_ddr_min_bw = lsr_ddr_bus->range[0];
+#endif
 
 	aggregate_power_update(core, &nrt_pwr, &rt_pwr, cvp_max_rate);
 	dprintk(CVP_PROF, "PwrUpdate nrt %u %u rt %u %u\n",
@@ -964,9 +1110,17 @@ static int adjust_bw_freqs(void)
 	bw_sum = bw_sum >> 10;
 	bw_sum = (bw_sum > max_bw) ? max_bw : bw_sum;
 	bw_sum = (bw_sum < min_bw) ? min_bw : bw_sum;
+#ifdef LSR_SPLIT_VOTING
+	lsr_llcc_bw_sum = rt_pwr.lsr_llcc_bw_sum + nrt_pwr.lsr_llcc_bw_sum;
+	lsr_ddr_bw_sum = rt_pwr.lsr_ddr_bw_sum + nrt_pwr.lsr_ddr_bw_sum;
+#endif
 
 	dprintk(CVP_PROF, "%s %lld %lld\n", __func__,
 		core_sum, bw_sum);
+#ifdef LSR_SPLIT_VOTING
+	dprintk(CVP_PROF, "%s %lld %lld %lld %lld \n", __func__,
+		core_sum, bw_sum, lsr_llcc_bw_sum, lsr_ddr_bw_sum );
+#endif
 	if (!cl->has_scaling) {
 		dprintk(CVP_ERR, "Cannot scale CVP clock\n");
 		return -EINVAL;
@@ -995,7 +1149,12 @@ static int adjust_bw_freqs(void)
 
 	hdev->clk_freq = core->curr_freq;
 	rc = msm_cvp_set_bw(bus, bw_sum);
-
+#ifdef LSR_SPLIT_VOTING
+	dprintk(CVP_PROF, "lsr_llcc_bw_sum = %d\n",lsr_llcc_bw_sum);
+	dprintk(CVP_PROF, "lsr_ddr_bw_sum = %d\n",lsr_ddr_bw_sum);
+	rc = msm_cvp_set_bw(lsr_llcc_bus,lsr_llcc_bw_sum);
+	rc = msm_cvp_set_bw(lsr_ddr_bus,lsr_ddr_bw_sum);
+#endif
 	return rc;
 }
 
@@ -1323,6 +1482,13 @@ static unsigned int msm_cvp_get_hw_aggregate_cycles(enum hw_block hwblk)
 			cycles_sum += inst->prop.od_cycles;
 			break;
 		}
+#ifdef LSR_SPLIT_VOTING
+		case LSR:
+		{
+			cycles_sum += inst->prop.lsr_cycles;
+			break;
+		}
+#endif
 		default:
 			dprintk(CVP_ERR, "unrecognized hw block %d\n",
 				hwblk);
@@ -1402,6 +1568,16 @@ static int msm_cvp_get_sysprop(struct msm_cvp_inst *inst,
 				msm_cvp_get_hw_aggregate_cycles(CVP_MPU);
 			break;
 		}
+#ifdef LSR_SPLIT_VOTING
+
+		case EVA_KMD_PROP_PWR_LSR:
+		{
+			props->prop_data[i].data =
+				msm_cvp_get_hw_aggregate_cycles(LSR);
+			break;
+		}
+
+#endif
 		default:
 			dprintk(CVP_ERR, "unrecognized sys property %d\n",
 				props->prop_data[i].prop_type);
@@ -1497,6 +1673,20 @@ static int msm_cvp_set_sysprop(struct msm_cvp_inst *inst,
 		case EVA_KMD_PROP_PWR_SYSCACHE:
 			session_prop->ddr_cache = prop_array[i].data;
 			break;
+#ifdef LSR_SPLIT_VOTING
+		case EVA_KMD_PROP_PWR_LSR:
+			session_prop->lsr_cycles = prop_array[i].data;
+			dprintk(CVP_PWR,"session_prop->lsr_cycles= %d", session_prop->lsr_cycles);
+			break;
+		case EVA_KMD_PROP_PWR_LSR_LLCC:
+			session_prop->nBwLsr_LLCC = prop_array[i].data;
+			dprintk(CVP_PWR,"session_prop->nBwLsr_LLCC = %d", session_prop->nBwLsr_LLCC);
+			break;
+		case EVA_KMD_PROP_PWR_LSR_DDR:
+			session_prop->nBwLsr_Ddr = prop_array[i].data;
+			dprintk(CVP_PWR,"session_prop->nBwLsr_Ddr = %d", session_prop->nBwLsr_Ddr);
+			break;
+#endif
 		case EVA_KMD_PROP_PWR_FDU_OP:
 			session_prop->fdu_op_cycles = prop_array[i].data;
 			break;
@@ -1520,6 +1710,20 @@ static int msm_cvp_set_sysprop(struct msm_cvp_inst *inst,
 		case EVA_KMD_PROP_PWR_SYSCACHE_OP:
 			session_prop->ddr_op_cache = prop_array[i].data;
 			break;
+#ifdef LSR_SPLIT_VOTING
+		case EVA_KMD_PROP_PWR_LSR_OP:
+			session_prop->lsr_op_cycles = prop_array[i].data;
+			dprintk(CVP_DBG," lsr_op_cycles = %d", session_prop->lsr_op_cycles);
+			break;
+		case EVA_KMD_PROP_PWR_LSR_LLCC_OP:
+			session_prop->nOpBwLsr_LLCC = prop_array[i].data;
+			dprintk(CVP_DBG,"nOpBwLsr_LLCC = %d", session_prop->nOpBwLsr_LLCC);
+			break;
+		case EVA_KMD_PROP_PWR_LSR_DDR_OP:
+			session_prop->nOpBwLsr_Ddr = prop_array[i].data;
+			dprintk(CVP_DBG,"nOpBwLsr_Ddr= %d", session_prop->nOpBwLsr_Ddr);
+			break;
+#endif
 		case EVA_KMD_PROP_PWR_FPS_FDU:
 			session_prop->fps[HFI_HW_FDU] = prop_array[i].data;
 			break;
@@ -1532,6 +1736,12 @@ static int msm_cvp_set_sysprop(struct msm_cvp_inst *inst,
 		case EVA_KMD_PROP_PWR_FPS_ICA:
 			session_prop->fps[HFI_HW_ICA] = prop_array[i].data;
 			break;
+#ifdef 	LSR_SPLIT_VOTING
+		case EVA_KMD_PROP_PWR_FPS_LSR:
+			session_prop->fps[HFI_HW_LSR] = prop_array[i].data;
+			dprintk(CVP_DBG,"session_prop->fps[HFI_HW_LSR] = %d", session_prop->fps[HFI_HW_LSR]);
+			break;
+#endif
 		case EVA_KMD_PROP_SESSION_DUMPOFFSET:
 			session_prop->dump_offset = prop_array[i].data;
 			break;

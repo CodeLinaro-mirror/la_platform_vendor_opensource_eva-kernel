@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _MSM_CVP_INTERNAL_H_
@@ -43,6 +44,7 @@
 #define SYS_MSG_INDEX(__msg) (__msg - SYS_MSG_START)
 #define SESSION_MSG_INDEX(__msg) (__msg - SESSION_MSG_START)
 
+
 // increased size for LSR
 #define ARP_BUF_SIZE 0x600000
 
@@ -65,7 +67,10 @@ enum hw_block {
 	CVP_FDU = 0x0001,
 	CVP_ICA,
 	CVP_MPU,
-	CVP_OD
+	CVP_OD,
+#ifdef LSR_SPLIT_VOTING
+	LSR
+#endif
 };
 
 enum instance_state {
@@ -275,15 +280,27 @@ struct cvp_session_prop {
 	u32 mpu_cycles;
 	u32 ica_cycles;
 	u32 fw_cycles;
+#ifdef LSR_SPLIT_VOTING
+	u32 lsr_cycles;
+#endif
 	u32 fdu_op_cycles;
 	u32 od_op_cycles;
 	u32 mpu_op_cycles;
 	u32 ica_op_cycles;
 	u32 fw_op_cycles;
+#ifdef LSR_SPLIT_VOTING
+	u32 lsr_op_cycles;
+#endif
 	u32 ddr_bw;
 	u32 ddr_op_bw;
 	u32 ddr_cache;
 	u32 ddr_op_cache;
+#ifdef LSR_SPLIT_VOTING
+	u32 nBwLsr_LLCC;
+	u32 nOpBwLsr_LLCC;
+	u32 nBwLsr_Ddr;
+	u32 nOpBwLsr_Ddr;
+#endif
 	u32 fps[HFI_MAX_HW_THREADS];
 	u32 dump_offset;
 	u32 dump_size;
