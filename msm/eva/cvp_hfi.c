@@ -109,6 +109,7 @@ static void __noc_error_info_iris2(struct iris_hfi_device *device);
 static int __enable_hw_power_collapse(struct iris_hfi_device *device);
 
 static int __power_off_controller(struct iris_hfi_device *device);
+static void __register_for_MMCX(struct iris_hfi_device *device);
 
 static int __vote_spad_clks(struct iris_hfi_device *device);
 static int __unvote_spad(struct iris_hfi_device *device);
@@ -3427,6 +3428,9 @@ static int __init_regulators(struct iris_hfi_device *device)
 			rinfo->regulator = NULL;
 			goto err_reg_get;
 		}
+
+		if (!strcmp(rinfo->name, "rpmh-mmcx"))
+			device->rpmh_mmcx_reg = rinfo->regulator;
 	}
 
 	return 0;
@@ -4397,11 +4401,46 @@ exit:
 		cpu_cs_x2rpmh);
 }
 
+static int eva_mmcx_cb(struct notifier_block *nb, unsigned long evt, void *p)
+{
+	int rc = 0;
+	struct iris_hfi_device *device = container_of(nb, struct iris_hfi_device, mmcx_PC_nb);
+
+	switch (evt) {
+	case REGULATOR_EVENT_PRE_DISABLE:
+		rc = call_iris_op(device, reset_ahb2axi_bridge, device);
+		if (rc)
+			dprintk(CVP_ERR, "Failed to reset ahb2axi with error %d\n", rc);
+		else
+			dprintk(CVP_CORE, "reset pulse executed successfully\n");
+		break;
+	default:
+		break;
+	}
+
+	return NOTIFY_OK;
+}
+
+static void __register_for_MMCX(struct iris_hfi_device *device)
+{
+	int rc = 0;
+
+	if (regulator_is_enabled(device->rpmh_mmcx_reg)) {
+		device->mmcx_PC_nb.notifier_call = eva_mmcx_cb;
+		rc = regulator_register_notifier(device->rpmh_mmcx_reg,
+				&device->mmcx_PC_nb);
+		if (rc)
+			dprintk(CVP_ERR, "Failed to register cb for MMCX PC, rc %d \n", rc);
+		else
+			dprintk(CVP_CORE, "MMCX CB registration success! \n");
+	} else {
+		dprintk(CVP_ERR, "RPMH regulator is not enabled\n");
+	}
+}
 static int __power_off_controller(struct iris_hfi_device *device)
 {
 	u32 lpi_status, reg_status = 0, count = 0, max_count = 1000;
-	// u32 sbm_ln0_low;
-	int rc;
+
 
 	/* HPG 6.2.2 Step 1  */
 	__write_register(device, CVP_CPU_CS_X2RPMh, 0x3);
@@ -4433,35 +4472,6 @@ static int __power_off_controller(struct iris_hfi_device *device)
 		__print_sidebandmanager_regs(device);
 	}
 
-	/* New addition to put CPU/Tensilica to low power */
-	/* reg_status = 0;
-	count = 0;
-	__write_register(device, CVP_WRAPPER_CPU_NOC_LPI_CONTROL, 0x1);
-	while (!reg_status && count < max_count) {
-		lpi_status =
-			 __read_register(device,
-				CVP_WRAPPER_CPU_NOC_LPI_STATUS);
-		reg_status = lpi_status & BIT(0);
-		// Wait for CPU noc lpi status to be set
-		usleep_range(50, 100);
-		count++;
-	}
-	sbm_ln0_low = __read_register(device, CVP_NOC_SBM_SENSELN0_LOW);
-	dprintk(CVP_PWR,
-		"CPU Noc: lpi_status %x noc_status %x (count %d) 0x%x\n",
-		lpi_status, reg_status, count, sbm_ln0_low);
-	if (count == max_count) {
-		u32 pc_ready, wfi_status;
-
-		wfi_status = __read_register(device, CVP_WRAPPER_CPU_STATUS);
-		pc_ready = __read_register(device, CVP_CTRL_STATUS);
-
-		dprintk(CVP_WARN,
-			"CPU NOC not in qaccept status %x %x %x %x\n",
-			reg_status, lpi_status, wfi_status, pc_ready);
-
-		__print_sidebandmanager_regs(device);
-	}*/
 #ifdef EVA_LSR
 	/* HPG 6.2.2 Step 3, Set LSR NOC to Low power*/
 	__write_register(device, CVP_AON_WRAPPER_LSR_NOC_LPI_CONTROL, 0x1);
@@ -4528,16 +4538,13 @@ static int __power_off_controller(struct iris_hfi_device *device)
 	msm_cvp_disable_unprepare_clk(device, "gcc_iris_ss_spd_axi1_clk");
 	msm_cvp_disable_unprepare_clk(device, "gcc_iris_ss_hf_axi1_clk");
 #endif
-	msm_cvp_disable_unprepare_clk(device, "cvp_clk");
 	msm_cvp_disable_unprepare_clk(device, "gcc_video_axi1");
-
-	/* Added to avoid pending transaction after power off */
-	rc = call_iris_op(device, reset_ahb2axi_bridge, device);
-	if (rc)
-		dprintk(CVP_ERR, "Off: Failed to reset ahb2axi: %d\n", rc);
 
 	/* HPG 6.2.2 Step 8, Controller collapse */
 	__disable_regulator(device, "cvp");
+
+	/* HPG 6.2.2 Step 7 remaining: Added here so that MMCX callback comes after controller gdsc has disabled*/
+	msm_cvp_disable_unprepare_clk(device, "cvp_clk");
 
 	return 0;
 }
@@ -4966,6 +4973,8 @@ static int __load_fw(struct iris_hfi_device *device)
 		dprintk(CVP_ERR, "Failed to power on iris in in load_fw\n");
 		goto fail_iris_power_on;
 	}
+
+	__register_for_MMCX(device);
 
 	if ((!device->res->use_non_secure_pil && !device->res->firmware_base)
 			|| device->res->use_non_secure_pil) {

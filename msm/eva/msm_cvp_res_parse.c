@@ -827,7 +827,7 @@ err_load_clk_table_fail:
 	return rc;
 }
 
-#define MAX_CLK_RESETS 5
+#define MAX_CLK_RESETS 6
 
 static int msm_cvp_load_reset_table(
 		struct msm_cvp_platform_resources *res)
