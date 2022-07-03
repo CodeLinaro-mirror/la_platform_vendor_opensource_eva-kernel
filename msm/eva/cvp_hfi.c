@@ -1803,6 +1803,7 @@ static int __interface_queues_init(struct iris_hfi_device *dev)
 	}
 #endif
 	__setup_ucregion_memory_map(dev);
+	__write_register(dev, CVP_CPU_CS_SCIBARG3,0 );
 	return 0;
 fail_alloc_queue:
 	return -ENOMEM;
@@ -2003,7 +2004,6 @@ static int iris_hfi_core_init(void *device)
 		rc = -ENOMEM;
 		goto err_core_init;
 	}
-
 	// Add node for dev struct
 	add_va_node_to_list(CVP_QUEUE_DUMP, dev,
 			sizeof(struct iris_hfi_device),
@@ -5527,3 +5527,11 @@ err_iris_hfi_init:
 	return rc;
 }
 
+void lsr_smmu_fault_handler_notifier(struct iris_hfi_device *device)
+{
+	uint32_t read_val = 0;
+	__write_register(device, CVP_CPU_CS_SCIBARG3, 1);
+	read_val = __read_register(device, CVP_CPU_CS_SCIBARG3);
+	dprintk(CVP_INFO, "CVP_CPU_CS_SCIBARG3:  read_val : %d\n",read_val);
+	__write_register(device, CVP_CPU_CS_H2ASOFTINT, 1);
+}

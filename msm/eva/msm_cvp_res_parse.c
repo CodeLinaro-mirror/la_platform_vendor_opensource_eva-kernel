@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/iommu.h>
@@ -13,6 +14,8 @@
 #include "msm_cvp_res_parse.h"
 #include "cvp_core_hfi.h"
 #include "soc/qcom/secure_buffer.h"
+
+void lsr_smmu_fault_handler_notifier(struct iris_hfi_device *device);
 
 enum clock_properties {
 	CLOCK_PROP_HAS_SCALING = 1 << 0,
@@ -973,7 +976,7 @@ int cvp_read_platform_resources_from_dt(
 
 	kres = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
 	res->irq = kres ? kres->start : -1;
-	
+
 	rc = msm_cvp_load_fw_name(res);
 	dprintk(CVP_CORE, "EVA fw: %s found.\n", res->fw_name);
 	if (rc)
@@ -1127,6 +1130,25 @@ int msm_cvp_smmu_fault_handler(struct iommu_domain *domain,
 	if (hdev)
 		hdev->error = CVP_ERR_NOC_ERROR;
 	mutex_unlock(&core->lock);
+
+	core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
+	if(core){
+		dprintk(CVP_INFO, "Valid Core Identified\n");
+
+		list_for_each_entry(inst, &core->instances, list) {
+		if(inst){
+				dprintk(CVP_INFO, "inst->prop.type = %d inst->state = %d\n",
+				inst->prop.type, inst->state );
+				if( (inst->state != MSM_CVP_CORE_INVALID ) &&
+					(inst->prop.type == HFI_SESSION_LSR ) ) {
+				        lsr_smmu_fault_handler_notifier(core->device->hfi_device_data);
+					break;
+				}
+
+			}
+		}
+
+	}
 	/*
 	 * Return -EINVAL to elicit the default behaviour of smmu driver.
 	 * If we return -ENOSYS, then smmu driver assumes page fault handler
