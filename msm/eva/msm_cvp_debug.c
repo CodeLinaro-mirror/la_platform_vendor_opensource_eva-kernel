@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/debugfs.h>
@@ -12,7 +13,7 @@
 
 #define CREATE_TRACE_POINTS
 #define MAX_SSR_STRING_LEN 10
-int msm_cvp_debug = 0x007FFF; //CVP_ERR | CVP_WARN | CVP_FW;  TODO: AURORA-BU
+int msm_cvp_debug = CVP_ERR | CVP_WARN | CVP_FW;
 EXPORT_SYMBOL(msm_cvp_debug);
 
 int msm_cvp_debug_out = CVP_OUT_PRINTK;
