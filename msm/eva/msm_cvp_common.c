@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/jiffies.h>
@@ -681,6 +682,7 @@ static void handle_sys_error(enum hal_command_response cmd, void *data)
 			core, cmd);
 	mutex_lock(&core->clk_lock);
 	hfi_device = hdev->hfi_device_data;
+        msm_eva_set_sw_pc(SW_PC_ENABLE);
 	if (hfi_device->error == CVP_ERR_NOC_ERROR) {
 		dprintk(CVP_WARN, "Got NOC error");
 		msm_cvp_noc_error_info(core);
