@@ -37,7 +37,7 @@ bool msm_cvp_mmrm_enabled = !true;
 #endif
 bool msm_cvp_dcvs_disable = !true;
 int msm_cvp_minidump_enable = !1;
-
+bool msm_cvp_noc_enable = false;
 #define MAX_DBG_BUF_SIZE 4096
 
 struct cvp_core_inst_pair {
@@ -269,6 +269,7 @@ struct dentry *msm_cvp_debugfs_init_drv(void)
 			&msm_cvp_dcvs_disable);
 
 	debugfs_create_file("cvp_power", 0644, dir, NULL, &cvp_pwr_fops);
+	debugfs_create_bool("cvp_noc_enable", 0644, dir, &msm_cvp_noc_enable);
 
 	return dir;
 
