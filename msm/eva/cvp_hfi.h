@@ -389,6 +389,9 @@ static inline enum buf_map_type cvp_find_map_type(int pkt_type)
 			pkt_type == HFI_CMD_SESSION_CVP_SET_MODEL_BUFFERS ||
 			pkt_type == HFI_CMD_SESSION_CVP_DMM_PARAMS ||
 			pkt_type == HFI_CMD_SESSION_CVP_SET_SNAPSHOT_BUFFERS ||
+			pkt_type == HFI_CMD_SESSION_EVA_LSR_SET_MVBUFFER ||
+			pkt_type == HFI_CMD_SESSION_EVA_LSR_SET_DISPLAY_BUFFER ||
+			pkt_type == HFI_CMD_SESSION_EVA_LSR_GPU_SHARED_BUFFER ||
 			pkt_type == HFI_CMD_SESSION_CVP_WARP_DS_PARAMS)
 		return MAP_PERSIST;
 	else if (pkt_type == HFI_CMD_SESSION_CVP_RELEASE_PERSIST_BUFFERS ||
