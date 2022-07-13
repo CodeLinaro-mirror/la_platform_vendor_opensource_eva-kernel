@@ -3277,7 +3277,7 @@ static int __handle_reset_clk(struct msm_cvp_platform_resources *res,
 		if (pwr_state != CVP_POWER_IGNORED &&
 			pwr_state != rst_info.required_state)
 			break;
-		dprintk(CVP_PWR, "ASSERT: reset_clk: name %s reset_state %d rst %pK ps=%d\n",
+		dprintk(CVP_WARN, "ASSERT: reset_clk: name %s reset_state %d rst %pK ps=%d\n",
 			rst_set->reset_tbl[reset_index].name, state, rst, pwr_state);
 		rc = reset_control_assert(rst);
 		break;
@@ -3290,7 +3290,7 @@ static int __handle_reset_clk(struct msm_cvp_platform_resources *res,
 		if (pwr_state != CVP_POWER_IGNORED &&
 			pwr_state != rst_info.required_state)
 			break;
-		dprintk(CVP_PWR, "DEASSERT: reset_clk: name %s reset_state %d rst %pK ps=%d\n",
+		dprintk(CVP_WARN, "DEASSERT: reset_clk: name %s reset_state %d rst %pK ps=%d\n",
 			rst_set->reset_tbl[reset_index].name, state, rst, pwr_state);
 		rc = reset_control_deassert(rst);
 		break;
@@ -4412,7 +4412,7 @@ static int eva_mmcx_cb(struct notifier_block *nb, unsigned long evt, void *p)
 		if (rc)
 			dprintk(CVP_ERR, "Failed to reset ahb2axi with error %d\n", rc);
 		else
-			dprintk(CVP_CORE, "reset pulse executed successfully\n");
+			dprintk(CVP_WARN, "reset pulse executed successfully\n");
 		break;
 	default:
 		break;
@@ -4432,7 +4432,7 @@ static void __register_for_MMCX(struct iris_hfi_device *device)
 		if (rc)
 			dprintk(CVP_ERR, "Failed to register cb for MMCX PC, rc %d \n", rc);
 		else
-			dprintk(CVP_CORE, "MMCX CB registration success! \n");
+			dprintk(CVP_WARN, "MMCX CB registration success! \n");
 	} else {
 		dprintk(CVP_ERR, "RPMH regulator is not enabled\n");
 	}
