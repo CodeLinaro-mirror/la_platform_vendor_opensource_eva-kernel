@@ -63,6 +63,7 @@ const struct msm_cvp_gov_data CVP_DEFAULT_BUS_VOTE = {
 };
 
 const int cvp_max_packets = 32;
+static bool from_callback = false;
 
 static void iris_hfi_pm_handler(struct work_struct *work);
 static DECLARE_DELAYED_WORK(iris_hfi_pm_work, iris_hfi_pm_handler);
@@ -3144,8 +3145,8 @@ static int __handle_reset_clk(struct msm_cvp_platform_resources *res,
 	dprintk(CVP_PWR, "reset_clk: name %s reset_state %d rst %pK ps=%d\n",
 		rst_set->reset_tbl[reset_index].name, state, rst, pwr_state);
 
-	if (!(strcmp(rst_set->reset_tbl[reset_index].name, "cvp_axi0_reset")) || 
-		!(strcmp(rst_set->reset_tbl[reset_index].name, "video_cc_xo_reset")))
+	if (!(strcmp(rst_set->reset_tbl[reset_index].name, "cvp_core_reset")) && 
+		(pwr_state == CVP_POWER_IGNORED))
 	{
 		dprintk(CVP_PWR, "Skipping reset pulse for %s\n", rst_set->reset_tbl[reset_index].name);
 		return 0;
@@ -3220,6 +3221,8 @@ static int reset_ahb2axi_bridge(struct iris_hfi_device *device)
 	else
 		s = CVP_POWER_OFF;
 
+	if(from_callback)
+		s = CVP_POWER_IGNORED;
 
 	for (i = 0; i < device->res->reset_set.count; i++) {
 		rc = __handle_reset_clk(device->res, i, ASSERT, s);
@@ -4016,17 +4019,19 @@ exit:
 
 static int eva_mmcx_cb(struct notifier_block *nb, unsigned long evt, void *p)
 {
-	// int rc = 0;
-	// struct iris_hfi_device *device = container_of(nb, struct iris_hfi_device, mmcx_PC_nb);
+	int rc = 0;
+	struct iris_hfi_device *device = container_of(nb, struct iris_hfi_device, mmcx_PC_nb);
 
 	switch (evt) {
 	case REGULATOR_EVENT_PRE_DISABLE:
 		dprintk(CVP_CORE, "Got the callback from MMCX\n");
-		// rc = call_iris_op(device, reset_ahb2axi_bridge, device);
-		// if (rc)
-			// dprintk(CVP_ERR, "Failed to reset ahb2axi with error %d\n", rc);
-		// else
-			// dprintk(CVP_CORE, "reset pulse executed successfully\n");
+		from_callback = true;
+		rc = call_iris_op(device, reset_ahb2axi_bridge, device);
+		if (rc)
+			dprintk(CVP_ERR, "Failed to reset ahb2axi with error %d\n", rc);
+		else
+			dprintk(CVP_CORE, "reset pulse executed successfully\n");
+		from_callback = false;
 		break;
 	default:
 		break;
@@ -4055,7 +4060,7 @@ static void __register_for_MMCX(struct iris_hfi_device *device)
 static int __power_off_controller(struct iris_hfi_device *device)
 {
 	u32 lpi_status, reg_status = 0, count = 0, max_count = 1000;
-	int rc = 0;
+	// int rc = 0;
 
 	/* HPG 6.2.2 Step 1  */
 	__write_register(device, CVP_CPU_CS_X2RPMh, 0x3);
@@ -4139,11 +4144,6 @@ static int __power_off_controller(struct iris_hfi_device *device)
 	/* HPG 6.2.2 Step 7 */
 	msm_cvp_disable_unprepare_clk(device, "cvp_clk");
 	msm_cvp_disable_unprepare_clk(device, "gcc_video_axi1");
-
-	/* Added to avoid pending transaction after power off */
-	rc = call_iris_op(device, reset_ahb2axi_bridge, device);
-	if (rc)
-		dprintk(CVP_ERR, "Failed to reset ahb2axi: %d\n", rc);
 
 	/* HPG 6.2.2 Step 8, Controller collapse */
 	__disable_regulator(device, "cvp");
