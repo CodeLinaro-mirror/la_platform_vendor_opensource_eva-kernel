@@ -68,6 +68,7 @@ const struct msm_cvp_gov_data CVP_DEFAULT_BUS_VOTE = {
 };
 
 const int cvp_max_packets = 32;
+static bool from_callback = false;
 
 static void iris_hfi_pm_handler(struct work_struct *work);
 static DECLARE_DELAYED_WORK(iris_hfi_pm_work, iris_hfi_pm_handler);
@@ -3257,6 +3258,12 @@ static int __handle_reset_clk(struct msm_cvp_platform_resources *res,
 	dprintk(CVP_PWR, "reset_clk: name %s reset_state %d rst %pK ps=%d\n",
 		rst_set->reset_tbl[reset_index].name, state, rst, pwr_state);
 
+	if (!(strcmp(rst_set->reset_tbl[reset_index].name, "cvp_core_reset")) && 
+		(pwr_state == CVP_POWER_IGNORED)) {
+		dprintk(CVP_PWR, "Skipping reset pulse for %s\n", rst_set->reset_tbl[reset_index].name);
+		return 0;
+	}
+
 	switch (state) {
 	case INIT:
 		if (rst)
@@ -3323,6 +3330,9 @@ static int reset_ahb2axi_bridge(struct iris_hfi_device *device)
 		s = CVP_POWER_ON;
 	else
 		s = CVP_POWER_OFF;
+
+	if(from_callback)
+		s = CVP_POWER_IGNORED;
 
 	for (i = 0; i < device->res->reset_set.count; i++) {
 		rc = __handle_reset_clk(device->res, i, ASSERT, s);
@@ -4409,11 +4419,13 @@ static int eva_mmcx_cb(struct notifier_block *nb, unsigned long evt, void *p)
 
 	switch (evt) {
 	case REGULATOR_EVENT_PRE_DISABLE:
+		from_callback = true;
 		rc = call_iris_op(device, reset_ahb2axi_bridge, device);
 		if (rc)
 			dprintk(CVP_ERR, "Failed to reset ahb2axi with error %d\n", rc);
 		else
 			dprintk(CVP_WARN, "reset pulse executed successfully\n");
+		from_callback = false;
 		break;
 	default:
 		break;
