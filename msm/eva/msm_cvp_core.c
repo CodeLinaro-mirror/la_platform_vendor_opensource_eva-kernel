@@ -316,9 +316,11 @@ wait:
 		dprintk(CVP_WARN,
 			"Failed to process frames before session close\n");
 		mutex_lock(&inst->frames.lock);
-		list_for_each_entry(frame, &inst->frames.list, list)
-			dprintk(CVP_WARN, "Unprocessed frame %d\n",
-				frame->pkt_type);
+		list_for_each_entry(frame, &inst->frames.list, list){
+		    if(frame->pkt_type != HFI_CMD_SESSION_EVA_LSR_FRAME){
+		        dprintk(CVP_WARN, "Unprocessed frame %d\n",frame->pkt_type);
+			}
+		}
 		mutex_unlock(&inst->frames.lock);
 		cvp_dump_fence_queue(inst);
 	}
