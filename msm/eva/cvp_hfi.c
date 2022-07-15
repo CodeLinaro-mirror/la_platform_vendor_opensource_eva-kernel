@@ -4654,7 +4654,7 @@ static int __power_off_core(struct iris_hfi_device *device)
 
 	if (warn_flag)
 		__print_sidebandmanager_regs(device);
-#ifdef EVA_LSR
+#ifndef EVA_LSR // Temporary workaround to Disable the code for now to avoid crashes
 //// LSR_NoC Partial-Reset
 //
 //// Check for LSR IDLE -- GCX_DONE_IDLE_INT, CSC_DONE_IDLE_INT
