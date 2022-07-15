@@ -7,7 +7,9 @@
 #define __CVP_HFI_IO_H__
 
 #include <linux/io.h>
-#define EVA_LSR
+#ifndef HALLIDAY_DISABLE
+    #define EVA_LSR
+#endif
 #define CVP_TOP_BASE_OFFS			0x00000000
 #define CVP_SS_IDLE_STATUS		(CVP_TOP_BASE_OFFS + 0x50)
 
@@ -256,10 +258,10 @@
 #define CVP_AON_WRAPPER_LSR_NOC_LPI_STATUS	(CVP_AON_BASE_OFFS + 0x14)
 #endif
 #define CVP_CC_BASE_OFFS			0x000F8000
-#define CVP_CC_MVS1C_GDSCR			(CVP_CC_BASE_OFFS + 0x78)
-#define CVP_CC_MVS1C_CBCR			(CVP_CC_BASE_OFFS + 0x90)
-#define CVP_CC_MVS1_GDSCR			(CVP_CC_BASE_OFFS + 0xCC)
-#define CVP_CC_MVS1_CBCR			(CVP_CC_BASE_OFFS + 0xE0)
+#define CVP_CC_MVS1C_GDSCR			(CVP_CC_BASE_OFFS + 0x74)
+#define CVP_CC_MVS1C_CBCR			(CVP_CC_BASE_OFFS + 0x8C)
+#define CVP_CC_MVS1_GDSCR			(CVP_CC_BASE_OFFS + 0xC0)
+#define CVP_CC_MVS1_CBCR			(CVP_CC_BASE_OFFS + 0xD4)
 
 #ifdef EVA_LSR//LSR regs
 /*

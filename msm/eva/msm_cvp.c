@@ -219,12 +219,14 @@ static int msm_cvp_session_process_hfi(
 	pkt_type = in_pkt->pkt_data[1];
 	map_type = cvp_find_map_type(pkt_type);
 
+#ifndef HALLIDAY_DISABLE
 	if((pkt_type == HFI_CMD_SESSION_EVA_LSR_FRAME)|| (pkt_type == HFI_CMD_SESSION_EVA_LSR_SET_DISPLAY_BUFFER))
 	{
 	    rc = msm_cvp_map_frame_lsr(inst, in_pkt, offset, buf_num);
 	}
 	else
 	{
+#endif
 	    cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)in_pkt;
 	    /* The kdata will be overriden by transaction ID if the cmd has buf */
 	    cmd_hdr->client_data.kdata = pkt_idx;
@@ -235,7 +237,9 @@ static int msm_cvp_session_process_hfi(
 	    	rc = msm_cvp_mark_user_persist(inst, in_pkt, offset, buf_num);
 	    else
 	    	rc = msm_cvp_map_frame(inst, in_pkt, offset, buf_num);
+#ifndef HALLIDAY_DISABLE
 	}
+#endif
 	if (rc)
 		goto exit;
 
@@ -256,6 +260,7 @@ exit:
 	return rc;
 }
 
+#ifndef DISABLE_SYNX
 static bool cvp_fence_wait(struct cvp_fence_queue *q,
 			struct cvp_fence_command **fence,
 			enum queue_state *state)
@@ -756,6 +761,7 @@ exit:
 	cvp_put_inst(s);
 	return rc;
 }
+#endif
 
 static inline int div_by_1dot5(unsigned int a)
 {
@@ -1061,7 +1067,9 @@ int msm_cvp_session_create(struct msm_cvp_inst *inst)
 		goto fail_init;
 	}
 
+#ifndef DISABLE_SYNX
 	cvp_sess_init_synx(inst);
+#endif
 	sq = &inst->session_queue;
 	spin_lock(&sq->lock);
 	sq->state = QUEUE_ACTIVE;
@@ -1083,6 +1091,7 @@ static int session_state_check_init(struct msm_cvp_inst *inst)
 	return msm_cvp_session_create(inst);
 }
 
+#ifndef DISABLE_SYNX
 static int cvp_fence_thread_start(struct msm_cvp_inst *inst)
 {
 	u32 tnum = 0;
@@ -1155,6 +1164,7 @@ static int cvp_fence_thread_stop(struct msm_cvp_inst *inst)
 
 	return 0;
 }
+#endif
 
 static int msm_cvp_session_start(struct msm_cvp_inst *inst,
 		struct eva_kmd_arg *arg)
@@ -1181,7 +1191,12 @@ static int msm_cvp_session_start(struct msm_cvp_inst *inst,
 		hdev = inst->core->device;
 		call_hfi_op(hdev, pm_qos_update, hdev->hfi_device_data);
 	}
-	return cvp_fence_thread_start(inst);
+
+	#ifndef DISABLE_SYNX
+		return cvp_fence_thread_start(inst);
+	#else
+		return 0;
+	#endif
 }
 
 static int msm_cvp_session_stop(struct msm_cvp_inst *inst,
@@ -1208,7 +1223,11 @@ static int msm_cvp_session_stop(struct msm_cvp_inst *inst,
 
 	wake_up_all(&inst->session_queue.wq);
 
-	return cvp_fence_thread_stop(inst);
+	#ifndef DISABLE_SYNX
+		return cvp_fence_thread_stop(inst);
+	#else
+		return 0;
+	#endif
 }
 
 int msm_cvp_session_queue_stop(struct msm_cvp_inst *inst)
@@ -1232,7 +1251,11 @@ int msm_cvp_session_queue_stop(struct msm_cvp_inst *inst)
 
 	wake_up_all(&inst->session_queue.wq);
 
-	return cvp_fence_thread_stop(inst);
+	#ifndef DISABLE_SYNX
+		return cvp_fence_thread_stop(inst);
+	#else
+		return 0;
+	#endif
 }
 
 static int msm_cvp_session_ctrl(struct msm_cvp_inst *inst,
@@ -1540,6 +1563,7 @@ static int msm_cvp_set_sysprop(struct msm_cvp_inst *inst,
 	return rc;
 }
 
+#ifndef DISABLE_SYNX
 static int cvp_drain_fence_sched_list(struct msm_cvp_inst *inst)
 {
 	unsigned long wait_time;
@@ -1621,13 +1645,19 @@ static void cvp_clean_fence_queue(struct msm_cvp_inst *inst, int synx_state)
 
 	mutex_unlock(&q->lock);
 }
+#endif
 
 int cvp_clean_session_queues(struct msm_cvp_inst *inst)
 {
+	#ifndef DISABLE_SYNX
 	struct cvp_fence_queue *q;
+	#endif
 	struct cvp_session_queue *sq;
+	#ifndef DISABLE_SYNX
 	u32 count = 0, max_retries = 100;
+	#endif
 
+	#ifndef DISABLE_SYNX
 	q = &inst->fence_cmd_queue;
 	mutex_lock(&q->lock);
 	if (q->state == QUEUE_START) {
@@ -1642,10 +1672,14 @@ int cvp_clean_session_queues(struct msm_cvp_inst *inst)
 			q->state);
 		mutex_unlock(&q->lock);
 	}
+	#endif
 
+	#ifndef DISABLE_SYNX
 	cvp_fence_thread_stop(inst);
+	#endif
 
 	/* Waiting for all output synx sent */
+#ifndef DISABLE_SYNX
 retry:
 	mutex_lock(&q->lock);
 	if (list_empty(&q->sched_list)) {
@@ -1658,18 +1692,23 @@ retry:
 		return -EBUSY;
 
 	goto retry;
+#endif
 
 	sq = &inst->session_queue_fence;
 	spin_lock(&sq->lock);
 	sq->state = QUEUE_INVALID;
 	spin_unlock(&sq->lock);
+
+	return 0;
 }
 
 static int cvp_flush_all(struct msm_cvp_inst *inst)
 {
 	int rc = 0;
 	struct msm_cvp_inst *s;
+	#ifndef DISABLE_SYNX
 	struct cvp_fence_queue *q;
+	#endif
 	struct cvp_hfi_device *hdev;
 
 	if (!inst || !inst->core) {
@@ -1683,10 +1722,14 @@ static int cvp_flush_all(struct msm_cvp_inst *inst)
 
 	dprintk(CVP_SESS, "session %llx (%#x)flush all starts\n",
 			inst, hash32_ptr(inst->session));
+	#ifndef DISABLE_SYNX
 	q = &inst->fence_cmd_queue;
+	#endif
 	hdev = inst->core->device;
 
+	#ifndef DISABLE_SYNX
 	cvp_clean_fence_queue(inst, SYNX_STATE_SIGNALED_CANCEL);
+	#endif
 
 	dprintk(CVP_SESS, "%s: (%#x) send flush to fw\n",
 			__func__, hash32_ptr(inst->session));
@@ -1709,11 +1752,15 @@ static int cvp_flush_all(struct msm_cvp_inst *inst)
 			__func__, hash32_ptr(inst->session));
 
 exit:
+	#ifndef DISABLE_SYNX
 	rc = cvp_drain_fence_sched_list(inst);
+	#endif
 
+	#ifndef DISABLE_SYNX
 	mutex_lock(&q->lock);
 	q->mode = OP_NORMAL;
 	mutex_unlock(&q->lock);
+	#endif
 
 	cvp_put_inst(s);
 	return rc;
@@ -1790,7 +1837,9 @@ int msm_cvp_handle_syscall(struct msm_cvp_inst *inst, struct eva_kmd_arg *arg)
 	}
 	case EVA_KMD_SEND_FENCE_CMD_PKT:
 	{
+		#ifndef DISABLE_SYNX
 		rc = msm_cvp_session_process_hfi_fence(inst, arg);
+		#endif
 		break;
 	}
 	case EVA_KMD_SESSION_CONTROL:

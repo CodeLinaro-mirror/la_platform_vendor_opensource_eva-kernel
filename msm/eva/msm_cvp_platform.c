@@ -167,6 +167,11 @@ static struct msm_cvp_ubwc_config_data aurora_ubwc_data[] = {
 	UBWC_CONFIG(1, 1, 1, 0, 0, 0, 8, 32, 13, 0, 0),
 };
 
+/* Default UBWC config for LPDDR5 */
+static struct msm_cvp_ubwc_config_data halliday_ubwc_data[] = {
+	UBWC_CONFIG(1, 1, 1, 0, 0, 0, 8, 32, 16, 0, 0),
+};
+
 static struct msm_cvp_qos_setting waipio_noc_qos = {
 	.axi_qos = 0x99,
 	.prioritylut_low = 0x22222222,
@@ -177,6 +182,15 @@ static struct msm_cvp_qos_setting waipio_noc_qos = {
 };
 
 static struct msm_cvp_qos_setting aurora_noc_qos = {
+	.axi_qos = 0x99,
+	.prioritylut_low = 0x22222222,
+	.prioritylut_high = 0x33333333,
+	.urgency_low = 0x1022,
+	.dangerlut_low = 0x0,
+	.safelut_low = 0xffff,
+};
+
+static struct msm_cvp_qos_setting halliday_noc_qos = {
 	.axi_qos = 0x99,
 	.prioritylut_low = 0x22222222,
 	.prioritylut_high = 0x33333333,
@@ -212,6 +226,15 @@ static struct msm_cvp_platform_data aurora_data = {
 	.noc_qos = &aurora_noc_qos,	/*Reuse Waipio setting*/  //TODO: AURORA-BU
 };
 
+static struct msm_cvp_platform_data halliday_data = {
+	.common_data = sm8450_common_data,
+	.common_data_length =  ARRAY_SIZE(sm8450_common_data),
+	.sku_version = 0,
+	.vpu_ver = VPU_VERSION_5,
+	.ubwc_config = halliday_ubwc_data,
+	.noc_qos = &halliday_noc_qos,
+};
+
 static struct msm_cvp_platform_data sm8550_data = {
 	.common_data = sm8550_common_data,
 	.common_data_length =  ARRAY_SIZE(sm8550_common_data),
@@ -229,6 +252,10 @@ static const struct of_device_id msm_cvp_dt_match[] = {
 	{
 		.compatible = "qcom,aurora-cvp",
 		.data = &aurora_data,
+	},
+	{
+		.compatible = "qcom,halliday-cvp",
+		.data = &halliday_data,
 	},
 	{
 		.compatible = "qcom,kalama-cvp",
@@ -479,6 +506,7 @@ const struct msm_cvp_hfi_defs cvp_hfi_defs[] = {
 		.is_config_pkt = false,
 		.resp = HAL_NO_RESP,
 	},
+#ifndef HALLIDAY_DISABLE
 	{
 		.size = 0xFFFFFFFF,
 		.type = HFI_CMD_SESSION_EVA_LSR_CONFIG,
@@ -521,6 +549,7 @@ const struct msm_cvp_hfi_defs cvp_hfi_defs[] = {
 		.is_config_pkt = true,
 		.resp = HAL_NO_RESP,
 	},
+#endif
 
 };
 

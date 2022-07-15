@@ -216,9 +216,11 @@ int msm_cvp_unmap_user_persist(struct msm_cvp_inst *inst,
 int msm_cvp_map_frame(struct msm_cvp_inst *inst,
 		struct eva_kmd_hfi_packet *in_pkt,
 		unsigned int offset, unsigned int buf_num);
+#ifndef HALLIDAY_DISABLE
 int msm_cvp_map_frame_lsr(struct msm_cvp_inst *inst,
 		struct eva_kmd_hfi_packet *in_pkt,
 		unsigned int offset, unsigned int buf_num);
+#endif
 void msm_cvp_unmap_frame(struct msm_cvp_inst *inst, u64 ktid);
 int msm_cvp_register_buffer(struct msm_cvp_inst *inst,
 		struct eva_kmd_buffer *buf);

@@ -32,7 +32,9 @@
 #include "msm_cvp_dsp.h"
 #include "msm_cvp_clocks.h"
 #include "cvp_dump.h"
+#ifndef HALLIDAY_DISABLE
 #include "msm_gpu_eva.h"
+#endif
 
 #define FIRMWARE_SIZE			0X00A00000
 #define REG_ADDR_OFFSET_BITMASK	0x000FFFFF
@@ -82,8 +84,10 @@ static bool __is_session_valid(struct iris_hfi_device *device,
 static int __iface_cmdq_write(struct iris_hfi_device *device,
 					void *pkt);
 static int __load_fw(struct iris_hfi_device *device);
+#ifndef HALLIDAY_DISABLE
 static int __dev_regspace_mapping(struct iris_hfi_device *device);
 static int __dev_regspace_unmap(struct iris_hfi_device *device);
+#endif
 static void __unload_fw(struct iris_hfi_device *device);
 static int __tzbsp_set_cvp_state(enum tzbsp_subsys_state state);
 static int __enable_subcaches(struct iris_hfi_device *device);
@@ -784,6 +788,7 @@ static void __set_registers(struct iris_hfi_device *device)
 				pdata->noc_qos->dangerlut_low);
 	__write_register(device, CVP_NOC_SAFELUT_LOW,
 				pdata->noc_qos->safelut_low);
+#ifndef HALLIDAY_DISABLE
     dprintk(CVP_INFO,
 			"Setting EVA NOC QOS settings ..\n");
 #ifdef EVA_LSR//LSR regs
@@ -839,6 +844,7 @@ static void __set_registers(struct iris_hfi_device *device)
     dprintk(CVP_INFO,
 			"Setting LSR NOC QOS settings.NOT YET .. X\n");
 #endif //EVA_LSR regs
+#endif // HALLIDAY_DISABLE
 }
 
 /*
@@ -1043,9 +1049,9 @@ static inline int __boot_firmware(struct iris_hfi_device *device)
 	else
 		dprintk(CVP_CORE, "Power off CORE GDSCR Success: %x, loop count %d \n", reg_gdsc, loop);
 
-	ctrl_init_val = BIT(0) + BIT(1);   //TODO: AURORA-BU
+	ctrl_init_val = BIT(0) + BIT(1) + BIT(2) + BIT(3);      // Halliday change
 	__write_register(device, CVP_CTRL_INIT, ctrl_init_val);
-	while (!ctrl_status && count < max_tries) {
+	while (!(ctrl_status&1) && count < max_tries) {
 		ctrl_status = __read_register(device, CVP_CTRL_STATUS);
 		if ((ctrl_status & CVP_CTRL_ERROR_STATUS__M) == 0x4) {
 			dprintk(CVP_ERR, "invalid setting for UC_REGION\n");
@@ -1054,7 +1060,8 @@ static inline int __boot_firmware(struct iris_hfi_device *device)
 		}
 
 		/* Reduce to 1/100th and x100 of max_tries */
-		usleep_range(500, 1000);
+		// usleep_range(500, 1000);
+		msleep(5);
 		count++;
 	}
 
@@ -1382,7 +1389,8 @@ static void __interface_dsp_queues_release(struct iris_hfi_device *device)
 	device->dsp_iface_q_table.align_device_addr = 0;
 }
 
-/* static int __interface_dsp_queues_init(struct iris_hfi_device *dev)
+#ifndef HALLIDAY_BRINGUP
+static int __interface_dsp_queues_init(struct iris_hfi_device *dev)
 {
 	int rc = 0;
 	u32 i;
@@ -1454,7 +1462,8 @@ fail_dma_map:
 	dma_free_coherent(dev->res->mem_cdsp.dev, q_size, kvaddr, dma_handle);
 fail_dma_alloc:
 	return -ENOMEM;
-}	//TODO: Aurora-BU */
+}
+#endif
 
 static void __interface_queues_release(struct iris_hfi_device *device)
 {
@@ -1727,16 +1736,21 @@ static int __interface_queues_init(struct iris_hfi_device *dev)
 	if (vsfr)
 		vsfr->bufSize = ALIGNED_SFR_SIZE;
 
-	/* rc = __interface_dsp_queues_init(dev);
+	#ifndef HALLIDAY_BRINGUP
+	rc = __interface_dsp_queues_init(dev);
 	if (rc) {
 		dprintk(CVP_ERR, "dsp_queues_init failed\n");
 		goto fail_alloc_queue;
-	} //TODO: Aurora-BU */
+	}
+	#endif
+
+	#ifndef HALLIDAY_DISABLE
 	rc = __interface_gpu_init();
 	if(rc){
 		dprintk(CVP_ERR, "(kgsl/gpu)_eva_interface failed\n");
 		return -EINVAL;
 	}
+	#endif
 
 	__setup_ucregion_memory_map(dev);
 	return 0;
@@ -1905,11 +1919,14 @@ static int iris_hfi_core_init(void *device)
 
 	dev->bus_vote.data_count = 1;
 	dev->bus_vote.data->power_mode = CVP_POWER_TURBO;
+
+	#ifndef HALLIDAY_DISABLE
     rc = __dev_regspace_mapping(dev);
     if (rc) {
         dprintk(CVP_ERR, "Failed to do Devices RegisterSpace Mapping FW\n");
       //  goto err_load_fw;
     }
+    #endif
 
 	rc = __load_fw(dev);
 	if (rc) {
@@ -1939,6 +1956,10 @@ static int iris_hfi_core_init(void *device)
 		rc = -ENOMEM;
 		goto err_core_init;
 	}
+
+	dprintk(CVP_INFO, "SHIVANI: Going to sleep for 10 seconds\n");
+	msleep(10000);
+	dprintk(CVP_INFO, "SHIVANI: From iris_hfi_core_init: __interface_queues_init done\n");
 
 	// Add node for dev struct
 	add_va_node_to_list(CVP_QUEUE_DUMP, dev,
@@ -2016,7 +2037,9 @@ static int iris_hfi_core_init(void *device)
 pm_qos_bail:
 	mutex_unlock(&dev->lock);
 
-	// cvp_dsp_send_hfi_queue();		//TODO: Aurora-BU
+	#ifndef HALLIDAY_BRINGUP
+	cvp_dsp_send_hfi_queue();
+	#endif
 
 	pm_relax(dev->res->pdev->dev.parent);
 	dprintk(CVP_CORE, "Core inited successfully\n");
@@ -2069,7 +2092,10 @@ static int iris_hfi_core_release(void *dev)
 	__resume(device);
 	__set_state(device, IRIS_STATE_DEINIT);
 
+	#ifndef HALLIDAY_DISABLE
 	__interface_gpu_deinit();
+	#endif
+
 	__dsp_shutdown(device, 0);
 
 	__disable_subcaches(device);
@@ -4393,6 +4419,8 @@ err_iris_power_on:
 	dprintk(CVP_ERR, "Failed to resume from power collapse\n");
 	return rc;
 }
+
+#ifndef HALLIDAY_DISABLE
 static int __dev_regspace_mapping(struct iris_hfi_device *device)
 {
     int rc = 0;
@@ -4534,6 +4562,7 @@ err_subcache_get:
 	__deinit_subcaches(device);
 	return rc;
 }
+
 static int __dev_regspace_unmap(struct iris_hfi_device *device)
 {
     int rc = 0;
@@ -4555,6 +4584,8 @@ static int __dev_regspace_unmap(struct iris_hfi_device *device)
     return rc;
 
 }
+#endif
+
 static int __load_fw(struct iris_hfi_device *device)
 {
 	int rc = 0;
@@ -5000,6 +5031,7 @@ static int iris_hfi_validate_session(void *sess, const char *func)
 	return rc;
 }
 
+#ifndef HALLIDAY_DISABLE
 static int iris_hfi_notify_gpu_status(void *device, u32 packet_type)
 {
 	int rc = 0;
@@ -5023,6 +5055,7 @@ static int iris_hfi_notify_gpu_status(void *device, u32 packet_type)
 err_create_pkt:
 	return rc;
 }
+#endif
 
 static void iris_init_hfi_callbacks(struct cvp_hfi_device *hdev)
 {
@@ -5047,7 +5080,9 @@ static void iris_init_hfi_callbacks(struct cvp_hfi_device *hdev)
 	hdev->noc_error_info = iris_hfi_noc_error_info;
 	hdev->validate_session = iris_hfi_validate_session;
 	hdev->pm_qos_update = iris_pm_qos_update;
+	#ifndef HALLIDAY_DISABLE
 	hdev->notify_gpu_status = iris_hfi_notify_gpu_status;
+	#endif
 }
 
 int cvp_iris_hfi_initialize(struct cvp_hfi_device *hdev, u32 device_id,

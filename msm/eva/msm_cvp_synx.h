@@ -10,6 +10,9 @@
 #include <media/msm_eva_private.h>
 #include "cvp_comm_def.h"
 
+#define DISABLE_SYNX
+
+#ifndef DISABLE_SYNX
 
 struct cvp_fence_queue {
 	struct mutex lock;
@@ -104,4 +107,5 @@ static inline void cvp_dump_fence_queue(struct msm_cvp_inst *inst)
 	return;
 }
 #endif
+#endif		// ifndef DISABLE_SYNX
 #endif

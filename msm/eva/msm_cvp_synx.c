@@ -9,6 +9,8 @@
 #include "msm_cvp_core.h"
 #include "msm_cvp_dsp.h"
 
+#ifndef DISABLE_SYNX
+
 #ifdef CVP_SYNX_ENABLED
 int cvp_sess_init_synx(struct msm_cvp_inst *inst)
 {
@@ -378,3 +380,4 @@ int cvp_synx_ops(struct msm_cvp_inst *inst, enum cvp_synx_type type,
 	}
 }
 #endif
+#endif	// #ifndef DISABLE_SYNX
