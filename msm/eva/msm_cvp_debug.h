@@ -93,6 +93,7 @@ extern bool msm_cvp_mmrm_enabled;
 extern bool msm_cvp_dcvs_disable;
 extern int msm_cvp_minidump_enable;
 extern bool msm_cvp_noc_enable;
+extern bool  lsr_session_enabled;
 
 #define dprintk(__level, __fmt, arg...)	\
 	do { \

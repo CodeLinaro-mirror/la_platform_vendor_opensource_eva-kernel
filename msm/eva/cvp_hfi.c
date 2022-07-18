@@ -1796,13 +1796,16 @@ static int __interface_queues_init(struct iris_hfi_device *dev)
 		dprintk(CVP_ERR, "dsp_queues_init failed\n");
 		goto fail_alloc_queue;
 	}
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-	rc = __interface_gpu_init();
-	if(rc){
-		dprintk(CVP_ERR, "(kgsl/gpu)_eva_interface failed\n");
-		return -EINVAL;
+//#if IS_REACHABLE(CONFIG_QCOM_KGSL)
+        if(lsr_session_enabled){
+		rc = __interface_gpu_init();
+		if(rc){
+			dprintk(CVP_ERR, "(kgsl/gpu)_eva_interface failed\n");
+			return -EINVAL;
+		}
 	}
-#endif
+
+//#endif
 	__setup_ucregion_memory_map(dev);
 	__write_register(dev, CVP_CPU_CS_SCIBARG3,0 );
 	return 0;
@@ -2133,9 +2136,12 @@ static int iris_hfi_core_release(void *dev)
 
 	__resume(device);
 	__set_state(device, IRIS_STATE_DEINIT);
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-	__interface_gpu_deinit();
-#endif
+//#if IS_REACHABLE(CONFIG_QCOM_KGSL)
+	if(lsr_session_enabled){
+		__interface_gpu_deinit();
+		lsr_session_enabled = false;
+	}
+//#endif
 	__dsp_shutdown(device, 0);
         iris_disable_spad_subcache(device);
 	__disable_subcaches(device);

@@ -8,6 +8,7 @@
 #include "cvp_hfi.h"
 #include "cvp_core_hfi.h"
 #include "msm_cvp_buf.h"
+#include "msm_gpu_eva.h"
 
 struct cvp_power_level {
 	unsigned long core_sum;
@@ -1226,6 +1227,19 @@ int msm_cvp_session_create(struct msm_cvp_inst *inst)
 	spin_lock(&sq->lock);
 	sq->state = QUEUE_ACTIVE;
 	spin_unlock(&sq->lock);
+
+        if (inst->prop.type == HFI_SESSION_LSR)
+	{
+
+		if(!lsr_session_enabled){
+			rc = __interface_gpu_init();
+			if(rc){
+				dprintk(CVP_ERR, "(kgsl/gpu)_eva_interface failed\n");
+				return -EINVAL;
+			}
+		lsr_session_enabled = true;
+		}
+	}
 
 fail_init:
 	return rc;
