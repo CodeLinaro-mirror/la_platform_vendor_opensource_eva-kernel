@@ -4558,6 +4558,7 @@ static int __power_off_controller(struct iris_hfi_device *device)
 
 	/* HPG 6.2.2 Step 7 remaining: Added here so that MMCX callback comes after controller gdsc has disabled*/
 	msm_cvp_disable_unprepare_clk(device, "cvp_clk");
+	msm_cvp_disable_unprepare_clk(device, "video_cc_mvs1_clk_src");
 
 	return 0;
 }
@@ -4583,7 +4584,6 @@ static int __power_off_core(struct iris_hfi_device *device)
 		}
 		__disable_regulator(device, "cvp-core");
 		msm_cvp_disable_unprepare_clk(device, "core_clk");
-		msm_cvp_disable_unprepare_clk(device, "video_cc_mvs1_clk_src");
 		return 0;
 	}
 
