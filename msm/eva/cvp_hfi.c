@@ -4229,7 +4229,7 @@ static int __vote_spad_clks(struct iris_hfi_device *device)
 
 	dprintk(CVP_PWR,
 			"Voting gcc_ddrss_spad_clk : Calling msm_cvp_vote_clk .....\n");
-		rc =  msm_cvp_vote_clk(device,"gcc_ddrss_spad_clk", 400000000);
+		rc =  msm_cvp_vote_clk(device,"gcc_ddrss_spad_clk", 300000000);
 
 		if (rc) {
 			dprintk(CVP_ERR, "Failed to vote gcc_ddrss_spad_clk clk: %d\n", rc);
@@ -4306,7 +4306,7 @@ dprintk(CVP_PWR,
 	}
 	dprintk(CVP_PWR,
 			"Voting gcc_iris_ss_spd_axi1_clk : Calling msm_cvp_vote_clk .....\n");
-		rc =  msm_cvp_vote_clk(device,"gcc_iris_ss_spd_axi1_clk", 400000000);
+		rc =  msm_cvp_vote_clk(device,"gcc_iris_ss_spd_axi1_clk", 300000000);
 
 		if (rc) {
 			dprintk(CVP_ERR, "Failed to vote gcc_iris_ss_spd_axi1_clk clk: %d\n", rc);
