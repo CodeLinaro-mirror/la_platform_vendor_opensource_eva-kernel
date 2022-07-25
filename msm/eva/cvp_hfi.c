@@ -3293,7 +3293,12 @@ static int __handle_reset_clk(struct msm_cvp_platform_resources *res,
 		dprintk(CVP_PWR, "Skipping reset pulse for %s\n", rst_set->reset_tbl[reset_index].name);
 		return 0;
 	}
-
+	// if (!(strcmp(rst_set->reset_tbl[reset_index].name, "video_cc_xo_reset")) &&
+		// (pwr_state == CVP_POWER_IGNORED))
+	// {
+		// dprintk(CVP_PWR, "Skipping reset pulse for %s\n", rst_set->reset_tbl[reset_index].name);
+		// return 0;
+	// }
 	switch (state) {
 	case INIT:
 		if (rst)
@@ -4321,11 +4326,11 @@ static int __iris_power_on(struct iris_hfi_device *device)
 	rc = __power_on_core(device);
 	if (rc)
 		goto fail_enable_core;
-dprintk(CVP_PWR, "Calling __vote_spad_clks\n");
+
 	rc = __vote_spad_clks(device);
 	if (rc)
 		goto fail_voting_spad;
-dprintk(CVP_PWR, "Done __vote_spad_clks\n");
+
 	rc = msm_cvp_scale_clocks(device);
 	if (rc) {
 		dprintk(CVP_WARN,
@@ -4475,7 +4480,7 @@ static void __register_for_MMCX(struct iris_hfi_device *device)
 		if (rc)
 			dprintk(CVP_ERR, "Failed to register cb for MMCX PC, rc %d \n", rc);
 		else
-			dprintk(CVP_WARN, "MMCX CB registration success! \n");
+			dprintk(CVP_CORE, "MMCX CB registration success! \n");
 	} else {
 		dprintk(CVP_ERR, "RPMH regulator is not enabled\n");
 	}
@@ -4581,13 +4586,12 @@ static int __power_off_controller(struct iris_hfi_device *device)
 	msm_cvp_disable_unprepare_clk(device, "gcc_iris_ss_spd_axi1_clk");
 	msm_cvp_disable_unprepare_clk(device, "gcc_iris_ss_hf_axi1_clk");
 #endif
+	msm_cvp_disable_unprepare_clk(device, "cvp_clk");
 	msm_cvp_disable_unprepare_clk(device, "gcc_video_axi1");
 
 	/* HPG 6.2.2 Step 8, Controller collapse */
 	__disable_regulator(device, "cvp");
 
-	/* HPG 6.2.2 Step 7 remaining: Added here so that MMCX callback comes after controller gdsc has disabled*/
-	msm_cvp_disable_unprepare_clk(device, "cvp_clk");
 	msm_cvp_disable_unprepare_clk(device, "video_cc_mvs1_clk_src");
 
 	return 0;
@@ -4783,13 +4787,15 @@ static void power_off_iris2(struct iris_hfi_device *device)
 	if (!(device->intr_status & CVP_WRAPPER_INTR_STATUS_A2HWD_BMSK))
 		disable_irq_nosync(device->cvp_hal_data->irq);
 	device->intr_status = 0;
-		__unvote_spad(device);
+
 	__power_off_core(device);
 
 	__power_off_controller(device);
 
 	if (__unvote_buses(device))
 		dprintk(CVP_WARN, "Failed to unvote for buses\n");
+
+	__unvote_spad(device);
 
 	/*Do not access registers after this point!*/
 	device->power_enabled = false;

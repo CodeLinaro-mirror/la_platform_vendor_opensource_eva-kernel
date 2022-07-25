@@ -1347,6 +1347,7 @@ static int msm_cvp_session_start(struct msm_cvp_inst *inst,
        hdev = inst->core->device;
        call_hfi_op(hdev, spad_activate, hdev->hfi_device_data);
     }
+	dprintk(CVP_CORE, "spad_activate enabled\n");
 	return cvp_fence_thread_start(inst);
 }
 
@@ -1379,6 +1380,7 @@ static int msm_cvp_session_stop(struct msm_cvp_inst *inst,
         hdev = inst->core->device;
         call_hfi_op(hdev, spad_deactivate, hdev->hfi_device_data);
     }
+	dprintk(CVP_CORE, "spad_deactivate enabled \n");
 	return cvp_fence_thread_stop(inst);
 }
 
