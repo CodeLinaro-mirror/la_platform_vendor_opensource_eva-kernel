@@ -221,6 +221,36 @@ int get_msg_opconfigs(void *msg, unsigned int *session_id,
 	return 0;
 }
 
+int set_subcache_resources( struct msm_cvp_core *core, uint8_t cache_enable)
+{
+	struct iris_hfi_device *device = NULL;
+        int rc = 0;
+	if(( core ) && ( core->device ) && ( core->device->hfi_device_data ) )
+	{
+		device = (struct iris_hfi_device *)core->device->hfi_device_data;
+		if( cache_enable ) {
+			 msm_cvp_llcc_enable = 1;
+			 rc = __release_subcaches(device);
+			 rc = __set_subcaches(device);
+		         dprintk(CVP_INFO, "released and set subcaches\n");
+			}
+                else{
+			msm_cvp_llcc_enable = 0;
+			rc = __release_subcaches(device);
+		        dprintk(CVP_INFO, "release subcaches\n");
+		}
+
+	} else {
+		dprintk(CVP_ERR, "%s: null core/core->device/core->device->hfi_device_data\n",
+                                      __func__);
+		rc = -EINVAL;
+	}
+
+
+       return rc;
+}
+
+
 static void __dump_packet(u8 *packet, enum cvp_msg_prio log_level)
 {
 	u32 c = 0, packet_size = *(u32 *)packet;

@@ -13,6 +13,7 @@
 
 #define CREATE_TRACE_POINTS
 #define MAX_SSR_STRING_LEN 10
+#define MAX_CACHE_STRING_LEN 15
 int msm_cvp_debug = CVP_ERR | CVP_WARN | CVP_FW;
 EXPORT_SYMBOL(msm_cvp_debug);
 
@@ -133,6 +134,50 @@ static int trigger_ssr_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
+static int cache_resource_open(struct inode *inode, struct file *file)
+{
+	file->private_data = inode->i_private;
+	dprintk(CVP_INFO, "%s: Enter\n", __func__);
+	return 0;
+}
+static ssize_t cache_resource_write(struct file *filp, const char __user *buf,
+		size_t count, loff_t *ppos)
+{
+	int rc = 0;
+	unsigned long cache_resources_enable = 0;
+	struct msm_cvp_core *core = filp->private_data;
+	size_t size = MAX_CACHE_STRING_LEN;
+	char kbuf[MAX_CACHE_STRING_LEN + 1] = {0};
+
+        dprintk(CVP_WARN, "%s User memory fault\n", __func__);
+	if (!buf)
+		return -EINVAL;
+
+	if (!count)
+		goto exit;
+
+	if (count < size)
+		size = count;
+
+	if (copy_from_user(kbuf, buf, size)) {
+		dprintk(CVP_WARN, "%s User memory fault\n", __func__);
+		rc = -EFAULT;
+		goto exit;
+	}
+
+	rc = kstrtoul(kbuf, 0, &cache_resources_enable);
+	if (rc) {
+		dprintk(CVP_WARN, "returning error err %d\n", rc);
+		rc = -EINVAL;
+	} else {
+		dprintk(CVP_INFO, "returning rc %d : cache_resources_enable  %d\n", rc,cache_resources_enable);
+                set_subcache_resources(core, cache_resources_enable);
+		rc = count;
+	}
+exit:
+	return rc;
+
+}
 static ssize_t trigger_ssr_write(struct file *filp, const char __user *buf,
 		size_t count, loff_t *ppos)
 {
@@ -174,6 +219,10 @@ static const struct file_operations ssr_fops = {
 	.write = trigger_ssr_write,
 };
 
+static const struct file_operations cache_fops = {
+	.open = cache_resource_open,
+	.write = cache_resource_write,
+};
 static int cvp_power_get(void *data, u64 *val)
 {
 	struct cvp_hfi_device *hfi_ops;
@@ -458,6 +507,11 @@ struct dentry *msm_cvp_debugfs_init_core(struct msm_cvp_core *core,
 	if (!debugfs_create_file("ssr_stall", 0644, dir,
 			NULL, &ssr_stall_fops)) {
 		dprintk(CVP_ERR, "debugfs_create: ssr_stall fail\n");
+		goto failed_create_dir;
+	}
+	if (!debugfs_create_file("cache_enable", 0200,
+			dir, core, &cache_fops)) {
+		dprintk(CVP_ERR, "debugfs_create_file: fail\n");
 		goto failed_create_dir;
 	}
 failed_create_dir:

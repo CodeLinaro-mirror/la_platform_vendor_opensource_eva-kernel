@@ -94,6 +94,8 @@ struct dentry *msm_cvp_debugfs_init_core(struct msm_cvp_core *core,
 struct dentry *msm_cvp_debugfs_init_inst(struct msm_cvp_inst *inst,
 		struct dentry *parent);
 void msm_cvp_debugfs_deinit_inst(struct msm_cvp_inst *inst);
+int set_subcache_resources( struct msm_cvp_core *core, uint8_t cache_enable);
+
 
 static inline char *get_debug_level_str(int level)
 {
