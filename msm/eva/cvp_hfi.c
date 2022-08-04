@@ -98,6 +98,7 @@ static int __release_subcaches(struct iris_hfi_device *device);
 static int __disable_subcaches(struct iris_hfi_device *device);
 static int __power_collapse(struct iris_hfi_device *device, bool force);
 static int iris_hfi_noc_error_info(void *dev);
+static int iris_disable_spad_subcache(void *dev);
 
 static void interrupt_init_iris2(struct iris_hfi_device *device);
 static void setup_dsp_uc_memmap_vpu5(struct iris_hfi_device *device);
@@ -2136,7 +2137,7 @@ static int iris_hfi_core_release(void *dev)
 	__interface_gpu_deinit();
 #endif
 	__dsp_shutdown(device, 0);
-
+        iris_disable_spad_subcache(device);
 	__disable_subcaches(device);
 	__unload_fw(device);
 		__dev_regspace_unmap(device);
@@ -3929,8 +3930,9 @@ static int iris_enable_spad_subcache(void *dev)
 	return 0;
 
 err_activate_fail:
-	__release_subcaches(device);
-	__disable_subcaches(device);
+	//__release_subcaches(device);
+	//__disable_subcaches(device);
+    iris_disable_spad_subcache(device);
 	mutex_unlock(&device->lock);
 	return 0;
 }
