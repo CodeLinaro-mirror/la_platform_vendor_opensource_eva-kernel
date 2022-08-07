@@ -67,6 +67,10 @@ enum cvp_status {
 	CVP_ERR_CLIENT_PRESENT = 0x90000001,
 	CVP_ERR_CLIENT_FATAL,
 	CVP_ERR_CMD_QUEUE_FULL,
+        CVP_ERR_LSR_STALL_DETECTED,
+        CVP_ERR_LSR_FENCE_FAILURE,
+        CVP_ERR_LSR_CDM_BUFFER_NULL,
+        CVP_ERR_LSR_INPUT_TASKQ_FULL,
 	CVP_ERR_UNUSED = 0x10000000
 };
 
@@ -82,6 +86,7 @@ enum hal_ssr_trigger_type {
 #if IS_REACHABLE(CONFIG_QCOM_KGSL)
 	SSR_GPU,
 #endif
+	SSR_HW_FENCE_TIMEOUT,
 };
 
 enum hal_intra_refresh_mode {

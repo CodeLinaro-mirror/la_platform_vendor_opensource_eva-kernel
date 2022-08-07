@@ -598,12 +598,44 @@ static void handle_session_error(enum hal_command_response cmd, void *data)
 	struct msm_cvp_cb_cmd_done *response = data;
 	struct cvp_hfi_device *hdev = NULL;
 	struct msm_cvp_inst *inst = NULL;
+	struct msm_cvp_core *core = NULL;
+	uint8_t *err_type = (uint8_t *)data;
+	unsigned long flags = 0;
 
 	if (!response) {
 		dprintk(CVP_ERR,
 			"Failed to get valid response for session error\n");
 		return;
 	}
+
+	if(*err_type == SSR_HW_FENCE_TIMEOUT){
+		core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
+		if (!core) {
+			dprintk(CVP_ERR,
+				"Got SYS_ERR but unable to identify core\n");
+			return;
+		}
+		mutex_lock(&core->lock);
+			dprintk(CVP_ERR,
+				"Detected HW fence timeout error \n");
+		list_for_each_entry(inst, &core->instances, list) {
+			if( (inst->state != MSM_CVP_CORE_INVALID )  && (inst->prop.type == HFI_SESSION_LSR )) {
+				dprintk(CVP_ERR,
+					"Detected detecte LSR SESSION \n");
+				spin_lock_irqsave(&inst->event_handler.lock, flags);
+				inst->event_handler.event = CVP_SSR_EVENT;
+				dprintk(CVP_ERR,
+					" session error Updated SSR event   \n");
+				spin_unlock_irqrestore(
+					&inst->event_handler.lock, flags);
+				wake_up_all(&inst->event_handler.wq);
+	                       break;
+			}
+		}
+		mutex_unlock(&core->lock);
+		return;
+	}
+
 
 	inst = cvp_get_inst(get_cvp_core(response->device_id),
 			response->session_id);
@@ -616,7 +648,15 @@ static void handle_session_error(enum hal_command_response cmd, void *data)
 	hdev = inst->core->device;
 	dprintk(CVP_ERR, "Sess error 0x%x received for inst %pK sess %x\n",
 		response->status, inst, hash32_ptr(inst->session));
-
+	if(inst->prop.type == HFI_SESSION_LSR){
+		spin_lock_irqsave(&inst->event_handler.lock, flags);
+		inst->event_handler.event = CVP_SSR_EVENT;
+		dprintk(CVP_ERR,
+			" session error Updated SSR event   \n");
+		spin_unlock_irqrestore(
+		&inst->event_handler.lock, flags);
+		wake_up_all(&inst->event_handler.wq);
+	}
 	cvp_put_inst(inst);
 }
 
@@ -1400,6 +1440,13 @@ void msm_cvp_ssr_handler(struct work_struct *work)
 		return;
 	}
 #endif
+
+	if( core->ssr_type == SSR_HW_FENCE_TIMEOUT){
+		dprintk(CVP_ERR, "%s: SSR_HW_FENCE_TIMEOUT \n", __func__);
+		handle_session_error(HAL_SESSION_ERROR, &core->ssr_type);
+		return;
+	}
+
 	if (core->ssr_type == SSR_SESSION_ABORT) {
 		struct msm_cvp_inst *inst = NULL, *s;
 

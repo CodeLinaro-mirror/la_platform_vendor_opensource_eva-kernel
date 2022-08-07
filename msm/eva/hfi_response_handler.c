@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/bitops.h>
@@ -63,6 +64,19 @@ static enum cvp_status hfi_map_err_status(u32 hfi_err)
 	case HFI_ERR_SESSION_INCORRECT_STATE_OPERATION:
 		cvp_err = CVP_ERR_BAD_STATE;
 		break;
+	case HFI_ERR_SESSION_LSR_STALL_DETECTED:
+		cvp_err = CVP_ERR_LSR_STALL_DETECTED;
+		break;
+	case HFI_ERR_SESSION_LSR_FENCE_FAILURE:
+		cvp_err = CVP_ERR_LSR_FENCE_FAILURE;
+		break;
+	case HFI_ERR_SESSION_CDM_BUFFER_NULL:
+		cvp_err = CVP_ERR_LSR_CDM_BUFFER_NULL;
+		break;
+	case HFI_ERR_SESSION_INPUT_TASKQ_FULL:
+		cvp_err = CVP_ERR_LSR_INPUT_TASKQ_FULL;
+		break;
+
 	default:
 		cvp_err = CVP_ERR_FAIL;
 		break;
@@ -96,7 +110,7 @@ static int hfi_process_session_error(u32 device_id,
 	cmd_done.session_id = (void *)(uintptr_t)pkt->session_id;
 	cmd_done.status = hfi_map_err_status(pkt->event_data1);
 	info->response.cmd = cmd_done;
-	dprintk(CVP_INFO, "Received: SESSION_ERROR with event id : %#x %#x\n",
+	dprintk(CVP_ERR, "Received: SESSION_ERROR with event id : %#x %#x\n",
 		pkt->event_data1, pkt->event_data2);
 	switch (pkt->event_data1) {
 	/* Ignore below errors */
@@ -105,6 +119,23 @@ static int hfi_process_session_error(u32 device_id,
 		dprintk(CVP_INFO, "Non Fatal: HFI_EVENT_SESSION_ERROR\n");
 		info->response_type = HAL_RESPONSE_UNUSED;
 		break;
+	case HFI_ERR_SESSION_LSR_STALL_DETECTED:
+		dprintk(CVP_INFO, "Fatal: HFI_EVENT_SESSION_ERROR\n");
+                info->response_type =  HAL_SESSION_ERROR;
+		break;
+	case HFI_ERR_SESSION_LSR_FENCE_FAILURE:
+		dprintk(CVP_INFO, "Fatal: HFI_EVENT_SESSION_ERROR\n");
+                info->response_type =  HAL_SESSION_ERROR;
+		break;
+	case  HFI_ERR_SESSION_CDM_BUFFER_NULL:
+		dprintk(CVP_INFO, "Fatal: HFI_EVENT_SESSION_ERROR\n");
+                info->response_type =  HAL_SESSION_ERROR;
+		break;
+	case HFI_ERR_SESSION_INPUT_TASKQ_FULL:
+		dprintk(CVP_INFO, "Fatal: HFI_EVENT_SESSION_ERROR\n");
+                info->response_type =  HAL_SESSION_ERROR;
+		break;
+
 	default:
 		dprintk(CVP_ERR,
 			"%s: session %x data1 %#x, data2 %#x\n", __func__,

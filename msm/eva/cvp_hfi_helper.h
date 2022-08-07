@@ -77,6 +77,10 @@
 #define  HFI_ERR_SESSION_KERNEL_MAX_STREAMS_REACHED     (HFI_COMMON_BASE + 0x101D) /*Maximum Streams per Kernel reached in a session*/
 #define  HFI_ERR_SESSION_MAX_STREAMS_REACHED            (HFI_COMMON_BASE + 0x101E) /*Maximum Streams Reached in a session*/
 #define  HFI_ERR_SESSION_HW_HANG_DETECTED               (HFI_COMMON_BASE + 0x101F) /*HW hang was detected in one of the HW blocks for a frame*/
+#define  HFI_ERR_SESSION_LSR_STALL_DETECTED             (HFI_COMMON_BASE + 0x1020)
+#define  HFI_ERR_SESSION_LSR_FENCE_FAILURE              (HFI_COMMON_BASE + 0x1021) /*LSR Frame Fences failure detected*/
+#define  HFI_ERR_SESSION_CDM_BUFFER_NULL                (HFI_COMMON_BASE + 0x1022) /*CDM Buffer Address is Null */
+#define  HFI_ERR_SESSION_INPUT_TASKQ_FULL               (HFI_COMMON_BASE + 0x1023) /*Input Task Queue is full */
 
 #define HFI_EVENT_SYS_ERROR				(HFI_COMMON_BASE + 0x1)
 #define HFI_EVENT_SESSION_ERROR			(HFI_COMMON_BASE + 0x2)
