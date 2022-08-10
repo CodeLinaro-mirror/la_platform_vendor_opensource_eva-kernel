@@ -4972,6 +4972,75 @@ static int __dev_regspace_mapping(struct iris_hfi_device *device)
 					  device->res->hwmutex_size);
 
 	   }
+//spad regs mapping
+	   //SPAD0_LPI_LB iova
+	   rc = iommu_map(cb->domain,
+					  SPAD0_LPI_LB_IOVA,
+					  SPAD0_LPI_LB,
+					  SPAD0_LPI_LB_REG_SIZE,
+					  IOMMU_MMIO | IOMMU_READ | IOMMU_WRITE);
+	   if (rc) {
+			dprintk(CVP_ERR," %s:  iommu_map SPAD0_LPI_LB failed, rc:%d\n", __func__, rc);
+	   }
+	   else
+	   {
+		   dprintk(CVP_INFO," %s:  iommu_map SPAD0_LPI_LB Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
+					  SPAD0_LPI_LB_IOVA,
+					  SPAD0_LPI_LB,
+					  SPAD0_LPI_LB_REG_SIZE);
+
+	   }
+	   //SPAD1_LPI_LB iova
+	   rc = iommu_map(cb->domain,
+					  SPAD1_LPI_LB_IOVA,
+					  SPAD1_LPI_LB,
+					  SPAD1_LPI_LB_REG_SIZE,
+					  IOMMU_MMIO | IOMMU_READ | IOMMU_WRITE);
+	   if (rc) {
+			dprintk(CVP_ERR," %s:  iommu_map SPAD1_LPI_LB failed, rc:%d\n", __func__, rc);
+	   }
+	   else
+	   {
+		   dprintk(CVP_INFO," %s:  iommu_map SPAD1_LPI_LB Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
+					  SPAD1_LPI_LB_IOVA,
+					  SPAD1_LPI_LB,
+					  SPAD1_LPI_LB_REG_SIZE);
+
+	   }
+	   //SPAD_BROADCAST_ORLPI_LB iova
+	   rc = iommu_map(cb->domain,
+					  SPAD_BROADCAST_ORLPI_LB_IOVA,
+					  SPAD_BROADCAST_ORLPI_LB,
+					  SPAD_BROADCAST_ORLPI_LB_REG_SIZE,
+					  IOMMU_MMIO | IOMMU_READ | IOMMU_WRITE);
+	   if (rc) {
+			dprintk(CVP_ERR," %s:  iommu_map SPAD_BROADCAST_ORLPI_LB failed, rc:%d\n", __func__, rc);
+	   }
+	   else
+	   {
+		   dprintk(CVP_INFO," %s:  iommu_map SPAD_BROADCAST_ORLPI_LB Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
+					  SPAD_BROADCAST_ORLPI_LB_IOVA,
+					  SPAD_BROADCAST_ORLPI_LB,
+					  SPAD_BROADCAST_ORLPI_LB_REG_SIZE);
+
+	   }
+	   //SPAD_BROADCAST_ANDLPI_LB iova
+	   rc = iommu_map(cb->domain,
+					  SPAD_BROADCAST_ANDLPI_LB_IOVA,
+					  SPAD_BROADCAST_ANDLPI_LB,
+					  SPAD_BROADCAST_ANDLPI_LB_REG_SIZE,
+					  IOMMU_MMIO | IOMMU_READ | IOMMU_WRITE);
+	   if (rc) {
+			dprintk(CVP_ERR," %s:  iommu_map SPAD_BROADCAST_ANDLPI_LB failed, rc:%d\n", __func__, rc);
+	   }
+	   else
+	   {
+		   dprintk(CVP_INFO," %s:  iommu_map SPAD_BROADCAST_ANDLPI_LB Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
+					  SPAD_BROADCAST_ANDLPI_LB_IOVA,
+					  SPAD_BROADCAST_ANDLPI_LB,
+					  SPAD_BROADCAST_ANDLPI_LB_REG_SIZE);
+	   }
+//spad regs mapping
 	}
 	return rc;
 }
@@ -4988,6 +5057,11 @@ static int __dev_regspace_unmap(struct iris_hfi_device *device)
 	iommu_unmap(cb->domain, device->res->display_iova, device->res->display_size);//
 	iommu_unmap(cb->domain, device->res->aontimers_iova, device->res->aontimers_size);//
 	iommu_unmap(cb->domain, device->res->hwmutex_iova, device->res->hwmutex_size);//
+
+	iommu_unmap(cb->domain, SPAD0_LPI_LB_IOVA, SPAD0_LPI_LB_REG_SIZE);//
+	iommu_unmap(cb->domain, SPAD1_LPI_LB_IOVA, SPAD1_LPI_LB_REG_SIZE);//
+	iommu_unmap(cb->domain, SPAD_BROADCAST_ORLPI_LB_IOVA, SPAD_BROADCAST_ORLPI_LB_REG_SIZE);//
+	iommu_unmap(cb->domain, SPAD_BROADCAST_ANDLPI_LB_IOVA, SPAD_BROADCAST_ANDLPI_LB_REG_SIZE);//
 	return rc;
 
 }
