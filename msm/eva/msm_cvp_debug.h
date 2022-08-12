@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef __MSM_CVP_DEBUG__
@@ -95,6 +95,7 @@ extern int msm_cvp_minidump_enable;
 extern bool msm_cvp_noc_enable;
 extern bool  lsr_session_enabled;
 extern int msm_cvp_hw_wd_recovery;
+extern int msm_cvp_spad_reg_dump;
 
 #define dprintk(__level, __fmt, arg...)	\
 	do { \

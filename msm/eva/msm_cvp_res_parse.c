@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/iommu.h>
@@ -289,6 +289,55 @@ static int msm_cvp_load_gcc_regs(struct msm_cvp_platform_resources *res)
 	return ret;
 }
 
+static int msm_cvp_load_spad_regs(struct msm_cvp_platform_resources *res)
+{
+	int ret = 0;
+	unsigned int reg_config[2];
+	struct platform_device *pdev = res->pdev;
+
+	ret = of_property_read_u32_array(pdev->dev.of_node, "qcom,spad0-lpi-lb-reg",
+				reg_config, 2);
+	if (ret) {
+		dprintk(CVP_WARN, "No spad0 reg configured: %d\n", ret);
+		return ret;
+	}
+
+	res->spad0_lpi_lb_reg_base = reg_config[0];
+	res->spad0_lpi_lb_reg_size = reg_config[1];
+
+	ret = of_property_read_u32_array(pdev->dev.of_node, "qcom,spad1-lpi-lb-reg",
+				reg_config, 2);
+	if (ret) {
+		dprintk(CVP_WARN, "No spad1 reg configured: %d\n", ret);
+		return ret;
+	}
+
+	res->spad1_lpi_lb_reg_base = reg_config[0];
+	res->spad1_lpi_lb_reg_size = reg_config[1];
+
+
+	ret = of_property_read_u32_array(pdev->dev.of_node, "qcom,spad-broadcast-orlpi-lb-reg",
+				reg_config, 2);
+	if (ret) {
+		dprintk(CVP_WARN, "No spad-broadcast-lb-reg_base reg configured: %d\n", ret);
+		return ret;
+	}
+
+	res->spad_broadcast_orlpi_lb_reg_base = reg_config[0];
+	res->spad_broadcast_orlpi_lb_reg_size = reg_config[1];
+
+	ret = of_property_read_u32_array(pdev->dev.of_node, "qcom,spad-broadcast-andlpi-lb-reg",
+				reg_config, 2);
+	if (ret) {
+		dprintk(CVP_WARN, "No spad-broadcast-andlpi-lb reg configured: %d\n", ret);
+		return ret;
+	}
+
+	res->spad_broadcast_andlpi_lb_reg_base = reg_config[0];
+	res->spad_broadcast_andlpi_lb_reg_size = reg_config[1];
+
+	return ret;
+}
 
 static int msm_cvp_load_reg_table(struct msm_cvp_platform_resources *res)
 {
@@ -1008,6 +1057,11 @@ int cvp_read_platform_resources_from_dt(
         dprintk(CVP_ERR, "Failed to do Register Space Mapping: %d\n", rc);
 
 	rc = msm_cvp_load_gcc_regs(res);
+
+        rc = msm_cvp_load_spad_regs(res);
+	if (rc) {
+		dprintk(CVP_ERR, "Failed to load spad registers %d\n", rc);
+	}
 
 	rc = msm_cvp_load_regulator_table(res);
 	if (rc) {

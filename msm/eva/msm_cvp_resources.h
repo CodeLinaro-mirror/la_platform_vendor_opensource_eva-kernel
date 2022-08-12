@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef __MSM_CVP_RESOURCES_H__
@@ -156,6 +157,13 @@ struct msm_cvp_platform_resources {
 	phys_addr_t register_base;
 	phys_addr_t ipcc_reg_base;
 	phys_addr_t gcc_reg_base;
+
+	phys_addr_t spad0_lpi_lb_reg_base;
+	phys_addr_t spad1_lpi_lb_reg_base;
+	phys_addr_t spad_broadcast_orlpi_lb_reg_base;
+	phys_addr_t spad_broadcast_andlpi_lb_reg_base;
+
+
     /*Aurora iova and phyaddr*/
     phys_addr_t uncached_iova;
     phys_addr_t device_iova;
@@ -195,6 +203,10 @@ struct msm_cvp_platform_resources {
 	uint32_t register_size;
 	uint32_t ipcc_reg_size;
 	uint32_t gcc_reg_size;
+       uint32_t spad0_lpi_lb_reg_size;
+       uint32_t spad1_lpi_lb_reg_size;
+       uint32_t spad_broadcast_orlpi_lb_reg_size;
+       uint32_t spad_broadcast_andlpi_lb_reg_size;
 	uint32_t irq;
 	uint32_t irq_wd;
 	uint32_t sku_version;

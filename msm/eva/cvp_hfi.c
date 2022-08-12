@@ -45,6 +45,10 @@
 #define QDSS_IOVA_START 0x80001000
 #define MIN_PAYLOAD_SIZE 3
 #define EVA_RESET_PULSE_RESPONSE_TIMEOUT 10000
+#define SPAD0_DUMP 0x1
+#define SPAD1_DUMP 0x2
+#define SPAD_ORLPI_DUMP 0x4
+#define SPAD_ANDLPI_DUMP 0x8
 
 struct cvp_tzbsp_memprot {
 	u32 cp_start;
@@ -150,6 +154,12 @@ static struct iris_hfi_vpu_ops iris2_ops = {
 	.noc_error_info = __noc_error_info_iris2,
 };
 
+
+static void  __print_spad0_regs(struct iris_hfi_device *device);
+static void  __print_spad1_regs(struct iris_hfi_device *device);
+static void __print_spad_broadcast_orlpi_lb_regs(struct iris_hfi_device *device);
+static void __print_spad_broadcast_andlpi_lb_regs(struct iris_hfi_device *device);
+static void __print_spad_reg_dump(struct iris_hfi_device *device);
 /**
  * Utility function to enforce some of our assumptions.  Spam calls to this
  * in hotspots in code to double check some of the assumptions that we hold.
@@ -3404,6 +3414,48 @@ static int __init_regs_and_interrupts(struct iris_hfi_device *device,
                                "could not map Aon reg addr %pa of size %d\n",
                                &res->aontimers_phyaddr, res->aontimers_size);
        }
+	if (res->spad0_lpi_lb_reg_base) {
+		hal->spad0_lpi_lb_reg_base = devm_ioremap(&res->pdev->dev,
+				res->spad0_lpi_lb_reg_base, res->spad0_lpi_lb_reg_size);
+		hal->spad0_lpi_lb_reg_size = res->spad0_lpi_lb_reg_size;
+		if (!hal->spad0_lpi_lb_reg_size)
+			dprintk(CVP_ERR,
+				"could not map spad0 reg addr %pa of size %d\n",
+				&res->spad0_lpi_lb_reg_base, res->spad0_lpi_lb_reg_size);
+	}
+
+
+
+	if (res->spad1_lpi_lb_reg_base) {
+		hal->spad1_lpi_lb_reg_base = devm_ioremap(&res->pdev->dev,
+				res->spad1_lpi_lb_reg_base, res->spad1_lpi_lb_reg_size);
+		hal->spad1_lpi_lb_reg_size = res->spad1_lpi_lb_reg_size;
+		if (!hal->spad1_lpi_lb_reg_base)
+			dprintk(CVP_ERR,
+				"could not map spad1 reg addr %pa of size %d\n",
+				&res->spad1_lpi_lb_reg_base, res->spad1_lpi_lb_reg_size);
+	}
+
+	if (res->spad_broadcast_orlpi_lb_reg_base) {
+		hal->spad_broadcast_orlpi_lb_reg_base = devm_ioremap(&res->pdev->dev,
+				res->spad_broadcast_orlpi_lb_reg_base, res->spad_broadcast_orlpi_lb_reg_size);
+		hal->spad_broadcast_orlpi_lb_reg_size = res->spad_broadcast_orlpi_lb_reg_size;
+		if (!hal->spad_broadcast_orlpi_lb_reg_base)
+			dprintk(CVP_ERR,
+				"could not map spad broadcast lb  reg addr %pa of size %d\n",
+				&res->spad_broadcast_orlpi_lb_reg_base, res->spad_broadcast_orlpi_lb_reg_size);
+	}
+
+
+	if (res->spad_broadcast_andlpi_lb_reg_base) {
+		hal->spad_broadcast_andlpi_lb_reg_base = devm_ioremap(&res->pdev->dev,
+				res->spad_broadcast_andlpi_lb_reg_base, res->spad_broadcast_andlpi_lb_reg_size);
+		hal->spad_broadcast_andlpi_lb_reg_size = res->spad_broadcast_andlpi_lb_reg_size;
+		if (!hal->spad_broadcast_andlpi_lb_reg_base)
+			dprintk(CVP_ERR,
+				"could not map spad broadcast andlpi lbreg addr %pa of size %d\n",
+				&res->spad_broadcast_andlpi_lb_reg_base, res->spad_broadcast_andlpi_lb_reg_size);
+	}
 
 	device->cvp_hal_data = hal;
 	rc = request_irq(res->irq, iris_hfi_isr, IRQF_TRIGGER_HIGH,
@@ -4212,6 +4264,9 @@ static int iris_enable_spad_subcache(void *dev)
 			}
 			sinfo->isactive = true;
 			dprintk(CVP_CORE, "Activated subcache %s : rc : %d \n", sinfo->name,rc);
+			if(msm_cvp_spad_reg_dump){
+				__print_spad_reg_dump(device);
+			}
 		}
 		c++;
 	}
@@ -4397,6 +4452,9 @@ static int iris_disable_spad_subcache(void *dev)
 				"de-activate %s status: %d\n", sinfo->name, rc);
 
 			sinfo->isactive = false;
+			if(msm_cvp_spad_reg_dump){
+				__print_spad_reg_dump(device);
+			}
 		}
 	}
 	dprintk(CVP_PWR, "%s X\n", __func__);
@@ -4720,6 +4778,999 @@ err_tzbsp_suspend:
 	return rc;
 }
 
+static int __read_spad1_lpi_lb_register(struct iris_hfi_device *device, u32 reg)
+{
+	int rc = 0;
+	u8 *base_addr;
+
+	if (!device) {
+		dprintk(CVP_ERR, "Invalid params: %pK\n", device);
+		return -EINVAL;
+	}
+	__strict_check(device);
+
+	if (!device->power_enabled) {
+		dprintk(CVP_WARN,"%s HFI Read register failed : Power is OFF\n",
+		__func__);
+		msm_cvp_res_handle_fatal_hw_error(device->res, true);
+		return -EINVAL;
+	}
+	base_addr = device->cvp_hal_data->spad1_lpi_lb_reg_base;
+	rc = readl_relaxed(base_addr + reg);
+	/*
+	 * Memory barrier to make sure value is read correctly from the
+	 * register.
+	 */
+	rmb();
+	dprintk(CVP_REG,"spad1_lpi_lb_reg_base Base addr: %pK,  read from: %#x, value: %#x...\n",
+	base_addr, (base_addr+reg), rc);
+	return rc;
+}
+
+static int __read_spad_broadcast_andlpi_lb_register(struct iris_hfi_device *device, u32 reg)
+{
+	int rc = 0;
+	u8 *base_addr;
+
+	if (!device) {
+		dprintk(CVP_ERR, "Invalid params: %pK\n", device);
+		return -EINVAL;
+	}
+	__strict_check(device);
+
+	if (!device->power_enabled) {
+	dprintk(CVP_WARN,"%s HFI Read register failed : Power is OFF\n",
+	__func__);
+	msm_cvp_res_handle_fatal_hw_error(device->res, true);
+	return -EINVAL;
+	}
+	base_addr = device->cvp_hal_data->spad_broadcast_andlpi_lb_reg_base;
+	rc = readl_relaxed(base_addr + reg);
+	/*
+	 * Memory barrier to make sure value is read correctly from the
+	 * register.
+	 */
+	rmb();
+	dprintk(CVP_REG,"spad_broadcast_andlpi_lb_reg_base base addr: %pK,  read from: %#x, value: %#x...\n",
+	base_addr, (base_addr+reg), rc);
+	return rc;
+}
+static int __read_spad_broadcast_orlpi_lb_register(struct iris_hfi_device *device, u32 reg)
+{
+	int rc = 0;
+	u8 *base_addr;
+
+	if (!device) {
+		dprintk(CVP_ERR, "Invalid params: %pK\n", device);
+		return -EINVAL;
+	}
+	__strict_check(device);
+	if (!device->power_enabled) {
+		dprintk(CVP_WARN,"%s HFI Read register failed : Power is OFF\n",__func__);
+		msm_cvp_res_handle_fatal_hw_error(device->res, true);
+		return -EINVAL;
+	}
+	base_addr = device->cvp_hal_data->spad_broadcast_orlpi_lb_reg_base;
+	rc = readl_relaxed(base_addr + reg);
+	/*
+	 * Memory barrier to make sure value is read correctly from the
+	 * register.
+	 */
+	rmb();
+	dprintk(CVP_REG,"spad_broadcast_orlpi_lb_reg_base Base addr: %pK, read from: %#x, value: %#x...\n",
+	base_addr, (base_addr+reg), rc);
+	return rc;
+}
+
+static int __read_spad0_lpi_lb_register(struct iris_hfi_device *device, u32 reg)
+{
+	int rc = 0;
+	u8 *base_addr;
+
+	if (!device) {
+		dprintk(CVP_ERR, "Invalid params: %pK\n", device);
+		return -EINVAL;
+	}
+	__strict_check(device);
+	if (!device->power_enabled) {
+		dprintk(CVP_WARN,"%s HFI Read register failed : Power is OFF\n",
+		__func__);
+		msm_cvp_res_handle_fatal_hw_error(device->res, true);
+		return -EINVAL;
+	}
+	base_addr = device->cvp_hal_data->spad0_lpi_lb_reg_base;
+	rc = readl_relaxed(base_addr + reg);
+	/*
+	 * Memory barrier to make sure value is read correctly from the
+	 * register.
+	 */
+	rmb();
+	dprintk(CVP_REG,"spad0_lpi_lb_reg_base Base addr: %pK, read from: %#x, value: %#x...\n",
+	base_addr, (base_addr+reg), rc);
+	return rc;
+}
+
+static void __print_spad_reg_dump(struct iris_hfi_device *device)
+{
+	if(msm_cvp_spad_reg_dump & SPAD0_DUMP)
+	__print_spad0_regs(device);
+	if(msm_cvp_spad_reg_dump & SPAD1_DUMP)
+	__print_spad1_regs(device);
+	if(msm_cvp_spad_reg_dump & SPAD_ORLPI_DUMP)
+	__print_spad_broadcast_orlpi_lb_regs(device);
+	if(msm_cvp_spad_reg_dump & SPAD_ANDLPI_DUMP)
+	__print_spad_broadcast_andlpi_lb_regs(device);
+}
+
+static void  __print_spad1_regs(struct iris_hfi_device *device)
+{
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_RAM_TIMING0                              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_RAM_TIMING0                              ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_RAM_TIMING1                              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_RAM_TIMING1                              ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_RAM_TIMING2                              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_RAM_TIMING2                              ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCB_SLP_SEL0                             =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCB_SLP_SEL0                             ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCB_SLP_NRET_SEL0                        =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCB_SLP_NRET_SEL0                        ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCB_SLP_SEL1                             =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCB_SLP_SEL1                             ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCB_SLP_NRET_SEL1                        =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCB_SLP_NRET_SEL1                        ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCB_WAKEUP_SEL0                          =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCB_WAKEUP_SEL0                          ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCB_WAKEUP_SEL1                          =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCB_WAKEUP_SEL1                          ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCB_ENABLE                               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCB_ENABLE                               ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_RAM_IDLE_THRESHOLD                       =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_RAM_IDLE_THRESHOLD                       ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCB_CMD                                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCB_CMD                                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_COUNTER_SYNC_RATE                        =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_COUNTER_SYNC_RATE                        ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_RAMSLP_STATUS                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_RAMSLP_STATUS                            ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCB_PWR_STATUS0                          =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCB_PWR_STATUS0                          ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCB_PWR_STATUS1                          =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCB_PWR_STATUS1                          ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCB_PWR_STATUS2                          =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCB_PWR_STATUS2                          ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCB_PWR_STATUS3                          =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCB_PWR_STATUS3                          ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PRE_ARES_STATUS                          =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PRE_ARES_STATUS                          ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DEBUG_CTRL0                              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DEBUG_CTRL0                              ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DEBUG_CTRL1                              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DEBUG_CTRL1                              ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DEBUG_CTRL2                              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DEBUG_CTRL2                              ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DEBUG_CTRL3                              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DEBUG_CTRL3                              ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DEBUG_CTRL4                              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DEBUG_CTRL4                              ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DEBUG_CTRL5                              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DEBUG_CTRL5                              ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCBSLP_STATUS0                           =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCBSLP_STATUS0                           ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCBSLP_STATUS1                           =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCBSLP_STATUS1                           ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCBSLP_STATUS2                           =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCBSLP_STATUS2                           ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCBSLP_STATUS3                           =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCBSLP_STATUS3                           ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCBSLP_STATUS4                           =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCBSLP_STATUS4                           ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCBSLP_STATUS5                           =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCBSLP_STATUS5                           ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCBSLP_STATUS6                           =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCBSLP_STATUS6                           ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_CLK_EN_CFG                               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_CLK_EN_CFG                               ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PRE_ARES_CTRL                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PRE_ARES_CTRL                            ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_ADDR_REGION_CFG0                         =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_ADDR_REGION_CFG0                         ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_ADDR_REGION_CFG1                         =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_ADDR_REGION_CFG1                         ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_ADDR_REGION_CFG2                         =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_ADDR_REGION_CFG2                         ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_ADDR_REGION_CFG3                         =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_ADDR_REGION_CFG3                         ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_MODE                             =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_MODE                             ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_CORE_CLOCK_CTRL                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_CORE_CLOCK_CTRL                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_CFG_CLOCK_CTRL                   =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_CFG_CLOCK_CTRL                   ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_DEBUG_CTRL                       =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_DEBUG_CTRL                       ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_STATUS                           =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_STATUS                           ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_CONFIGURATION_INFO               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_CONFIGURATION_INFO               ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_0_CONFIG                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_0_CONFIG                 ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_1_CONFIG                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_1_CONFIG                 ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_2_CONFIG                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_2_CONFIG                 ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_3_CONFIG                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_3_CONFIG                 ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_4_CONFIG                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_4_CONFIG                 ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_5_CONFIG                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_5_CONFIG                 ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_6_CONFIG                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_6_CONFIG                 ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_7_CONFIG                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_7_CONFIG                 ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_8_CONFIG                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_8_CONFIG                 ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_9_CONFIG                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_9_CONFIG                 ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_10_CONFIG                =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_10_CONFIG                ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_11_CONFIG                =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_11_CONFIG                ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_12_CONFIG                =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_12_CONFIG                ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_13_CONFIG                =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_13_CONFIG                ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_14_CONFIG                =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_14_CONFIG                ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_15_CONFIG                =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_15_CONFIG                ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_0_VALUE                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_0_VALUE                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_1_VALUE                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_1_VALUE                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_2_VALUE                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_2_VALUE                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_3_VALUE                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_3_VALUE                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_4_VALUE                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_4_VALUE                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_5_VALUE                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_5_VALUE                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_6_VALUE                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_6_VALUE                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_7_VALUE                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_7_VALUE                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_8_VALUE                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_8_VALUE                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_9_VALUE                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_9_VALUE                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_10_VALUE                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_10_VALUE                 ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_11_VALUE                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_11_VALUE                 ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_12_VALUE                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_12_VALUE                 ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_13_VALUE                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_13_VALUE                 ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_14_VALUE                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_14_VALUE                 ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_15_VALUE                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_15_VALUE                 ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_0_OVERFLOW               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_0_OVERFLOW               ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_1_OVERFLOW               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_1_OVERFLOW               ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_2_OVERFLOW               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_2_OVERFLOW               ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_3_OVERFLOW               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_3_OVERFLOW               ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_4_OVERFLOW               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_4_OVERFLOW               ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_5_OVERFLOW               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_5_OVERFLOW               ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_6_OVERFLOW               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_6_OVERFLOW               ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_7_OVERFLOW               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_7_OVERFLOW               ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_8_OVERFLOW               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_8_OVERFLOW               ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_9_OVERFLOW               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_9_OVERFLOW               ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_10_OVERFLOW              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_10_OVERFLOW              ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_11_OVERFLOW              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_11_OVERFLOW              ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_12_OVERFLOW              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_12_OVERFLOW              ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_13_OVERFLOW              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_13_OVERFLOW              ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_14_OVERFLOW              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_14_OVERFLOW              ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_15_OVERFLOW              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_15_OVERFLOW              ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PRED_WAKEUP_EN                           =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PRED_WAKEUP_EN                           ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PROF_FILTER_0_CFG                        =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PROF_FILTER_0_CFG                        ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_PROF_FILTER_1_CFG                        =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PROF_FILTER_1_CFG                        ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_ECC_ERROR_CFG                        =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_ECC_ERROR_CFG                        ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DEBUG_CTRL                               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DEBUG_CTRL                               ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_ECC_ERROR_INJECTION_0                =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_ECC_ERROR_INJECTION_0                ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_ECC_ERROR_INJECTION_1                =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_ECC_ERROR_INJECTION_1                ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DEBUG_TESTBUS                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DEBUG_TESTBUS                            ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_HW_EVENT_CTRL                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_HW_EVENT_CTRL                            ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_INTERRUPT_STATUS                     =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_INTERRUPT_STATUS                     ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_INTERRUPT_ENABLE                     =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_INTERRUPT_ENABLE                     ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_ERROR_STATUS                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_ERROR_STATUS                 ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN0                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN0                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN1                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN1                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN2                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN2                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN3                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN3                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN4                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN4                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN5                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN5                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN6                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN6                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN0                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN0                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN1                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN1                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN2                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN2                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN3                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN3                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN4                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN4                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN5                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN5                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN6                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN6                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_FIFO_EMPTY_STATUS                    =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_FIFO_EMPTY_STATUS                    ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_FIFO_FULL_STATUS                     =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_FIFO_FULL_STATUS                     ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_ADDR_DECODE_ERR_CFG                      =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_ADDR_DECODE_ERR_CFG                      ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_ADDR_DECODE_ERR_INTERRUPT_STATUS         =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_ADDR_DECODE_ERR_INTERRUPT_STATUS         ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_ADDR_DECODE_ERR_INTERRUPT_ENABLE         =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_ADDR_DECODE_ERR_INTERRUPT_ENABLE         ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_RD_ADDR_DECODE_ERR_STATUS1               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_RD_ADDR_DECODE_ERR_STATUS1               ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_RD_ADDR_DECODE_ERR_STATUS2               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_RD_ADDR_DECODE_ERR_STATUS2               ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_RD_ADDR_DECODE_ERR_STATUS3               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_RD_ADDR_DECODE_ERR_STATUS3               ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_RD_ADDR_DECODE_ERR_STATUS4               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_RD_ADDR_DECODE_ERR_STATUS4               ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_RD_ADDR_DECODE_ERR_STATUS5               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_RD_ADDR_DECODE_ERR_STATUS5               ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN7                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN7                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN8                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN8                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN9                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN9                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_ERROR_STATUS                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_ERROR_STATUS                 ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN10                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN10                 ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN7                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN7                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN8                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN8                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN9                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN9                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN10                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN10                 ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN7                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN7                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN8                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN8                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN9                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN9                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN10                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN10                 ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN7                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN7                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN8                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN8                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN9                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN9                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN10                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN10                 ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_WR_ADDR_DECODE_ERR_STATUS1               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_WR_ADDR_DECODE_ERR_STATUS1               ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_WR_ADDR_DECODE_ERR_STATUS2               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_WR_ADDR_DECODE_ERR_STATUS2               ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_WR_ADDR_DECODE_ERR_STATUS3               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_WR_ADDR_DECODE_ERR_STATUS3               ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_WR_ADDR_DECODE_ERR_STATUS4               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_WR_ADDR_DECODE_ERR_STATUS4               ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_WR_ADDR_DECODE_ERR_STATUS5               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_WR_ADDR_DECODE_ERR_STATUS5               ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DCRSW_CFG                                =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DCRSW_CFG                                ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DCRSW_STATUS0                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DCRSW_STATUS0                            ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DCRSW_STATUS1                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DCRSW_STATUS1                            ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DCRSW_STATUS2                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DCRSW_STATUS2                            ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DCRSW_STATUS3                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DCRSW_STATUS3                            ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DCRSW_STATUS4                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DCRSW_STATUS4                            ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DCRSW_STATUS5                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DCRSW_STATUS5                            ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DCRSW_STATUS6                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DCRSW_STATUS6                            ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DCRSW_STATUS7                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DCRSW_STATUS7                            ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DCRSW_STATUS8                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DCRSW_STATUS8                            ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_IF_CHANNEL_STATUS                        =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_IF_CHANNEL_STATUS                        ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_FIFO_STATUS                              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_FIFO_STATUS                              ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_RSPPROC_CREDITS_STATUS                   =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_RSPPROC_CREDITS_STATUS                   ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DBG_EVENT_STATUS                         =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DBG_EVENT_STATUS                         ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DBG_EVENT_FWD                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DBG_EVENT_FWD                            ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_UNS_ERR_CFG                              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_UNS_ERR_CFG                              ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_UNS_ERR_STATUS1                          =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_UNS_ERR_STATUS1                          ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_UNS_ERR_STATUS2                          =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_UNS_ERR_STATUS2                          ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_UNS_ERR_STATUS3                          =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_UNS_ERR_STATUS3                          ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_UNS_ERR_STATUS4                          =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_UNS_ERR_STATUS4                          ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_UNS_ERR_STATUS5                          =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_UNS_ERR_STATUS5                          ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN0                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN0                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN1                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN1                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN2                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN2                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN3                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN3                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN4                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN4                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN5                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN5                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN6                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN6                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN0                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN0                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN1                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN1                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN2                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN2                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN3                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN3                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN4                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN4                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN5                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN5                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN6                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN6                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_FF_CLK_ON_CTRL                           =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_FF_CLK_ON_CTRL                           ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_CTRL                                =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_CTRL                                ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_CLK_CTRL                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_CLK_CTRL                            ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_WRITE_CONFIG1                       =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_WRITE_CONFIG1                       ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_WRITE_CONFIG2                       =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_WRITE_CONFIG2                       ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_WR_ADDR                             =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_WR_ADDR                             ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_WR_BIST_SEED_31_0                   =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_WR_BIST_SEED_31_0                   ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_WR_BIST_SEED_63_32                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_WR_BIST_SEED_63_32                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_WR_BIST_SEED_95_64                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_WR_BIST_SEED_95_64                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_WR_BIST_SEED_127_96                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_WR_BIST_SEED_127_96                 ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_READ_CONFIG1                        =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_READ_CONFIG1                        ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_READ_CONFIG2                        =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_READ_CONFIG2                        ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_RD_ADDR                             =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_RD_ADDR                             ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_RD_BIST_SEED_31_0                   =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_RD_BIST_SEED_31_0                   ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_RD_BIST_SEED_63_32                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_RD_BIST_SEED_63_32                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_RD_BIST_SEED_95_64                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_RD_BIST_SEED_95_64                  ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_RD_BIST_SEED_127_96                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_RD_BIST_SEED_127_96                 ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_LFSR_TAP_POINT                      =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_LFSR_TAP_POINT                      ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_STATUS                              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_STATUS                              ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_FAILURE                             =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_FAILURE                             ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_FAILURE_0_BITS                      =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_FAILURE_0_BITS                      ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_FAILURE_1_BITS                      =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_FAILURE_1_BITS                      ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_FAILURE_2_BITS                      =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_FAILURE_2_BITS                      ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_FAILURE_3_BITS                      =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_FAILURE_3_BITS                      ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_FAILURE_4_BITS                      =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_FAILURE_4_BITS                      ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_FAILURE_5_BITS                      =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_FAILURE_5_BITS                      ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_SPARE                               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_SPARE                               ));
+	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_TAG_RAM_EXTRA_COL_ACT               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_TAG_RAM_EXTRA_COL_ACT               ));
+}
+static void __print_spad_broadcast_andlpi_lb_regs(struct iris_hfi_device *device)
+{
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_RAM_TIMING0                                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_RAM_TIMING0                                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_RAM_TIMING1                                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_RAM_TIMING1                                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_RAM_TIMING2                                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_RAM_TIMING2                                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCB_SLP_SEL0                                 =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCB_SLP_SEL0                                               ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCB_SLP_NRET_SEL0                            =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCB_SLP_NRET_SEL0                                          ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCB_SLP_SEL1                                 =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCB_SLP_SEL1                                               ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCB_SLP_NRET_SEL1                            =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCB_SLP_NRET_SEL1                                          ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCB_WAKEUP_SEL0                              =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCB_WAKEUP_SEL0                                            ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCB_WAKEUP_SEL1                              =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCB_WAKEUP_SEL1                                            ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCB_ENABLE                                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCB_ENABLE                                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_RAM_IDLE_THRESHOLD                           =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_RAM_IDLE_THRESHOLD                                         ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCB_CMD                                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCB_CMD                                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_COUNTER_SYNC_RATE                            =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_COUNTER_SYNC_RATE                                          ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_RAMSLP_STATUS                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_RAMSLP_STATUS                                              ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCB_PWR_STATUS0                              =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCB_PWR_STATUS0                                            ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCB_PWR_STATUS1                              =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCB_PWR_STATUS1                                            ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCB_PWR_STATUS2                              =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCB_PWR_STATUS2                                            ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCB_PWR_STATUS3                              =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCB_PWR_STATUS3                                            ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PRE_ARES_STATUS                              =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PRE_ARES_STATUS                                            ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL0                                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL0                                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL1                                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL1                                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL2                                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL2                                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL3                                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL3                                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL4                                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL4                                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL5                                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL5                                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS0                               =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS0                                             ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS1                               =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS1                                             ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS2                               =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS2                                             ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS3                               =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS3                                             ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS4                               =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS4                                             ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS5                               =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS5                                             ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS6                               =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS6                                             ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_CLK_EN_CFG                                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_CLK_EN_CFG                                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PRE_ARES_CTRL                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PRE_ARES_CTRL                                              ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_ADDR_REGION_CFG0                             =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_ADDR_REGION_CFG0                                           ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_ADDR_REGION_CFG1                             =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_ADDR_REGION_CFG1                                           ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_ADDR_REGION_CFG2                             =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_ADDR_REGION_CFG2                                           ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_ADDR_REGION_CFG3                             =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_ADDR_REGION_CFG3                                           ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_MODE                                 =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_MODE                                               ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_CORE_CLOCK_CTRL                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_CORE_CLOCK_CTRL                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_CFG_CLOCK_CTRL                       =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_CFG_CLOCK_CTRL                                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_DEBUG_CTRL                           =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_DEBUG_CTRL                                         ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_STATUS                               =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_STATUS                                             ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_CONFIGURATION_INFO                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_CONFIGURATION_INFO                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_0_CONFIG                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_0_CONFIG                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_1_CONFIG                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_1_CONFIG                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_2_CONFIG                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_2_CONFIG                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_3_CONFIG                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_3_CONFIG                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_4_CONFIG                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_4_CONFIG                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_5_CONFIG                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_5_CONFIG                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_6_CONFIG                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_6_CONFIG                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_7_CONFIG                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_7_CONFIG                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_8_CONFIG                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_8_CONFIG                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_9_CONFIG                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_9_CONFIG                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_10_CONFIG                    =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_10_CONFIG                                  ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_11_CONFIG                    =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_11_CONFIG                                  ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_12_CONFIG                    =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_12_CONFIG                                  ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_13_CONFIG                    =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_13_CONFIG                                  ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_14_CONFIG                    =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_14_CONFIG                                  ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_15_CONFIG                    =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_15_CONFIG                                  ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_0_VALUE                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_0_VALUE                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_1_VALUE                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_1_VALUE                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_2_VALUE                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_2_VALUE                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_3_VALUE                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_3_VALUE                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_4_VALUE                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_4_VALUE                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_5_VALUE                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_5_VALUE                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_6_VALUE                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_6_VALUE                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_7_VALUE                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_7_VALUE                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_8_VALUE                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_8_VALUE                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_9_VALUE                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_9_VALUE                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_10_VALUE                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_10_VALUE                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_11_VALUE                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_11_VALUE                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_12_VALUE                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_12_VALUE                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_13_VALUE                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_13_VALUE                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_14_VALUE                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_14_VALUE                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_15_VALUE                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_15_VALUE                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_0_OVERFLOW                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_0_OVERFLOW                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_1_OVERFLOW                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_1_OVERFLOW                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_2_OVERFLOW                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_2_OVERFLOW                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_3_OVERFLOW                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_3_OVERFLOW                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_4_OVERFLOW                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_4_OVERFLOW                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_5_OVERFLOW                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_5_OVERFLOW                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_6_OVERFLOW                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_6_OVERFLOW                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_7_OVERFLOW                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_7_OVERFLOW                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_8_OVERFLOW                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_8_OVERFLOW                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_9_OVERFLOW                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_9_OVERFLOW                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_10_OVERFLOW                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_10_OVERFLOW                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_11_OVERFLOW                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_11_OVERFLOW                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_12_OVERFLOW                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_12_OVERFLOW                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_13_OVERFLOW                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_13_OVERFLOW                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_14_OVERFLOW                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_14_OVERFLOW                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_15_OVERFLOW                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_15_OVERFLOW                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PRED_WAKEUP_EN                               =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PRED_WAKEUP_EN                                             ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PROF_FILTER_0_CFG                            =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PROF_FILTER_0_CFG                                          ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PROF_FILTER_1_CFG                            =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PROF_FILTER_1_CFG                                          ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_ECC_ERROR_CFG                            =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_ECC_ERROR_CFG                                          ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL                                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL                                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_ECC_ERROR_INJECTION_0                    =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_ECC_ERROR_INJECTION_0                                  ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_ECC_ERROR_INJECTION_1                    =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_ECC_ERROR_INJECTION_1                                  ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DEBUG_TESTBUS                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DEBUG_TESTBUS                                              ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_HW_EVENT_CTRL                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_HW_EVENT_CTRL                                              ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_INTERRUPT_STATUS                         =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_INTERRUPT_STATUS                                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_INTERRUPT_ENABLE                         =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_INTERRUPT_ENABLE                                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_ERROR_STATUS                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_ERROR_STATUS                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN0                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN0                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN1                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN1                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN2                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN2                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN3                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN3                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN4                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN4                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN5                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN5                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN6                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN6                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN0                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN0                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN1                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN1                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN2                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN2                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN3                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN3                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN4                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN4                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN5                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN5                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN6                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN6                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_FIFO_EMPTY_STATUS                        =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_FIFO_EMPTY_STATUS                                      ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_FIFO_FULL_STATUS                         =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_FIFO_FULL_STATUS                                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_ADDR_DECODE_ERR_CFG                          =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_ADDR_DECODE_ERR_CFG                                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_ADDR_DECODE_ERR_INTERRUPT_STATUS             =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_ADDR_DECODE_ERR_INTERRUPT_STATUS                           ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_ADDR_DECODE_ERR_INTERRUPT_ENABLE             =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_ADDR_DECODE_ERR_INTERRUPT_ENABLE                           ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_RD_ADDR_DECODE_ERR_STATUS1                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_RD_ADDR_DECODE_ERR_STATUS1                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_RD_ADDR_DECODE_ERR_STATUS2                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_RD_ADDR_DECODE_ERR_STATUS2                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_RD_ADDR_DECODE_ERR_STATUS3                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_RD_ADDR_DECODE_ERR_STATUS3                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_RD_ADDR_DECODE_ERR_STATUS4                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_RD_ADDR_DECODE_ERR_STATUS4                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_RD_ADDR_DECODE_ERR_STATUS5                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_RD_ADDR_DECODE_ERR_STATUS5                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN7                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN7                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN8                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN8                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN9                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN9                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_ERROR_STATUS                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_ERROR_STATUS                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN10                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN10                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN7                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN7                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN8                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN8                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN9                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN9                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN10                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN10                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN7                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN7                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN8                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN8                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN9                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN9                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN10                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN10                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN7                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN7                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN8                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN8                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN9                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN9                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN10                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN10                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_WR_ADDR_DECODE_ERR_STATUS1                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_WR_ADDR_DECODE_ERR_STATUS1                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_WR_ADDR_DECODE_ERR_STATUS2                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_WR_ADDR_DECODE_ERR_STATUS2                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_WR_ADDR_DECODE_ERR_STATUS3                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_WR_ADDR_DECODE_ERR_STATUS3                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_WR_ADDR_DECODE_ERR_STATUS4                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_WR_ADDR_DECODE_ERR_STATUS4                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_WR_ADDR_DECODE_ERR_STATUS5                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_WR_ADDR_DECODE_ERR_STATUS5                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DCRSW_CFG                                    =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DCRSW_CFG                                                  ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS0                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS0                                              ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS1                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS1                                              ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS2                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS2                                              ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS3                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS3                                              ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS4                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS4                                              ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS5                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS5                                              ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS6                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS6                                              ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS7                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS7                                              ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS8                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS8                                              ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_IF_CHANNEL_STATUS                            =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_IF_CHANNEL_STATUS                                          ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_FIFO_STATUS                                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_FIFO_STATUS                                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_RSPPROC_CREDITS_STATUS                       =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_RSPPROC_CREDITS_STATUS                                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DBG_EVENT_STATUS                             =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DBG_EVENT_STATUS                                           ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DBG_EVENT_FWD                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DBG_EVENT_FWD                                              ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_UNS_ERR_CFG                                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_UNS_ERR_CFG                                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_UNS_ERR_STATUS1                              =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_UNS_ERR_STATUS1                                            ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_UNS_ERR_STATUS2                              =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_UNS_ERR_STATUS2                                            ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_UNS_ERR_STATUS3                              =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_UNS_ERR_STATUS3                                            ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_UNS_ERR_STATUS4                              =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_UNS_ERR_STATUS4                                            ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_UNS_ERR_STATUS5                              =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_UNS_ERR_STATUS5                                            ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN0                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN0                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN1                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN1                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN2                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN2                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN3                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN3                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN4                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN4                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN5                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN5                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN6                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN6                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN0                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN0                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN1                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN1                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN2                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN2                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN3                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN3                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN4                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN4                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN5                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN5                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN6                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN6                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_FF_CLK_ON_CTRL                               =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_FF_CLK_ON_CTRL                                             ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_CTRL                                    =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_CTRL                                                  ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_CLK_CTRL                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_CLK_CTRL                                              ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_WRITE_CONFIG1                           =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_WRITE_CONFIG1                                         ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_WRITE_CONFIG2                           =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_WRITE_CONFIG2                                         ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_WR_ADDR                                 =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_WR_ADDR                                               ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_WR_BIST_SEED_31_0                       =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_WR_BIST_SEED_31_0                                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_WR_BIST_SEED_63_32                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_WR_BIST_SEED_63_32                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_WR_BIST_SEED_95_64                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_WR_BIST_SEED_95_64                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_WR_BIST_SEED_127_96                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_WR_BIST_SEED_127_96                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_READ_CONFIG1                            =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_READ_CONFIG1                                          ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_READ_CONFIG2                            =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_READ_CONFIG2                                          ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_RD_ADDR                                 =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_RD_ADDR                                               ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_RD_BIST_SEED_31_0                       =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_RD_BIST_SEED_31_0                                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_RD_BIST_SEED_63_32                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_RD_BIST_SEED_63_32                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_RD_BIST_SEED_95_64                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_RD_BIST_SEED_95_64                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_RD_BIST_SEED_127_96                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_RD_BIST_SEED_127_96                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_LFSR_TAP_POINT                          =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_LFSR_TAP_POINT                                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_STATUS                                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_STATUS                                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE                                 =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE                                               ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE_0_BITS                          =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE_0_BITS                                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE_1_BITS                          =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE_1_BITS                                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE_2_BITS                          =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE_2_BITS                                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE_3_BITS                          =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE_3_BITS                                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE_4_BITS                          =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE_4_BITS                                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE_5_BITS                          =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE_5_BITS                                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_SPARE                                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_SPARE                                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_TAG_RAM_EXTRA_COL_ACT                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_TAG_RAM_EXTRA_COL_ACT                                 ));
+}
+
+static void __print_spad_broadcast_orlpi_lb_regs(struct iris_hfi_device *device)
+{
+
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_RAM_TIMING0                                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_RAM_TIMING0                                    ));
+	#if 1
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_RAM_TIMING1                                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_RAM_TIMING1                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_RAM_TIMING2                                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_RAM_TIMING2                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCB_SLP_SEL0                                   =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCB_SLP_SEL0                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCB_SLP_NRET_SEL0                              =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCB_SLP_NRET_SEL0                              ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCB_SLP_SEL1                                   =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCB_SLP_SEL1                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCB_SLP_NRET_SEL1                              =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCB_SLP_NRET_SEL1                              ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCB_WAKEUP_SEL0                                =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCB_WAKEUP_SEL0                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCB_WAKEUP_SEL1                                =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCB_WAKEUP_SEL1                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCB_ENABLE                                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCB_ENABLE                                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_RAM_IDLE_THRESHOLD                             =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_RAM_IDLE_THRESHOLD                             ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCB_CMD                                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCB_CMD                                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_COUNTER_SYNC_RATE                              =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_COUNTER_SYNC_RATE                              ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_RAMSLP_STATUS                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_RAMSLP_STATUS                                  ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCB_PWR_STATUS0                                =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCB_PWR_STATUS0                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCB_PWR_STATUS1                                =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCB_PWR_STATUS1                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCB_PWR_STATUS2                                =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCB_PWR_STATUS2                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCB_PWR_STATUS3                                =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCB_PWR_STATUS3                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PRE_ARES_STATUS                                =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PRE_ARES_STATUS                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL0                                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL0                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL1                                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL1                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL2                                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL2                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL3                                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL3                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL4                                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL4                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL5                                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL5                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS0                                 =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS0                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS1                                 =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS1                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS2                                 =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS2                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS3                                 =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS3                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS4                                 =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS4                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS5                                 =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS5                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS6                                 =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS6                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_CLK_EN_CFG                                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_CLK_EN_CFG                                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PRE_ARES_CTRL                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PRE_ARES_CTRL                                  ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_ADDR_REGION_CFG0                               =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_ADDR_REGION_CFG0                               ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_ADDR_REGION_CFG1                               =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_ADDR_REGION_CFG1                               ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_ADDR_REGION_CFG2                               =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_ADDR_REGION_CFG2                               ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_ADDR_REGION_CFG3                               =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_ADDR_REGION_CFG3                               ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_MODE                                   =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_MODE                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_CORE_CLOCK_CTRL                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_CORE_CLOCK_CTRL                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_CFG_CLOCK_CTRL                         =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_CFG_CLOCK_CTRL                         ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_DEBUG_CTRL                             =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_DEBUG_CTRL                             ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_STATUS                                 =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_STATUS                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_CONFIGURATION_INFO                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_CONFIGURATION_INFO                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_0_CONFIG                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_0_CONFIG                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_1_CONFIG                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_1_CONFIG                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_2_CONFIG                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_2_CONFIG                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_3_CONFIG                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_3_CONFIG                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_4_CONFIG                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_4_CONFIG                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_5_CONFIG                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_5_CONFIG                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_6_CONFIG                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_6_CONFIG                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_7_CONFIG                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_7_CONFIG                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_8_CONFIG                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_8_CONFIG                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_9_CONFIG                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_9_CONFIG                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_10_CONFIG                      =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_10_CONFIG                      ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_11_CONFIG                      =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_11_CONFIG                      ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_12_CONFIG                      =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_12_CONFIG                      ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_13_CONFIG                      =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_13_CONFIG                      ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_14_CONFIG                      =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_14_CONFIG                      ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_15_CONFIG                      =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_15_CONFIG                      ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_0_VALUE                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_0_VALUE                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_1_VALUE                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_1_VALUE                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_2_VALUE                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_2_VALUE                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_3_VALUE                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_3_VALUE                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_4_VALUE                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_4_VALUE                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_5_VALUE                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_5_VALUE                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_6_VALUE                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_6_VALUE                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_7_VALUE                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_7_VALUE                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_8_VALUE                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_8_VALUE                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_9_VALUE                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_9_VALUE                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_10_VALUE                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_10_VALUE                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_11_VALUE                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_11_VALUE                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_12_VALUE                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_12_VALUE                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_13_VALUE                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_13_VALUE                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_14_VALUE                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_14_VALUE                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_15_VALUE                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_15_VALUE                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_0_OVERFLOW                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_0_OVERFLOW                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_1_OVERFLOW                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_1_OVERFLOW                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_2_OVERFLOW                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_2_OVERFLOW                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_3_OVERFLOW                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_3_OVERFLOW                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_4_OVERFLOW                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_4_OVERFLOW                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_5_OVERFLOW                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_5_OVERFLOW                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_6_OVERFLOW                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_6_OVERFLOW                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_7_OVERFLOW                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_7_OVERFLOW                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_8_OVERFLOW                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_8_OVERFLOW                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_9_OVERFLOW                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_9_OVERFLOW                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_10_OVERFLOW                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_10_OVERFLOW                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_11_OVERFLOW                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_11_OVERFLOW                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_12_OVERFLOW                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_12_OVERFLOW                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_13_OVERFLOW                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_13_OVERFLOW                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_14_OVERFLOW                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_14_OVERFLOW                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_15_OVERFLOW                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_15_OVERFLOW                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PRED_WAKEUP_EN                                 =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PRED_WAKEUP_EN                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PROF_FILTER_0_CFG                              =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PROF_FILTER_0_CFG                              ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PROF_FILTER_1_CFG                              =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PROF_FILTER_1_CFG                              ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_ECC_ERROR_CFG                              =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_ECC_ERROR_CFG                              ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL                                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL                                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_ECC_ERROR_INJECTION_0                      =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_ECC_ERROR_INJECTION_0                      ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_ECC_ERROR_INJECTION_1                      =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_ECC_ERROR_INJECTION_1                      ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DEBUG_TESTBUS                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DEBUG_TESTBUS                                  ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_HW_EVENT_CTRL                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_HW_EVENT_CTRL                                  ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_INTERRUPT_STATUS                           =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_INTERRUPT_STATUS                           ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_INTERRUPT_ENABLE                           =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_INTERRUPT_ENABLE                           ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_ERROR_STATUS                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_ERROR_STATUS                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN0                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN0                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN1                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN1                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN2                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN2                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN3                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN3                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN4                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN4                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN5                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN5                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN6                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN6                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN0                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN0                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN1                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN1                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN2                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN2                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN3                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN3                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN4                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN4                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN5                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN5                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN6                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN6                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_FIFO_EMPTY_STATUS                          =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_FIFO_EMPTY_STATUS                          ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_FIFO_FULL_STATUS                           =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_FIFO_FULL_STATUS                           ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_ADDR_DECODE_ERR_CFG                            =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_ADDR_DECODE_ERR_CFG                            ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_ADDR_DECODE_ERR_INTERRUPT_STATUS               =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_ADDR_DECODE_ERR_INTERRUPT_STATUS               ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_ADDR_DECODE_ERR_INTERRUPT_ENABLE               =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_ADDR_DECODE_ERR_INTERRUPT_ENABLE               ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_RD_ADDR_DECODE_ERR_STATUS1                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_RD_ADDR_DECODE_ERR_STATUS1                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_RD_ADDR_DECODE_ERR_STATUS2                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_RD_ADDR_DECODE_ERR_STATUS2                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_RD_ADDR_DECODE_ERR_STATUS3                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_RD_ADDR_DECODE_ERR_STATUS3                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_RD_ADDR_DECODE_ERR_STATUS4                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_RD_ADDR_DECODE_ERR_STATUS4                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_RD_ADDR_DECODE_ERR_STATUS5                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_RD_ADDR_DECODE_ERR_STATUS5                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN7                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN7                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN8                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN8                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN9                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN9                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_ERROR_STATUS                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_ERROR_STATUS                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN10                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN10                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN7                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN7                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN8                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN8                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN9                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN9                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN10                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN10                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN7                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN7                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN8                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN8                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN9                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN9                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN10                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN10                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN7                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN7                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN8                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN8                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN9                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN9                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN10                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN10                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_WR_ADDR_DECODE_ERR_STATUS1                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_WR_ADDR_DECODE_ERR_STATUS1                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_WR_ADDR_DECODE_ERR_STATUS2                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_WR_ADDR_DECODE_ERR_STATUS2                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_WR_ADDR_DECODE_ERR_STATUS3                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_WR_ADDR_DECODE_ERR_STATUS3                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_WR_ADDR_DECODE_ERR_STATUS4                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_WR_ADDR_DECODE_ERR_STATUS4                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_WR_ADDR_DECODE_ERR_STATUS5                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_WR_ADDR_DECODE_ERR_STATUS5                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DCRSW_CFG                                      =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DCRSW_CFG                                      ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS0                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS0                                  ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS1                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS1                                  ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS2                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS2                                  ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS3                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS3                                  ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS4                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS4                                  ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS5                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS5                                  ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS6                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS6                                  ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS7                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS7                                  ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS8                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS8                                  ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_IF_CHANNEL_STATUS                              =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_IF_CHANNEL_STATUS                              ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_FIFO_STATUS                                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_FIFO_STATUS                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_RSPPROC_CREDITS_STATUS                         =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_RSPPROC_CREDITS_STATUS                         ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DBG_EVENT_STATUS                               =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DBG_EVENT_STATUS                               ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DBG_EVENT_FWD                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DBG_EVENT_FWD                                  ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_UNS_ERR_CFG                                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_UNS_ERR_CFG                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_UNS_ERR_STATUS1                                =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_UNS_ERR_STATUS1                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_UNS_ERR_STATUS2                                =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_UNS_ERR_STATUS2                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_UNS_ERR_STATUS3                                =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_UNS_ERR_STATUS3                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_UNS_ERR_STATUS4                                =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_UNS_ERR_STATUS4                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_UNS_ERR_STATUS5                                =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_UNS_ERR_STATUS5                                ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN0                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN0                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN1                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN1                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN2                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN2                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN3                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN3                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN4                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN4                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN5                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN5                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN6                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN6                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN0                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN0                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN1                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN1                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN2                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN2                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN3                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN3                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN4                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN4                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN5                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN5                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN6                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN6                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_FF_CLK_ON_CTRL                                 =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_FF_CLK_ON_CTRL                                 ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_CTRL                                      =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_CTRL                                      ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_CLK_CTRL                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_CLK_CTRL                                  ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_WRITE_CONFIG1                             =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_WRITE_CONFIG1                             ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_WRITE_CONFIG2                             =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_WRITE_CONFIG2                             ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_WR_ADDR                                   =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_WR_ADDR                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_WR_BIST_SEED_31_0                         =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_WR_BIST_SEED_31_0                         ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_WR_BIST_SEED_63_32                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_WR_BIST_SEED_63_32                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_WR_BIST_SEED_95_64                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_WR_BIST_SEED_95_64                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_WR_BIST_SEED_127_96                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_WR_BIST_SEED_127_96                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_READ_CONFIG1                              =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_READ_CONFIG1                              ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_READ_CONFIG2                              =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_READ_CONFIG2                              ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_RD_ADDR                                   =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_RD_ADDR                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_RD_BIST_SEED_31_0                         =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_RD_BIST_SEED_31_0                         ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_RD_BIST_SEED_63_32                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_RD_BIST_SEED_63_32                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_RD_BIST_SEED_95_64                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_RD_BIST_SEED_95_64                        ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_RD_BIST_SEED_127_96                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_RD_BIST_SEED_127_96                       ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_LFSR_TAP_POINT                            =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_LFSR_TAP_POINT                            ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_STATUS                                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_STATUS                                    ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE                                   =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE                                   ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE_0_BITS                            =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE_0_BITS                            ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE_1_BITS                            =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE_1_BITS                            ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE_2_BITS                            =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE_2_BITS                            ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE_3_BITS                            =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE_3_BITS                            ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE_4_BITS                            =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE_4_BITS                            ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE_5_BITS                            =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE_5_BITS                            ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_SPARE                                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_SPARE                                     ));
+	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_TAG_RAM_EXTRA_COL_ACT                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_TAG_RAM_EXTRA_COL_ACT                     ));
+	#endif
+}
+static void  __print_spad0_regs(struct iris_hfi_device *device)
+{
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_RAM_TIMING0                               =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_RAM_TIMING0                     ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_RAM_TIMING1                               =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_RAM_TIMING1                     ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_RAM_TIMING2                               =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_RAM_TIMING2                     ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCB_SLP_SEL0                              =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCB_SLP_SEL0                    ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCB_SLP_NRET_SEL0                         =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCB_SLP_NRET_SEL0               ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCB_SLP_SEL1                              =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCB_SLP_SEL1                    ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCB_SLP_NRET_SEL1                         =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCB_SLP_NRET_SEL1               ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCB_WAKEUP_SEL0                           =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCB_WAKEUP_SEL0                 ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCB_WAKEUP_SEL1                           =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCB_WAKEUP_SEL1                 ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCB_ENABLE                                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCB_ENABLE                      ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_RAM_IDLE_THRESHOLD                        =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_RAM_IDLE_THRESHOLD              ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCB_CMD                                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCB_CMD                         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_COUNTER_SYNC_RATE                         =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_COUNTER_SYNC_RATE               ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_RAMSLP_STATUS                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_RAMSLP_STATUS                   ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCB_PWR_STATUS0                           =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCB_PWR_STATUS0                 ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCB_PWR_STATUS1                           =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCB_PWR_STATUS1                 ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCB_PWR_STATUS2                           =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCB_PWR_STATUS2                 ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCB_PWR_STATUS3                           =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCB_PWR_STATUS3                 ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PRE_ARES_STATUS                           =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PRE_ARES_STATUS                 ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DEBUG_CTRL0                               =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DEBUG_CTRL0                     ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DEBUG_CTRL1                               =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DEBUG_CTRL1                     ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DEBUG_CTRL2                               =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DEBUG_CTRL2                     ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DEBUG_CTRL3                               =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DEBUG_CTRL3                     ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DEBUG_CTRL4                               =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DEBUG_CTRL4                     ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DEBUG_CTRL5                               =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DEBUG_CTRL5                     ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCBSLP_STATUS0                            =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCBSLP_STATUS0                  ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCBSLP_STATUS1                            =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCBSLP_STATUS1                  ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCBSLP_STATUS2                            =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCBSLP_STATUS2                  ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCBSLP_STATUS3                            =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCBSLP_STATUS3                  ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCBSLP_STATUS4                            =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCBSLP_STATUS4                  ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCBSLP_STATUS5                            =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCBSLP_STATUS5                  ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCBSLP_STATUS6                            =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCBSLP_STATUS6                  ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_CLK_EN_CFG                                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_CLK_EN_CFG                      ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PRE_ARES_CTRL                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PRE_ARES_CTRL                   ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_ADDR_REGION_CFG0                          =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_ADDR_REGION_CFG0                ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_ADDR_REGION_CFG1                          =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_ADDR_REGION_CFG1                ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_ADDR_REGION_CFG2                          =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_ADDR_REGION_CFG2                ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_ADDR_REGION_CFG3                          =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_ADDR_REGION_CFG3                ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_MODE                              =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_MODE                    ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_CORE_CLOCK_CTRL                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_CORE_CLOCK_CTRL         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_CFG_CLOCK_CTRL                    =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_CFG_CLOCK_CTRL          ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_DEBUG_CTRL                        =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_DEBUG_CTRL              ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_STATUS                            =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_STATUS                  ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_CONFIGURATION_INFO                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_CONFIGURATION_INFO      ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_0_CONFIG                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_0_CONFIG        ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_1_CONFIG                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_1_CONFIG        ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_2_CONFIG                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_2_CONFIG        ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_3_CONFIG                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_3_CONFIG        ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_4_CONFIG                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_4_CONFIG        ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_5_CONFIG                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_5_CONFIG        ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_6_CONFIG                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_6_CONFIG        ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_7_CONFIG                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_7_CONFIG        ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_8_CONFIG                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_8_CONFIG        ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_9_CONFIG                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_9_CONFIG        ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_10_CONFIG                 =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_10_CONFIG       ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_11_CONFIG                 =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_11_CONFIG       ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_12_CONFIG                 =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_12_CONFIG       ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_13_CONFIG                 =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_13_CONFIG       ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_14_CONFIG                 =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_14_CONFIG       ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_15_CONFIG                 =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_15_CONFIG       ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_0_VALUE                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_0_VALUE         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_1_VALUE                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_1_VALUE         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_2_VALUE                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_2_VALUE         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_3_VALUE                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_3_VALUE         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_4_VALUE                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_4_VALUE         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_5_VALUE                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_5_VALUE         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_6_VALUE                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_6_VALUE         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_7_VALUE                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_7_VALUE         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_8_VALUE                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_8_VALUE         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_9_VALUE                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_9_VALUE         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_10_VALUE                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_10_VALUE        ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_11_VALUE                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_11_VALUE        ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_12_VALUE                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_12_VALUE        ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_13_VALUE                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_13_VALUE        ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_14_VALUE                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_14_VALUE        ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_15_VALUE                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_15_VALUE        ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_0_OVERFLOW                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_0_OVERFLOW      ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_1_OVERFLOW                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_1_OVERFLOW      ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_2_OVERFLOW                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_2_OVERFLOW      ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_3_OVERFLOW                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_3_OVERFLOW      ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_4_OVERFLOW                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_4_OVERFLOW      ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_5_OVERFLOW                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_5_OVERFLOW      ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_6_OVERFLOW                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_6_OVERFLOW      ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_7_OVERFLOW                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_7_OVERFLOW      ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_8_OVERFLOW                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_8_OVERFLOW      ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_9_OVERFLOW                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_9_OVERFLOW      ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_10_OVERFLO                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_10_OVERFLOW     ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_11_OVERFLO                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_11_OVERFLOW     ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_12_OVERFLO                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_12_OVERFLOW     ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_13_OVERFLO                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_13_OVERFLOW     ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_14_OVERFLO                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_14_OVERFLOW     ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_15_OVERFLO                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_15_OVERFLOW     ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PRED_WAKEUP_EN                            =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PRED_WAKEUP_EN                  ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PROF_FILTER_0_CFG                         =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PROF_FILTER_0_CFG               ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_PROF_FILTER_1_CFG                         =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PROF_FILTER_1_CFG               ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_ECC_ERROR_CFG                         =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_ECC_ERROR_CFG               ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DEBUG_CTRL                                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DEBUG_CTRL                      ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_ECC_ERROR_INJECTION_0                 =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_ECC_ERROR_INJECTION_0       ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_ECC_ERROR_INJECTION_1                 =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_ECC_ERROR_INJECTION_1       ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DEBUG_TESTBUS                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DEBUG_TESTBUS                   ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_HW_EVENT_CTRL                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_HW_EVENT_CTRL                   ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_INTERRUPT_STATUS                      =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_INTERRUPT_STATUS            ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_INTERRUPT_ENABLE                      =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_INTERRUPT_ENABLE            ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_ERROR_STATUS                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_ERROR_STATUS        ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN0                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN0         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN1                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN1         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN2                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN2         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN3                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN3         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN4                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN4         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN5                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN5         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN6                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN6         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN0                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN0         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN1                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN1         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN2                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN2         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN3                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN3         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN4                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN4         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN5                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN5         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN6                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN6         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_FIFO_EMPTY_STATUS                     =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_FIFO_EMPTY_STATUS           ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_FIFO_FULL_STATUS                      =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_FIFO_FULL_STATUS            ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_ADDR_DECODE_ERR_CFG                       =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_ADDR_DECODE_ERR_CFG             ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_ADDR_DECODE_ERR_INTERRUPT_                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_ADDR_DECODE_ERR_INTERRUPT_STATUS));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_ADDR_DECODE_ERR_INTERRUPT_                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_ADDR_DECODE_ERR_INTERRUPT_ENABLE));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_RD_ADDR_DECODE_ERR_STATUS1                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_RD_ADDR_DECODE_ERR_STATUS1      ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_RD_ADDR_DECODE_ERR_STATUS2                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_RD_ADDR_DECODE_ERR_STATUS2      ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_RD_ADDR_DECODE_ERR_STATUS3                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_RD_ADDR_DECODE_ERR_STATUS3      ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_RD_ADDR_DECODE_ERR_STATUS4                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_RD_ADDR_DECODE_ERR_STATUS4      ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_RD_ADDR_DECODE_ERR_STATUS5                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_RD_ADDR_DECODE_ERR_STATUS5      ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN7                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN7         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN8                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN8         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN9                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN9         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_ERROR_STATUS                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_ERROR_STATUS        ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN10                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN10        ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN7                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN7         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN8                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN8         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN9                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN9         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN10                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN10        ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN7                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN7         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN8                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN8         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN9                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN9         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN10                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN10        ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN7                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN7         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN8                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN8         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN9                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN9         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN10                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN10        ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_WR_ADDR_DECODE_ERR_STATUS1                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_WR_ADDR_DECODE_ERR_STATUS1      ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_WR_ADDR_DECODE_ERR_STATUS2                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_WR_ADDR_DECODE_ERR_STATUS2      ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_WR_ADDR_DECODE_ERR_STATUS3                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_WR_ADDR_DECODE_ERR_STATUS3      ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_WR_ADDR_DECODE_ERR_STATUS4                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_WR_ADDR_DECODE_ERR_STATUS4      ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_WR_ADDR_DECODE_ERR_STATUS5                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_WR_ADDR_DECODE_ERR_STATUS5      ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DCRSW_CFG                                 =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DCRSW_CFG                       ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DCRSW_STATUS0                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DCRSW_STATUS0                   ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DCRSW_STATUS1                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DCRSW_STATUS1                   ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DCRSW_STATUS2                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DCRSW_STATUS2                   ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DCRSW_STATUS3                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DCRSW_STATUS3                   ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DCRSW_STATUS4                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DCRSW_STATUS4                   ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DCRSW_STATUS5                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DCRSW_STATUS5                   ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DCRSW_STATUS6                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DCRSW_STATUS6                   ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DCRSW_STATUS7                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DCRSW_STATUS7                   ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DCRSW_STATUS8                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DCRSW_STATUS8                   ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_IF_CHANNEL_STATUS                         =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_IF_CHANNEL_STATUS               ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_FIFO_STATUS                               =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_FIFO_STATUS                     ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_RSPPROC_CREDITS_STATUS                    =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_RSPPROC_CREDITS_STATUS          ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DBG_EVENT_STATUS                          =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DBG_EVENT_STATUS                ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DBG_EVENT_FWD                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DBG_EVENT_FWD                   ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_UNS_ERR_CFG                               =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_UNS_ERR_CFG                     ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_UNS_ERR_STATUS1                           =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_UNS_ERR_STATUS1                 ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_UNS_ERR_STATUS2                           =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_UNS_ERR_STATUS2                 ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_UNS_ERR_STATUS3                           =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_UNS_ERR_STATUS3                 ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_UNS_ERR_STATUS4                           =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_UNS_ERR_STATUS4                 ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_UNS_ERR_STATUS5                           =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_UNS_ERR_STATUS5                 ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN0                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN0         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN1                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN1         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN2                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN2         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN3                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN3         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN4                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN4         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN5                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN5         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN6                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN6         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN0                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN0         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN1                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN1         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN2                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN2         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN3                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN3         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN4                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN4         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN5                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN5         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN6                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN6         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_FF_CLK_ON_CTRL                            =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_FF_CLK_ON_CTRL                  ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_CTRL                                 =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_CTRL                       ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_CLK_CTRL                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_CLK_CTRL                   ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_WRITE_CONFIG1                        =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_WRITE_CONFIG1              ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_WRITE_CONFIG2                        =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_WRITE_CONFIG2              ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_WR_ADDR                              =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_WR_ADDR                    ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_WR_BIST_SEED_31_0                    =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_WR_BIST_SEED_31_0          ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_WR_BIST_SEED_63_32                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_WR_BIST_SEED_63_32         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_WR_BIST_SEED_95_64                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_WR_BIST_SEED_95_64         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_WR_BIST_SEED_127_96                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_WR_BIST_SEED_127_96        ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_READ_CONFIG1                         =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_READ_CONFIG1               ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_READ_CONFIG2                         =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_READ_CONFIG2               ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_RD_ADDR                              =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_RD_ADDR                    ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_RD_BIST_SEED_31_0                    =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_RD_BIST_SEED_31_0          ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_RD_BIST_SEED_63_32                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_RD_BIST_SEED_63_32         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_RD_BIST_SEED_95_64                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_RD_BIST_SEED_95_64         ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_RD_BIST_SEED_127_96                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_RD_BIST_SEED_127_96        ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_LFSR_TAP_POINT                       =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_LFSR_TAP_POINT             ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_STATUS                               =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_STATUS                     ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_FAILURE                              =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_FAILURE                    ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_FAILURE_0_BITS                       =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_FAILURE_0_BITS             ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_FAILURE_1_BITS                       =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_FAILURE_1_BITS             ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_FAILURE_2_BITS                       =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_FAILURE_2_BITS             ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_FAILURE_3_BITS                       =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_FAILURE_3_BITS             ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_FAILURE_4_BITS                       =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_FAILURE_4_BITS             ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_FAILURE_5_BITS                       =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_FAILURE_5_BITS             ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_SPARE                                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_SPARE                      ));
+	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_TAG_RAM_EXTRA_COL_ACT                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_TAG_RAM_EXTRA_COL_ACT      ));
+}
+
 static void __print_sidebandmanager_regs(struct iris_hfi_device *device)
 {
 	u32 sbm_ln0_low, axi_cbcr;
@@ -4874,7 +5925,6 @@ static int __unregister_for_MMCX(struct iris_hfi_device *device)
 static int __power_off_controller(struct iris_hfi_device *device)
 {
 	u32 lpi_status, reg_status = 0, count = 0, max_count = 1000;
-
 
 	/* HPG 6.2.2 Step 1  */
 	__write_register(device, CVP_CPU_CS_X2RPMh, 0x3);
@@ -5998,6 +7048,10 @@ void cvp_iris_hfi_delete_device(void *device)
 	iounmap(dev->cvp_hal_data->register_base);
 	iounmap(dev->cvp_hal_data->gcc_reg_base);
 	iounmap(dev->cvp_hal_data->aon_reg_base);
+	iounmap(dev->cvp_hal_data->spad0_lpi_lb_reg_base);
+	iounmap(dev->cvp_hal_data->spad1_lpi_lb_reg_base);
+	iounmap(dev->cvp_hal_data->spad_broadcast_orlpi_lb_reg_base);
+	iounmap(dev->cvp_hal_data->spad_broadcast_andlpi_lb_reg_base);
 	kfree(dev->cvp_hal_data);
 	kfree(dev->response_pkt);
 	kfree(dev->raw_packet);

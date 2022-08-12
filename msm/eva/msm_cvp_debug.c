@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/debugfs.h>
@@ -43,6 +43,7 @@ int msm_cvp_minidump_enable = 1;
 bool msm_cvp_noc_enable = true;
 bool lsr_session_enabled = false;
 int msm_cvp_hw_wd_recovery = 1;
+int msm_cvp_spad_reg_dump = 0;
 #define MAX_DBG_BUF_SIZE 4096
 
 struct cvp_core_inst_pair {
@@ -308,6 +309,7 @@ struct dentry *msm_cvp_debugfs_init_drv(void)
 	debugfs_create_u32("fw_low_power_mode", 0644, dir,
 		&msm_cvp_fw_low_power_mode);
 	debugfs_create_u32("debug_output", 0644, dir, &msm_cvp_debug_out);
+	debugfs_create_u32("spad_reg_dump", 0644, dir, &msm_cvp_spad_reg_dump);
 	debugfs_create_u32("minidump_enable", 0644, dir,
 			&msm_cvp_minidump_enable);
 	debugfs_create_bool("fw_coverage", 0644, dir, &msm_cvp_fw_coverage);

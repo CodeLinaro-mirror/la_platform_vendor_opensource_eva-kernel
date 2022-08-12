@@ -198,9 +198,17 @@ struct cvp_hal_data {
 	u8 __iomem *register_base;
 	u8 __iomem *gcc_reg_base;
 	u8 __iomem *aon_reg_base;
+	u8 __iomem *spad0_lpi_lb_reg_base;
+	u8 __iomem *spad1_lpi_lb_reg_base;
+	u8 __iomem *spad_broadcast_orlpi_lb_reg_base;
+	u8 __iomem *spad_broadcast_andlpi_lb_reg_base;
 	u32 register_size;
 	u32 gcc_reg_size;
 	u32 aon_reg_size;
+	u32 spad0_lpi_lb_reg_size;
+	u32 spad1_lpi_lb_reg_size;
+	u32 spad_broadcast_orlpi_lb_reg_size;
+	u32 spad_broadcast_andlpi_lb_reg_size;
 };
 
 struct iris_resources {
