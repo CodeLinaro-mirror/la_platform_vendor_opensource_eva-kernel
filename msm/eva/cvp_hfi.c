@@ -1049,9 +1049,9 @@ static inline int __boot_firmware(struct iris_hfi_device *device)
 	else
 		dprintk(CVP_CORE, "Power off CORE GDSCR Success: %x, loop count %d \n", reg_gdsc, loop);
 
-	ctrl_init_val = BIT(0) + BIT(1) + BIT(2) + BIT(3);      // Halliday change
+	ctrl_init_val = BIT(0) + BIT(2) + BIT(3);
 	__write_register(device, CVP_CTRL_INIT, ctrl_init_val);
-	while (!(ctrl_status&1) && count < max_tries) {
+	while (!ctrl_status && count < max_tries) {
 		ctrl_status = __read_register(device, CVP_CTRL_STATUS);
 		if ((ctrl_status & CVP_CTRL_ERROR_STATUS__M) == 0x4) {
 			dprintk(CVP_ERR, "invalid setting for UC_REGION\n");
@@ -1389,7 +1389,6 @@ static void __interface_dsp_queues_release(struct iris_hfi_device *device)
 	device->dsp_iface_q_table.align_device_addr = 0;
 }
 
-#ifndef HALLIDAY_BRINGUP
 static int __interface_dsp_queues_init(struct iris_hfi_device *dev)
 {
 	int rc = 0;
@@ -1463,7 +1462,6 @@ fail_dma_map:
 fail_dma_alloc:
 	return -ENOMEM;
 }
-#endif
 
 static void __interface_queues_release(struct iris_hfi_device *device)
 {
@@ -1593,7 +1591,7 @@ static void __setup_ucregion_memory_map(struct iris_hfi_device *device)
 	if (device->qdss.align_device_addr)
 		__write_register(device, CVP_MMAP_ADDR,
 				(u32)device->qdss.align_device_addr);
-	// call_iris_op(device, setup_dsp_uc_memmap, device);	//TODO: Aurora-BU
+	call_iris_op(device, setup_dsp_uc_memmap, device);
 }
 
 static int __interface_queues_init(struct iris_hfi_device *dev)
@@ -1736,13 +1734,11 @@ static int __interface_queues_init(struct iris_hfi_device *dev)
 	if (vsfr)
 		vsfr->bufSize = ALIGNED_SFR_SIZE;
 
-	#ifndef HALLIDAY_BRINGUP
 	rc = __interface_dsp_queues_init(dev);
 	if (rc) {
 		dprintk(CVP_ERR, "dsp_queues_init failed\n");
 		goto fail_alloc_queue;
 	}
-	#endif
 
 	#ifndef HALLIDAY_DISABLE
 	rc = __interface_gpu_init();
@@ -2037,9 +2033,7 @@ static int iris_hfi_core_init(void *device)
 pm_qos_bail:
 	mutex_unlock(&dev->lock);
 
-	#ifndef HALLIDAY_BRINGUP
 	cvp_dsp_send_hfi_queue();
-	#endif
 
 	pm_relax(dev->res->pdev->dev.parent);
 	dprintk(CVP_CORE, "Core inited successfully\n");

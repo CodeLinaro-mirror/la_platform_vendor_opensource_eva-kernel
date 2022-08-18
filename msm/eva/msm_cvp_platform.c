@@ -95,7 +95,7 @@ static struct msm_cvp_common_data sm8450_common_data[] = {
 	},
 	{
 		.key = "qcom,dsp-enabled",
-		.value = 0,     //1 TODO: Aurora_BU
+		.value = 1,
 	}
 };
 
