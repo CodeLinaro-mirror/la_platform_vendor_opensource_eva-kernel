@@ -4128,8 +4128,11 @@ static int __power_off_controller(struct iris_hfi_device *device)
 			"Core NOC not in qaccept status %x %x %x %x\n",
 			reg_status, lpi_status, wfi_status, pc_ready);
 
-		__print_sidebandmanager_regs(device);
+		// __print_sidebandmanager_regs(device);
 	}
+
+
+    /* HPG 6.2.2 Step 3, Set Iris CPU NoC to Low power */
 
 	/* New addition to put CPU/Tensilica to low power */
 	reg_status = 0;
@@ -4158,13 +4161,34 @@ static int __power_off_controller(struct iris_hfi_device *device)
 			"CPU NOC not in qaccept status %x %x %x %x\n",
 			reg_status, lpi_status, wfi_status, pc_ready);
 
-		__print_sidebandmanager_regs(device);
+		// __print_sidebandmanager_regs(device);
 	}
 
 
-	/* HPG 6.2.2 Step 3, debug bridge to low power BYPASSED */
+	/* HPG 6.2.2 Step 4, debug bridge to low power */
 
-	/* HPG 6.2.2 Step 4, debug bridge to lpi release */
+	__write_register(device,
+		CVP_WRAPPER_DEBUG_BRIDGE_LPI_CONTROL, 0x7);
+
+	reg_status = 0;
+	count = 0;
+	while ((reg_status != 0x7) && count < max_count) {
+		lpi_status = __read_register(device,
+			CVP_WRAPPER_DEBUG_BRIDGE_LPI_STATUS);
+		reg_status = lpi_status & 0x7;
+		// Wait for debug bridge lpi status to be set
+		usleep_range(50, 100);
+		count++;
+	}
+	dprintk(CVP_PWR,
+		"DBLP Set : lpi_status %d reg_status %d (count %d)\n",
+		lpi_status, reg_status, count);
+	if (count == max_count) {
+		dprintk(CVP_WARN,
+			"DBLP Set: status %x %x\n", reg_status, lpi_status);
+	}
+
+	/* HPG 6.2.2 Step 5, debug bridge to lpi release */
 	__write_register(device,
 		CVP_WRAPPER_DEBUG_BRIDGE_LPI_CONTROL, 0x0);
 	lpi_status = 0x1;
@@ -4183,17 +4207,14 @@ static int __power_off_controller(struct iris_hfi_device *device)
 			"DBLP Release: lpi_status %x\n", lpi_status);
 	}
 
-	/* PDXFIFO reset: addition for Kailua */
-#ifdef CONFIG_EVA_KALAMA
+	/* HPG 6.2.2 Step 6, PDXFIFO reset */
 	__write_register(device, CVP_WRAPPER_AXI_CLOCK_CONFIG, 0x3);
 	__write_register(device, CVP_WRAPPER_QNS4PDXFIFO_RESET, 0x1);
 	__write_register(device, CVP_WRAPPER_QNS4PDXFIFO_RESET, 0x0);
 	__write_register(device, CVP_WRAPPER_AXI_CLOCK_CONFIG, 0x0);
-#endif
-	/* HPG 6.2.2 Step 5 */
-	msm_cvp_disable_unprepare_clk(device, "cvp_clk");
 
 	/* HPG 6.2.2 Step 7 */
+	msm_cvp_disable_unprepare_clk(device, "cvp_clk");
 	msm_cvp_disable_unprepare_clk(device, "gcc_video_axi1");
 
 	/* Added to avoid pending transaction after power off */
@@ -4201,7 +4222,7 @@ static int __power_off_controller(struct iris_hfi_device *device)
 	if (rc)
 		dprintk(CVP_ERR, "Off: Failed to reset ahb2axi: %d\n", rc);
 
-	/* HPG 6.2.2 Step 6 */
+	/* HPG 6.2.2 Step 8, Controller collapse */
 	__disable_regulator(device, "cvp");
 
 	return 0;
