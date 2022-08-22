@@ -345,4 +345,5 @@
 #define CVP_GCC_VIDEO_AXI1_CBCR           (0x32024)
 #define GCC_IRIS_SS_HF_AXI1_CBCR          (0x32030)
 #define GCC_IRIS_SS_SPD_AXI1_CBCR         (0x60020)
+#define GCC_DDRSS_SPAD_CBCR         	(0x60000)
 #endif
