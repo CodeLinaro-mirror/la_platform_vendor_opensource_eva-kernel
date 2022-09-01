@@ -857,6 +857,8 @@ int msm_cvp_map_frame(struct msm_cvp_inst *inst,
 
 	return 0;
 }
+
+#ifndef HALLIDAY_DISABLE
 int msm_cvp_map_frame_lsr(struct msm_cvp_inst *inst,
 		struct eva_kmd_hfi_packet *in_pkt,
 		unsigned int offset, unsigned int buf_num)
@@ -938,6 +940,8 @@ int msm_cvp_map_frame_lsr(struct msm_cvp_inst *inst,
 	dprintk(CVP_MEM, "%s: map frame %llu\n", __func__, ktid);
 	return 0;
 }
+#endif
+
 int msm_cvp_session_deinit_buffers(struct msm_cvp_inst *inst)
 {
 	int rc = 0, i;

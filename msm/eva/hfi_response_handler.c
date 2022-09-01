@@ -596,6 +596,7 @@ static int hfi_process_sys_property_info(u32 device_id,
 	}
 
 }
+#ifndef HALLIDAY_DISABLE
 static int hfi_process_sys_gmu_stop_done(u32 device_id,
 	void *hdr, struct msm_cvp_cb_info *info)
 {
@@ -639,6 +640,7 @@ static int hfi_process_sys_gmu_start_done(u32 device_id,
 	info->response.cmd = cmd_done;
 	return 0;
 }
+#endif
 int cvp_hfi_process_msg_packet(u32 device_id, void *hdr,
 			struct msm_cvp_cb_info *info)
 {
@@ -684,12 +686,14 @@ int cvp_hfi_process_msg_packet(u32 device_id, void *hdr,
 	case HFI_MSG_EVENT_NOTIFY_SNAPSHOT_READY:
 		pkt_func = (pkt_func_def)hfi_process_session_dump_notify;
 		break;
+#ifndef HALLIDAY_DISABLE
 	case HFI_MSG_SYS_STOP_GMU_CMD_DONE:
 		pkt_func = (pkt_func_def)hfi_process_sys_gmu_stop_done;
 		break;
 	case HFI_MSG_SYS_START_GMU_CMD_DONE:
 		pkt_func = (pkt_func_def)hfi_process_sys_gmu_start_done;
 		break;
+#endif
 	default:
 		dprintk(CVP_HFI, "Use default msg handler: %#x\n",
 				msg_hdr->packet);

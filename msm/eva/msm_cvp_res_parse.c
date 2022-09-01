@@ -137,6 +137,7 @@ static int msm_cvp_load_ipcc_regs(struct msm_cvp_platform_resources *res)
 static int msm_cvp_load_regspace_mapping(struct msm_cvp_platform_resources *res)
 {
 	int ret = 0;
+    #ifndef HALLIDAY_DISABLE
 	unsigned int uncached_mapping_config[2];
     unsigned int device_mapping_config[2];
     unsigned int ipclite_mapping_config[3];
@@ -148,6 +149,7 @@ static int msm_cvp_load_regspace_mapping(struct msm_cvp_platform_resources *res)
     unsigned int aontimers_config[3];
 
 	struct platform_device *pdev = res->pdev;
+    #endif
 
     //Uncached Memory Mappings
 //	ret = of_property_read_u32_array(pdev->dev.of_node, "uncached_mapping",

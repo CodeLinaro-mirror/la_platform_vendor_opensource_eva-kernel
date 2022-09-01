@@ -109,8 +109,10 @@ static inline char *get_debug_level_str(int level)
 		return "pkt";
 	case CVP_MEM:
 		return "mem";
+	#ifndef DISABLE_SYNX
 	case CVP_SYNX:
 		return "synx";
+	#endif
 	case CVP_CORE:
 		return "core";
 	case CVP_REG:

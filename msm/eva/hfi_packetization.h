@@ -43,9 +43,11 @@ struct cvp_hfi_packetization_ops {
 			struct cvp_hfi_cmd_sys_get_property_packet *pkt);
 	int (*sys_ubwc_config)(struct cvp_hfi_cmd_sys_set_property_packet *pkt,
 		struct msm_cvp_ubwc_config_data *ubwc_config);
+#ifndef HALLIDAY_DISABLE
 	int (*sys_gpu_cmd_prep)(
 		struct cvp_hfi_cmd_sys_gpu_packet *pkt,
 		u32 packet_type);
+#endif
 	int (*ssr_cmd)(enum hal_ssr_trigger_type type,
 		struct cvp_hfi_cmd_sys_test_ssr_packet *pkt);
 	int (*session_init)(

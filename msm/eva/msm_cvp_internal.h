@@ -23,7 +23,9 @@
 #include <media/msm_eva_private.h>
 #include "cvp_hfi_api.h"
 #include "cvp_hfi_helper.h"
-#include <synx_api.h>
+#ifndef DISABLE_SYNX
+	#include <synx_api.h>
+#endif
 
 #define MAX_SUPPORTED_INSTANCES 16
 #define MAX_DEBUGFS_NAME 50
@@ -403,12 +405,14 @@ struct msm_cvp_inst {
 	u32 error_code;
 	/* prev_error_code saves value of error_code before it's cleared */
 	u32 prev_error_code;
+    #ifndef DISABLE_SYNX
 	#if IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX)
 	struct synx_session synx_session_id;
 	#elif IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX_V2)
 	struct synx_session *synx_session_id;
 	#endif
 	struct cvp_fence_queue fence_cmd_queue;
+    #endif
 };
 
 extern struct msm_cvp_drv *cvp_driver;

@@ -16,8 +16,10 @@
 #include "msm_cvp.h"
 #include "cvp_core_hfi.h"
 #include <linux/notifier.h>
+#ifndef HALLIDAY_DISABLE
 #include <linux/msm_kgsl.h>
 #include "msm_gpu_eva.h"
+#endif
 
 #define IS_ALREADY_IN_STATE(__p, __d) (\
 	(__p >= __d)\
@@ -1356,6 +1358,8 @@ void msm_cvp_ssr_handler(struct work_struct *work)
 		return;
 	}
 	hdev = core->device;
+
+    #ifndef HALLIDAY_DISABLE
 	/*
 	 * To validate GPU SSR Flow by triggering
 	 * GPU SSR from Debug node
@@ -1369,6 +1373,8 @@ void msm_cvp_ssr_handler(struct work_struct *work)
 		}
 		return;
 	}
+    #endif
+
 	if (core->ssr_type == SSR_SESSION_ABORT) {
 		struct msm_cvp_inst *inst = NULL, *s;
 

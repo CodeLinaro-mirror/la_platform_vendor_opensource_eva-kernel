@@ -74,7 +74,9 @@ enum hal_ssr_trigger_type {
 	SSR_SW_DIV_BY_ZERO,
 	SSR_HW_WDOG_IRQ,
 	SSR_SESSION_ABORT,
+    #ifndef HALLIDAY_DISABLE
 	SSR_GPU,
+    #endif
 };
 
 enum hal_intra_refresh_mode {
@@ -269,7 +271,9 @@ struct cvp_hfi_device {
 	int (*noc_error_info)(void *dev);
 	int (*validate_session)(void *sess, const char *func);
 	int (*pm_qos_update)(void *device);
+    #ifndef HALLIDAY_DISABLE
 	int (*notify_gpu_status)(void *device, u32 packet_type);
+    #endif
 };
 
 typedef void (*hfi_cmd_response_callback) (enum hal_command_response cmd,

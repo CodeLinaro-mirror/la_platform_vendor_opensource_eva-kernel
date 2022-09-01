@@ -84,6 +84,7 @@ static int __init_session_queue(struct msm_cvp_inst *inst)
 	return 0;
 }
 
+#ifndef DISABLE_SYNX
 static void __init_fence_queue(struct msm_cvp_inst *inst)
 {
 	mutex_init(&inst->fence_cmd_queue.lock);
@@ -106,6 +107,7 @@ static void __deinit_fence_queue(struct msm_cvp_inst *inst)
 	inst->fence_cmd_queue.state = QUEUE_INVALID;
 	inst->fence_cmd_queue.mode = OP_INVALID;
 }
+#endif
 
 static void __deinit_session_queue(struct msm_cvp_inst *inst)
 {
@@ -205,7 +207,9 @@ void *msm_cvp_open(int core_id, int session_type)
 	mutex_unlock(&core->clk_lock);
 	mutex_unlock(&core->lock);
 
+	#ifndef DISABLE_SYNX
 	__init_fence_queue(inst);
+	#endif
 
 	rc = __init_session_queue(inst);
 	if (rc)
@@ -224,7 +228,11 @@ void *msm_cvp_open(int core_id, int session_type)
 	return inst;
 fail_init:
 	__deinit_session_queue(inst);
+
+	#ifndef DISABLE_SYNX
 	__deinit_fence_queue(inst);
+	#endif
+
 	mutex_lock(&core->lock);
 	list_del(&inst->list);
 	mutex_unlock(&core->lock);
@@ -269,7 +277,10 @@ static void msm_cvp_cleanup_instance(struct msm_cvp_inst *inst)
 	bool empty;
 	int max_retries;
 	struct msm_cvp_frame *frame;
-	struct cvp_session_queue *sq, *sqf;
+	struct cvp_session_queue *sq;
+	#ifndef DISABLE_SYNX
+	struct cvp_session_queue *sqf;
+	#endif
 	struct cvp_hfi_device *hdev;
 
 	if (!inst) {
@@ -277,7 +288,9 @@ static void msm_cvp_cleanup_instance(struct msm_cvp_inst *inst)
 		return;
 	}
 
+	#ifndef DISABLE_SYNX
 	sqf = &inst->session_queue_fence;
+	#endif
 	sq = &inst->session_queue;
 
 	max_retries =  inst->core->resources.msm_cvp_hw_rsp_timeout >> 5;
@@ -305,7 +318,9 @@ wait:
 	if (!empty && max_retries > 0) {
 		mutex_unlock(&inst->frames.lock);
 		usleep_range(1000, 2000);
+		#ifndef DISABLE_SYNX
 		msm_cvp_clean_sess_queue(inst, sqf);
+		#endif
 		msm_cvp_clean_sess_queue(inst, sq);
 		max_retries--;
 		goto wait;
@@ -320,7 +335,9 @@ wait:
 			dprintk(CVP_WARN, "Unprocessed frame %d\n",
 				frame->pkt_type);
 		mutex_unlock(&inst->frames.lock);
+		#ifndef DISABLE_SYNX
 		cvp_dump_fence_queue(inst);
+		#endif
 	}
 
 	if (cvp_release_arp_buffers(inst))
@@ -372,8 +389,10 @@ int msm_cvp_destroy(struct msm_cvp_inst *inst)
 	msm_cvp_debugfs_deinit_inst(inst);
 
 	__deinit_session_queue(inst);
+	#ifndef DISABLE_SYNX
 	__deinit_fence_queue(inst);
 	cvp_sess_deinit_synx(inst);
+	#endif
 
 	pr_info(CVP_DBG_TAG "Closed cvp instance: %pK session_id = %d\n",
 		"sess", inst, hash32_ptr(inst->session));

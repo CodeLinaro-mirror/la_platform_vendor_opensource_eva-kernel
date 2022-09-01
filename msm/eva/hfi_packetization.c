@@ -425,6 +425,7 @@ int cvp_create_pkt_cmd_sys_image_version(
 	return 0;
 }
 
+#ifndef HALLIDAY_DISABLE
 int cvp_create_pkt_cmd_sys_gpu_status (
 	struct cvp_hfi_cmd_sys_gpu_packet *pkt, u32 packet_type)
 {
@@ -437,6 +438,7 @@ int cvp_create_pkt_cmd_sys_gpu_status (
 	pkt->packet_type = packet_type;
 	return 0;
 }
+#endif
 
 static struct cvp_hfi_packetization_ops hfi_default = {
 	.sys_init = cvp_create_pkt_cmd_sys_init,
@@ -457,7 +459,9 @@ static struct cvp_hfi_packetization_ops hfi_default = {
 	.session_release_buffers =
 		cvp_create_pkt_cmd_session_release_buffers,
 	.session_send = cvp_create_pkt_cmd_session_send,
+    #ifndef HALLIDAY_DISABLE
 	.sys_gpu_cmd_prep = cvp_create_pkt_cmd_sys_gpu_status,
+    #endif
 };
 
 struct cvp_hfi_packetization_ops *cvp_hfi_get_pkt_ops_handle(

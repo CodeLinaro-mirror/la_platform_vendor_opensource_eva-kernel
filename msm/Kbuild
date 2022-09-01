@@ -25,6 +25,29 @@ KBUILD_CPPFLAGS += -DCONFIG_EVA_KALAMA=1
 ccflags-y += -DCONFIG_EVA_KALAMA=1
 endif
 
+ifeq ($(CONFIG_ARCH_NEO), y)
+# include $(EVA_ROOT)/config/neoeva.conf
+# LINUXINCLUDE    += -include $(EVA_ROOT)/config/neoevaconf.h
+
+$(info within KBUILD file CONFIG_ARCH_NEO = $(CONFIG_ARCH_NEO))
+# include $(EVA_ROOT)/config/waipio.mk
+KBUILD_CPPFLAGS += -DCONFIG_EVA_NEO=1
+ccflags-y += -DCONFIG_EVA_NEO=1
+endif
+
+ifeq ($(CONFIG_ARCH_ANORAK), y)
+# include $(EVA_ROOT)/config/neoeva.conf
+# LINUXINCLUDE    += -include $(EVA_ROOT)/config/neoevaconf.h
+
+$(info within KBUILD file CONFIG_ARCH_ANORAK = $(CONFIG_ARCH_ANORAK))
+# include $(EVA_ROOT)/config/waipio.mk
+KBUILD_CPPFLAGS += -DCONFIG_EVA_ANORAK=1
+ccflags-y += -DCONFIG_EVA_ANORAK=1
+endif
+
+KBUILD_CPPFLAGS += -DHALLIDAY_DISABLE=1
+KBUILD_CPPFLAGS += -DHALLIDAY_BRINGUP=1
+
 msm-eva-objs := eva/cvp.o \
         eva/msm_cvp_ioctl.o \
         eva/msm_cvp_platform.o \

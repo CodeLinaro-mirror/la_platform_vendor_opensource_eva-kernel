@@ -12,15 +12,15 @@
 
 #define CREATE_TRACE_POINTS
 #define MAX_SSR_STRING_LEN 10
-int msm_cvp_debug = 0x007FFF; //CVP_ERR | CVP_WARN | CVP_FW;  TODO: AURORA-BU
+int msm_cvp_debug = 0x7FFF; //CVP_ERR | CVP_WARN | CVP_FW; // TODO: HALLIDAY
 EXPORT_SYMBOL(msm_cvp_debug);
 
 int msm_cvp_debug_out = CVP_OUT_PRINTK;
 EXPORT_SYMBOL(msm_cvp_debug_out);
 
-int msm_cvp_fw_debug = 0x80003F;  //0x18 TODO: AURORA-BU
+int msm_cvp_fw_debug = 0x80003F; //0x18;  // TODO: HALLIDAY
 int msm_cvp_fw_debug_mode = 1;
-int msm_cvp_fw_low_power_mode = 1;
+int msm_cvp_fw_low_power_mode = 0;
 bool msm_cvp_fw_coverage = !true;
 bool msm_cvp_cacheop_enabled = true;
 bool msm_cvp_thermal_mitigation_disabled = !true;

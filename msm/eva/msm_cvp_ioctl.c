@@ -41,6 +41,7 @@ set_default_pkt_hdr:
 	return 0;
 }
 
+#ifndef DISABLE_SYNX
 static int _get_fence_pkt_hdr_from_user(struct eva_kmd_arg __user *up,
 		struct cvp_hal_session_cmd_pkt *pkt_hdr)
 {
@@ -59,6 +60,7 @@ static int _get_fence_pkt_hdr_from_user(struct eva_kmd_arg __user *up,
 
 	return 0;
 }
+#endif
 
 /* Size is in unit of u32 */
 static int _copy_pkt_from_user(struct eva_kmd_arg *kp,
@@ -77,6 +79,7 @@ static int _copy_pkt_from_user(struct eva_kmd_arg *kp,
 	return 0;
 }
 
+#ifndef DISABLE_SYNX
 static int _copy_synx_data_from_user(
 	struct eva_kmd_hfi_synx_packet *k,
 	struct eva_kmd_hfi_synx_packet __user *u)
@@ -90,7 +93,9 @@ static int _copy_synx_data_from_user(
 
 	return 0;
 }
+#endif
 
+#ifndef DISABLE_SYNX
 /* Size is in unit of u32 */
 static int _copy_fence_data_from_user_deprecate(
 	struct eva_kmd_hfi_fence_packet *k,
@@ -135,6 +140,7 @@ static int _copy_fence_pkt_from_user(struct eva_kmd_arg *kp,
 		return _copy_fence_data_from_user_deprecate(
 				(struct eva_kmd_hfi_fence_packet *)k, u1);
 }
+#endif
 
 static int _copy_frameid_from_user(struct eva_kmd_arg *kp,
 		struct eva_kmd_arg __user *up)
@@ -183,6 +189,7 @@ static int _copy_pkt_to_user(struct eva_kmd_arg *kp,
 	return 0;
 }
 
+#ifndef DISABLE_SYNX
 static int _copy_fence_pkt_to_user(struct eva_kmd_arg *kp,
 		struct eva_kmd_arg __user *up)
 {
@@ -199,6 +206,7 @@ static int _copy_fence_pkt_to_user(struct eva_kmd_arg *kp,
 
 	return 0;
 }
+#endif
 
 static int _copy_sysprop_to_user(struct eva_kmd_arg *kp,
 		struct eva_kmd_arg __user *up)
@@ -287,7 +295,9 @@ static int convert_from_user(struct eva_kmd_arg *kp,
 	int i;
 	struct eva_kmd_arg __user *up = (struct eva_kmd_arg *)arg;
 	struct cvp_hal_session_cmd_pkt pkt_hdr;
+	#ifndef DISABLE_SYNX
 	int pkt_idx;
+	#endif
 
 	if (!kp || !up) {
 		dprintk(CVP_ERR, "%s: invalid params\n", __func__);
@@ -369,6 +379,7 @@ static int convert_from_user(struct eva_kmd_arg *kp,
 	}
 	case EVA_KMD_SEND_FENCE_CMD_PKT:
 	{
+		#ifndef DISABLE_SYNX
 		if (_get_fence_pkt_hdr_from_user(up, &pkt_hdr)) {
 			dprintk(CVP_ERR, "Invalid syscall: %x, %x, %x\n",
 				kp->type, pkt_hdr.size, pkt_hdr.packet_type);
@@ -387,6 +398,8 @@ static int convert_from_user(struct eva_kmd_arg *kp,
 		}
 
 		rc = _copy_fence_pkt_from_user(kp, up);
+		#endif
+
 		break;
 	}
 	case EVA_KMD_RECEIVE_MSG_PKT:
@@ -546,6 +559,7 @@ static int convert_to_user(struct eva_kmd_arg *kp, unsigned long arg)
 	}
 	case EVA_KMD_SEND_FENCE_CMD_PKT:
 	{
+		#ifndef DISABLE_SYNX
 		if (_get_fence_pkt_hdr_from_user(up, &pkt_hdr))
 			return -EFAULT;
 
@@ -553,6 +567,7 @@ static int convert_to_user(struct eva_kmd_arg *kp, unsigned long arg)
 				pkt_hdr.size, pkt_hdr.packet_type);
 
 		rc = _copy_fence_pkt_to_user(kp, up);
+		#endif
 		break;
 	}
 	case EVA_KMD_SESSION_CONTROL:

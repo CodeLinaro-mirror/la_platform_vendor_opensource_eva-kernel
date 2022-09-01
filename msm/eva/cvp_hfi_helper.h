@@ -503,6 +503,7 @@ struct cvp_hfi_msg_sys_session_flush_done_packet {
 	struct cvp_hfi_client client_data;
 };
 
+#ifndef HALLIDAY_DISABLE
 struct cvp_hfi_cmd_sys_gpu_packet {
 	u32 size;
 	u32 packet_type;
@@ -517,5 +518,5 @@ struct cvp_hfi_msg_sys_gpu_packet {
 	struct cvp_hfi_client client_data;
 	u32 reserved;
 }__packed;
-
+#endif
 #endif

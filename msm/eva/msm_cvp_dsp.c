@@ -44,6 +44,7 @@ static int __fastrpc_driver_invoke(struct fastrpc_device *dev,
 #ifdef CVP_FASTRPC_ENABLED
 	return fastrpc_driver_invoke(dev, invoke_num, invoke_param);
 #else
+	dprintk(CVP_ERR, "%s: CVP_FASTRPC_ENABLED is disabled, erroring out! \n", __func__);
 	return -ENODEV;
 #endif
 }
@@ -1207,6 +1208,7 @@ void cvp_dsp_send_hfi_queue(void)
         dprintk(CVP_DSP, "%s: Either DSP is not probed or is not in proper state. me->state = %d\n", __func__, me->state);
         goto exit;
     }
+    dprintk(CVP_DSP, "%s: DSP probe Successful, going ahead with hyp_assign, me->state = %d\n", __func__, me->state);
 
 	rc = cvp_hyp_assign_to_dsp(addr, size);
 	if (rc) {
