@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/dma-direction.h>
@@ -271,7 +272,36 @@ static void msm_cvp_clean_sess_queue(struct msm_cvp_inst *inst,
 	}
 	spin_unlock(&sq->lock);
 }
+static int msm_cvp_session_stop_notify(struct msm_cvp_inst *inst)
+{
+	int rc = 0;
+	struct msm_cvp_core *core;
+	struct cvp_hfi_device *hdev;
+	if (!inst) {
+		dprintk(CVP_ERR, "Invalid instance pointer = %pK\n", inst);
+		return -EINVAL;
+	}
 
+	core = inst->core;
+	if (!core) {
+		dprintk(CVP_ERR, "Invalid core pointer = %pK\n", core);
+		return -EINVAL;
+	}
+	hdev = core->device;
+	if (!hdev) {
+		dprintk(CVP_ERR, "Invalid device pointer = %pK\n", hdev);
+		return -EINVAL;
+	}
+
+	if (inst->state <= MSM_CVP_CLOSE_DONE) {
+		rc = call_hfi_op(hdev, session_stop,
+				(void *)inst->session);
+		if(rc){
+			dprintk(CVP_ERR, "Failed to send stop session cmd\n");
+		}
+	}
+	return rc;
+}
 static void msm_cvp_cleanup_instance(struct msm_cvp_inst *inst)
 {
 	bool empty;
@@ -411,6 +441,10 @@ int msm_cvp_close(void *instance)
 	}
 
 	if (inst->session_type != MSM_CVP_BOOT) {
+		if (inst->prop.type == HFI_SESSION_LSR){
+			msm_cvp_session_stop_notify(inst);
+			dprintk(CVP_WARN, "%s: LSR session sending stop\n", __func__);
+		}
 		msm_cvp_cleanup_instance(inst);
 		msm_cvp_session_deinit(inst);
 	}

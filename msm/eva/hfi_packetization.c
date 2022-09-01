@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "hfi_packetization.h"
@@ -340,6 +341,22 @@ int cvp_create_pkt_cmd_session_release_buffers(
 
 	return 0;
 }
+int cvp_create_pkt_cmd_session_stop(
+		void *cmd,
+		struct cvp_hal_session *session)
+{
+	struct cvp_session_stop_packet *pkt;
+
+	if (!cmd || !session)
+		return -EINVAL;
+
+	pkt = (struct cvp_session_stop_packet *)cmd;
+	pkt->size = sizeof(struct cvp_session_stop_packet);
+	pkt->packet_type = HFI_CMD_SESSION_STOP;
+	pkt->session_id = hash32_ptr(session);
+
+	return 0;
+}
 
 int cvp_create_pkt_cmd_session_send(
 		struct eva_kmd_hfi_packet *out_pkt,
@@ -455,6 +472,7 @@ static struct cvp_hfi_packetization_ops hfi_default = {
 	.sys_ubwc_config = create_pkt_cmd_sys_ubwc_config,
 	.ssr_cmd = cvp_create_pkt_ssr_cmd,
 	.session_init = cvp_create_pkt_cmd_sys_session_init,
+	.session_stop = cvp_create_pkt_cmd_session_stop,
 	.session_cmd = cvp_create_pkt_cmd_session_cmd,
 	.session_set_buffers =
 		cvp_create_pkt_cmd_session_set_buffers,

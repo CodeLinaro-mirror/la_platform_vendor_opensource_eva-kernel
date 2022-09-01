@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 #ifndef __HFI_PACKETIZATION__
 #define __HFI_PACKETIZATION__
@@ -59,6 +60,9 @@ struct cvp_hfi_packetization_ops {
 		u32 iova,
 		u32 size);
 	int (*session_release_buffers)(
+		void *pkt,
+		struct cvp_hal_session *session);
+	int (*session_stop)(
 		void *pkt,
 		struct cvp_hal_session *session);
 	int (*session_get_buf_req)(

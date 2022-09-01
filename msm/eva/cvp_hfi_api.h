@@ -264,6 +264,7 @@ struct cvp_hfi_device {
 	int (*session_abort)(void *session);
 	int (*session_set_buffers)(void *sess, u32 iova, u32 size);
 	int (*session_release_buffers)(void *sess);
+	int (*session_stop)(void *session);
 	int (*session_send)(void *sess, struct eva_kmd_hfi_packet *in_pkt);
 	int (*session_flush)(void *sess);
 	int (*scale_clocks)(void *dev, u32 freq);

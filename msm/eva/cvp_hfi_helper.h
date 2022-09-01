@@ -353,6 +353,13 @@ struct cvp_session_release_buffers_packet {
 	u32 buffer_idx;
 } __packed;
 
+struct cvp_session_stop_packet {
+	u32 size;
+	u32 packet_type;
+	u32 session_id;
+	struct cvp_hfi_client client_data;
+} __packed;
+
 struct cvp_hfi_cmd_session_hdr {
 	u32 size;
 	u32 packet_type;

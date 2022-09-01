@@ -2507,6 +2507,40 @@ err_create_pkt:
 	mutex_unlock(&device->lock);
 	return rc;
 }
+static int iris_hfi_session_stop(void *sess)
+{
+	//struct cvp_session_release_buffers_packet pkt;
+	struct cvp_session_stop_packet pkt;
+	int rc = 0;
+	struct cvp_hal_session *session = sess;
+	struct iris_hfi_device *device;
+
+	if (!session || !session->device) {
+		dprintk(CVP_ERR, "Invalid Params\n");
+		return -EINVAL;
+	}
+
+	device = session->device;
+	mutex_lock(&device->lock);
+
+	if (!__is_session_valid(device, session, __func__)) {
+		rc = -ECONNRESET;
+		goto err_create_pkt;
+	}
+
+	rc = call_hfi_pkt_op(device, session_stop, &pkt, session);
+	if (rc) {
+		dprintk(CVP_ERR, "session_stop: failed to create pkt\n");
+		goto err_create_pkt;
+	}
+
+	if (__iface_cmdq_write(session->device, &pkt))
+		rc = -ENOTEMPTY;
+
+err_create_pkt:
+	mutex_unlock(&device->lock);
+	return rc;
+}
 
 static int iris_hfi_session_send(void *sess,
 		struct eva_kmd_hfi_packet *in_pkt)
@@ -5831,6 +5865,7 @@ static void iris_init_hfi_callbacks(struct cvp_hfi_device *hdev)
 	hdev->session_set_buffers = iris_hfi_session_set_buffers;
 	hdev->session_release_buffers = iris_hfi_session_release_buffers;
 	hdev->session_send = iris_hfi_session_send;
+	hdev->session_stop = iris_hfi_session_stop;
 	hdev->session_flush = iris_hfi_session_flush;
 	hdev->scale_clocks = iris_hfi_scale_clocks;
 	hdev->vote_bus = iris_hfi_vote_buses;
