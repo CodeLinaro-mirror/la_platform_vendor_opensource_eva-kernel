@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 
@@ -18,9 +19,13 @@ int msm_cvp_set_clocks_impl(struct iris_hfi_device *device, u32 freq);
 int msm_cvp_scale_clocks(struct iris_hfi_device *device);
 int msm_cvp_prepare_enable_clk(struct iris_hfi_device *device,
 		const char *name);
+int msm_cvp_enable_sw_ctrl(struct iris_hfi_device *device,
+		const char *name);
 int msm_cvp_vote_clk(struct iris_hfi_device *device,
 		const char *name, u32 freq);
 int msm_cvp_disable_unprepare_clk(struct iris_hfi_device *device,
+		const char *name);
+int msm_cvp_disable_sw_ctrl(struct iris_hfi_device *device,
 		const char *name);
 int msm_cvp_init_clocks(struct iris_hfi_device *device);
 void msm_cvp_deinit_clocks(struct iris_hfi_device *device);

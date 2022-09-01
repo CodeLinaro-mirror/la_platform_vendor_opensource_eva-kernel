@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "msm_cvp_common.h"
 #include "cvp_hfi_api.h"
 #include "msm_cvp_debug.h"
 #include "msm_cvp_clocks.h"
+#include <linux/clk/qcom.h>
 
+extern sreg_clocks_deinited;
 static bool __mmrm_client_check_scaling_supported(
 				struct mmrm_client_desc *client)
 {
@@ -302,6 +305,83 @@ int msm_cvp_scale_clocks(struct iris_hfi_device *device)
 	return rc;
 }
 
+int msm_cvp_enable_sw_ctrl(struct iris_hfi_device *device,
+		const char *name)
+{
+	struct clock_info *cl = NULL;
+	int rc = 0;
+
+	if (!device) {
+		dprintk(CVP_ERR, "Invalid params: %pK\n", device);
+		return -EINVAL;
+	}
+
+	iris_hfi_for_each_clock(device, cl) {
+		if (strcmp(cl->name, name))
+                        continue;
+		/*
+		* For the clocks we control, set the rate prior to preparing
+		* them.  Since we don't really have a load at this point,
+		* scale it to the lowest frequency possible
+		*/
+		if (cl->has_scaling) {
+			if (device->mmrm_cvp != NULL) {
+				// set min freq and cur freq to 0;
+				rc = msm_cvp_mmrm_set_value_in_range(device,
+						0, 0);
+				if (rc)
+					dprintk(CVP_ERR,
+						"%s Failed set clock %s: %d\n",
+						__func__, cl->name, rc);
+			}
+			else {
+				dprintk(CVP_PWR,
+					"%s: set clock with clk_set_rate\n",
+					__func__);
+				clk_set_rate(cl->clk,
+						clk_round_rate(cl->clk, 0));
+			}
+		}
+
+		if (!cl->clk) {
+			dprintk(CVP_WARN, "%s: clk handle for %s is NULL, getting clk handle again!! \n", __func__, cl->name);
+			cl->clk = clk_get(&device->res->pdev->dev, cl->name);
+			if (IS_ERR_OR_NULL(cl->clk)) {
+				dprintk(CVP_ERR,
+					"Failed to get clock: %s\n", cl->name);
+				rc = PTR_ERR(cl->clk) ? : -EINVAL;
+				cl->clk = NULL;
+				return rc;
+			}
+			sreg_clocks_deinited = true;
+		}
+		dprintk(CVP_WARN, "%s: CLK dump before enabling clk %s\n", __func__, name);
+		qcom_clk_dump(cl->clk, NULL, NULL);
+		rc = clk_prepare_enable(cl->clk);
+		if (rc) {
+			dprintk(CVP_ERR, "Failed to enable clock %s\n",
+				cl->name);
+			return rc;
+		}
+		dprintk(CVP_WARN, "%s: CLK dump after enabling clk %s\n", __func__, name);
+		qcom_clk_dump(cl->clk, NULL, NULL);
+		if (!__clk_is_enabled(cl->clk)) {
+			dprintk(CVP_ERR, "%s: clock %s not actually enabled\n",
+					__func__, cl->name);
+			qcom_clk_dump(cl->clk, NULL, NULL);
+			// clk_disable_unprepare(cl->clk);
+			return -EINVAL;
+		}
+
+		dprintk(CVP_PWR, "Clock: %s prepared and enabled\n",
+				cl->name);
+		return 0;
+	}
+
+	dprintk(CVP_ERR, "%s clock %s not found\n", __func__, name);
+	return -EINVAL;
+}
+
 int msm_cvp_prepare_enable_clk(struct iris_hfi_device *device,
 		const char *name)
 {
@@ -402,6 +482,55 @@ int msm_cvp_vote_clk(struct iris_hfi_device *device,
 	return -EINVAL;
 }
 
+int msm_cvp_disable_sw_ctrl(struct iris_hfi_device *device,
+		const char *name)
+{
+	struct clock_info *cl;
+	int rc = 0;
+
+	if (!device) {
+		dprintk(CVP_ERR, "Invalid params: %pK\n", device);
+		return -EINVAL;
+	}
+
+	iris_hfi_for_each_clock_reverse(device, cl) {
+		if (strcmp(cl->name, name))
+			continue;
+
+		clk_disable_unprepare(cl->clk);
+		dprintk(CVP_PWR, "Clock: %s disable and unprepare\n",
+			cl->name);
+
+		if (__clk_is_enabled(cl->clk)) {
+			dprintk(CVP_ERR, "%s: clock %s could not be disabled\n",
+					__func__, cl->name);
+			return -EINVAL;
+		}
+
+		if (cl->has_scaling) {
+			if (device->mmrm_cvp != NULL) {
+				// set min freq and cur freq to 0;
+				rc = msm_cvp_mmrm_set_value_in_range(device,
+					0, 0);
+				if (rc)
+					dprintk(CVP_ERR,
+						"%s Failed set clock %s: %d\n",
+						__func__, cl->name, rc);
+			}
+		}
+		
+		if (cl->clk && sreg_clocks_deinited) {
+			dprintk(CVP_WARN, "%s: Get clk handle for %s done earlier, putting clk handle again!! \n", __func__, cl->name);
+			clk_put(cl->clk);
+			cl->clk = NULL;
+		}
+
+		return 0;
+	}
+
+	dprintk(CVP_ERR, "%s clock %s not found\n", __func__, name);
+	return -EINVAL;
+}
 
 int msm_cvp_disable_unprepare_clk(struct iris_hfi_device *device,
 		const char *name)

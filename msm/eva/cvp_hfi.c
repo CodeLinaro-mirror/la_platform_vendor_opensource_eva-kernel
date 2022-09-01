@@ -81,6 +81,7 @@ static bool reset_pulse_timeout = false;
 #ifdef MMCX_PROXY_ENABLE
 static bool mmcx_proxy_vote = false;
 #endif
+bool sreg_clocks_deinited = false;
 static struct completion reset_pulse_completion;
 static void iris_hfi_pm_handler(struct work_struct *work);
 static DECLARE_DELAYED_WORK(iris_hfi_pm_work, iris_hfi_pm_handler);
@@ -2177,7 +2178,7 @@ static int iris_hfi_core_release(void *dev)
 		session->device = NULL;
 	}
 
-	dprintk(CVP_CORE, "Core released successfully\n");
+	dprintk(CVP_WARN, "Core released successfully\n");
 	mutex_unlock(&device->lock);
 
 	return rc;
@@ -3315,12 +3316,7 @@ static int __handle_reset_clk(struct msm_cvp_platform_resources *res,
 		dprintk(CVP_PWR, "Skipping reset pulse for %s\n", rst_set->reset_tbl[reset_index].name);
 		return 0;
 	}
-	// if (!(strcmp(rst_set->reset_tbl[reset_index].name, "video_cc_xo_reset")) &&
-		// (pwr_state == CVP_POWER_IGNORED))
-	// {
-		// dprintk(CVP_PWR, "Skipping reset pulse for %s\n", rst_set->reset_tbl[reset_index].name);
-		// return 0;
-	// }
+
 	switch (state) {
 	case INIT:
 		if (rst)
@@ -3372,6 +3368,111 @@ failed_to_reset:
 	return rc;
 }
 
+static int __handle_sw_ctrl_disable(struct iris_hfi_device *device,
+			int reset_index)
+{
+	int rc = 0;
+	struct reset_control *rst;
+	struct reset_info rst_info;
+	struct msm_cvp_platform_resources *res = device->res;
+	struct reset_set *rst_set = &res->reset_set;
+
+	if (!rst_set->reset_tbl)
+		return 0;
+
+	rst_info = rst_set->reset_tbl[reset_index];
+	rst = rst_info.rst;
+	dprintk(CVP_WARN, "SW_CTRL_CLK_DISABLE: reset name %s \n", rst_set->reset_tbl[reset_index].name);
+
+	if (!(strcmp(rst_set->reset_tbl[reset_index].name, "cvp_axi0_reset"))) {
+		rc = msm_cvp_disable_sw_ctrl(device, "gcc_video_axi0_sreg");
+		if (rc)
+			goto failed_to_sw_ctrl;
+	}
+	else if (!(strcmp(rst_set->reset_tbl[reset_index].name, "cvp_axi1_reset"))) {
+		rc = msm_cvp_disable_sw_ctrl(device, "gcc_video_axi1_sreg");
+		if (rc)
+			goto failed_to_sw_ctrl;
+	}
+	else if (!(strcmp(rst_set->reset_tbl[reset_index].name, "iris_ss_hf_axi1_reset"))) {
+		rc = msm_cvp_disable_sw_ctrl(device, "gcc_iris_ss_hf_axi1_sreg");
+		if (rc)
+			goto failed_to_sw_ctrl;
+	}
+	else if (!(strcmp(rst_set->reset_tbl[reset_index].name, "iris_ss_spd_axi1_reset"))) {
+		rc = msm_cvp_disable_sw_ctrl(device, "gcc_iris_ss_spd_axi1_sreg");
+		sreg_clocks_deinited = false;
+		if (rc)
+			goto failed_to_sw_ctrl;
+	}
+	else {
+		dprintk(CVP_WARN, "SW_CTRL_CLK_DISABLE: SW_CTRL not required for %s\n", rst_set->reset_tbl[reset_index].name);
+		goto skip_sw_ctrl;
+	}
+
+	return 0;
+
+failed_to_sw_ctrl:
+	dprintk(CVP_ERR, "SW_CTRL_CLK_DISABLE: Failed to disable SW_CTRL for %s, rc = %d \n", rst_set->reset_tbl[reset_index].name, rc);
+skip_sw_ctrl:
+	return rc;
+}
+
+static int __handle_sw_ctrl_enable(struct iris_hfi_device *device,
+			int reset_index)
+{
+	int rc = 0;
+	struct reset_control *rst;
+	struct reset_info rst_info;
+	struct msm_cvp_platform_resources *res = device->res;
+	struct reset_set *rst_set = &res->reset_set;
+	char *sreg_name = NULL;
+
+	if (!rst_set->reset_tbl)
+		return 0;
+
+	rst_info = rst_set->reset_tbl[reset_index];
+	rst = rst_info.rst;
+	dprintk(CVP_WARN, "SW_CTRL_CLK_ENABLE: reset name %s \n", rst_set->reset_tbl[reset_index].name);
+
+	if (!(strcmp(rst_set->reset_tbl[reset_index].name, "cvp_axi0_reset"))) {
+		sreg_name = "gcc_video_axi0_sreg";
+		rc = msm_cvp_enable_sw_ctrl(device, "gcc_video_axi0_sreg");
+		if (rc)
+			goto failed_to_sw_ctrl;
+	}
+	else if (!(strcmp(rst_set->reset_tbl[reset_index].name, "cvp_axi1_reset"))) {
+		sreg_name = "gcc_video_axi1_sreg";
+		rc = msm_cvp_enable_sw_ctrl(device, "gcc_video_axi1_sreg");
+		if (rc)
+			goto failed_to_sw_ctrl;
+	}
+	else if (!(strcmp(rst_set->reset_tbl[reset_index].name, "iris_ss_hf_axi1_reset"))) {
+		sreg_name = "gcc_iris_ss_hf_axi1_sreg";
+		rc = msm_cvp_enable_sw_ctrl(device, "gcc_iris_ss_hf_axi1_sreg");
+		if (rc)
+			goto failed_to_sw_ctrl;
+	}
+	else if (!(strcmp(rst_set->reset_tbl[reset_index].name, "iris_ss_spd_axi1_reset"))) {
+		sreg_name = "gcc_iris_ss_spd_axi1_sreg";
+		rc = msm_cvp_enable_sw_ctrl(device, "gcc_iris_ss_spd_axi1_sreg");
+		if (rc)
+			goto failed_to_sw_ctrl;
+	}
+	else {
+		dprintk(CVP_WARN, "SW_CTRL_CLK_ENABLE: SW_CTRL not required for %s\n", rst_set->reset_tbl[reset_index].name);
+		goto skip_sw_ctrl;
+	}
+
+	return 0;
+
+failed_to_sw_ctrl:
+	// dprintk(CVP_ERR, "SW_CTRL_CLK_ENABLE: Failed to enable SW_CTRL for %s, rc = %d \n", rst_set->reset_tbl[reset_index].name, rc);
+	dprintk(CVP_ERR, "SW_CTRL_CLK_ENABLE: Failed to enable SW_CTRL for %s, rc = %d \n", sreg_name, rc);
+skip_sw_ctrl:
+	return rc;
+}
+
 static int reset_ahb2axi_bridge(struct iris_hfi_device *device)
 {
 	int rc, i;
@@ -3392,6 +3493,14 @@ static int reset_ahb2axi_bridge(struct iris_hfi_device *device)
 		s = CVP_POWER_IGNORED;
 
 	for (i = 0; i < device->res->reset_set.count; i++) {
+		if (s == CVP_POWER_IGNORED) {
+			rc = __handle_sw_ctrl_enable(device, i);
+			if (rc) {
+				dprintk(CVP_ERR,
+					"SW_CTRL_CLK_ENABLE: failed to assert SW_CTRL clocks\n");
+				// goto failed_to_reset;
+			}
+		}
 		rc = __handle_reset_clk(device->res, i, ASSERT, s);
 		if (rc) {
 			dprintk(CVP_ERR,
@@ -3409,6 +3518,14 @@ static int reset_ahb2axi_bridge(struct iris_hfi_device *device)
 			dprintk(CVP_ERR,
 				"failed to deassert reset clocks\n");
 			goto failed_to_reset;
+		}
+		if (s == CVP_POWER_IGNORED) {
+			rc = __handle_sw_ctrl_disable(device, i);
+			if (rc) {
+				dprintk(CVP_ERR,
+				"SW_CTRL_CLK_DISABLE: failed to deassert SW_CTRL clocks\n");
+				// goto failed_to_reset;
+			}
 		}
 	}
 
@@ -4362,6 +4479,7 @@ static int __iris_power_on(struct iris_hfi_device *device)
 
 	/* Since EVA powering-up again, reset pulse can be applied during MMCX down */
 	reset_pulse_applied = false;
+	from_callback = false;
 
 #ifdef MMCX_VOLTAGE_CHANGE
 	/* setting voltage level for MMCX regulator: min_uV, max_uV --> SVS, NOM */
@@ -4564,7 +4682,6 @@ static int eva_mmcx_cb(struct notifier_block *nb, unsigned long evt, void *p)
 #ifdef MMCX_CB_RESET_ENABLE
 	switch (evt) {
 	case REGULATOR_EVENT_PRE_DISABLE:
-		dump_stack();
 		if(reset_pulse_applied) {
 			dprintk(CVP_WARN, "EXPERIMENT_SIGNALING: REGULATOR_EVENT_PRE_DISABLE - Skipping reset pulse; Not required when EVA-PC is done!\n");
 			return NOTIFY_OK;
@@ -4950,7 +5067,7 @@ static void power_off_iris2(struct iris_hfi_device *device)
 
 	if (__unvote_buses(device))
 		dprintk(CVP_WARN, "Failed to unvote for buses\n");
-
+/*
 #ifdef MMCX_CB_RESET_ENABLE
 	dprintk(CVP_WARN,
 			"EXPERIMENT_SIGNALING: waiting for reset_pulse_completion signal\n");
@@ -4970,10 +5087,12 @@ static void power_off_iris2(struct iris_hfi_device *device)
 		reset_pulse_timeout = false;
 	}
 #endif
-
-	// dprintk(CVP_WARN, "EXPERIMENT_SIGNALING: Before  unvote of spad \n");
-	// __unvote_spad(device);
-	// dprintk(CVP_WARN, "EXPERIMENT_SIGNALING: After unvote of spad \n");
+*/
+#ifdef MMCX_CB_RESET_ENABLE
+	dprintk(CVP_WARN, "EXPERIMENT_SIGNALING: Before  unvote of spad \n");
+	__unvote_spad(device);
+	dprintk(CVP_WARN, "EXPERIMENT_SIGNALING: After unvote of spad \n");
+#endif
 
 	/*Do not access registers after this point!*/
 	device->power_enabled = false;
