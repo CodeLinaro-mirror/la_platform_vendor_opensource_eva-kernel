@@ -25,6 +25,9 @@
 #define NUM_DMM_MAX_FEATURE_POINTS 500
 #define CYCLES_MARGIN_IN_POWEROF2 3
 
+
+bool auto_boot_time = true;
+
 int msm_cvp_poll(void *instance, struct file *filp,
 		struct poll_table_struct *wait)
 {
@@ -148,6 +151,11 @@ void *msm_cvp_open(int core_id, int session_type)
 		dprintk(CVP_SESS, "Auto PIL disabled, bypass CVP init at boot");
 		goto err_invalid_core;
 	}
+
+	if(session_type == MSM_CVP_BOOT)
+		auto_boot_time = true;
+	else
+		auto_boot_time = false;
 
 	core->resources.max_inst_count = MAX_SUPPORTED_INSTANCES;
 	if (msm_cvp_check_for_inst_overload(core)) {

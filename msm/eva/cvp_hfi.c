@@ -74,15 +74,16 @@ const struct msm_cvp_gov_data CVP_DEFAULT_BUS_VOTE = {
 	.data_count = 0,
 };
 
+extern bool auto_boot_time;
+
 const int cvp_max_packets = 32;
 static bool from_callback = false;
 static bool reset_pulse_applied = false;
-static bool reset_pulse_timeout = false;
 #ifdef MMCX_PROXY_ENABLE
 static bool mmcx_proxy_vote = false;
 #endif
 bool sreg_clocks_deinited = false;
-static struct completion reset_pulse_completion;
+
 static void iris_hfi_pm_handler(struct work_struct *work);
 static DECLARE_DELAYED_WORK(iris_hfi_pm_work, iris_hfi_pm_handler);
 static inline int __resume(struct iris_hfi_device *device);
@@ -4070,35 +4071,35 @@ static int iris_enable_spad_subcache(void *dev)
 	}
 	device = dev;
 
-	mutex_lock(&device->lock);
+	if (!is_sys_cache_present(device)) {
+		dprintk(CVP_ERR, "Skipping SPAD activation due to no DT entry\n");
+		return -EINVAL;
+	}
 
-	if (msm_cvp_syscache_disable || !is_sys_cache_present(device))
-		return 0;
 	/* Activate subcaches */
 	iris_hfi_for_each_subcache(device, sinfo) {
 		if(strcmp("spad", sinfo->name))
 			continue;//skip sending the spad related to FW
-		 rc = llcc_slice_activate(sinfo->subcache);   //TODO: AURORA-BU
-		if (rc) {
-			dprintk(CVP_WARN, "Failed to activate %s: %d\n",
-				sinfo->name, rc);
-			msm_cvp_res_handle_fatal_hw_error(device->res, true);
-			goto err_activate_fail;
+		if (!sinfo->isactive) {
+			rc = llcc_slice_activate(sinfo->subcache);
+			if (rc) {
+				dprintk(CVP_ERR, "Failed to activate %s: %d\n",
+					sinfo->name, rc);
+				msm_cvp_res_handle_fatal_hw_error(device->res, true);
+				goto err_activate_fail;
+			}
+			sinfo->isactive = true;
+			dprintk(CVP_CORE, "Activated subcache %s : rc : %d \n", sinfo->name,rc);
 		}
-
-		sinfo->isactive = true;
-		dprintk(CVP_CORE, "Activated subcache %s : rc : %d \n", sinfo->name,rc);
 		c++;
 	}
-	mutex_unlock(&device->lock);
 	dprintk(CVP_CORE, "Activated %d Subcaches to CVP\n", c);
 	dprintk(CVP_PWR, "%s X\n", __func__);
 	return 0;
 
 err_activate_fail:
-	iris_disable_spad_subcache(device);
-	mutex_unlock(&device->lock);
-	return 0;
+	dprintk(CVP_WARN, "%s X\n", __func__);
+	return -EINVAL;
 }
 static int __set_subcaches(struct iris_hfi_device *device)
 {
@@ -4251,30 +4252,35 @@ static int iris_disable_spad_subcache(void *dev)
 	}
 	device = dev;
 
-	mutex_lock(&device->lock);
-
-	if (msm_cvp_syscache_disable || !is_sys_cache_present(device))
-		return 0;
+	if (!is_sys_cache_present(device)) {
+		dprintk(CVP_ERR, "Skipping SPAD deactivation due to no DT entry\n");
+		return -EINVAL;
+	}
 
 	/* De-activate subcaches */
 	iris_hfi_for_each_subcache_reverse(device, sinfo) {
 		if(strcmp("spad", sinfo->name))
 			continue;
 		if (sinfo->isactive) {
-			dprintk(CVP_CORE, "De-activate subcache %s\n",
-				sinfo->name);
-			 rc = llcc_slice_deactivate(sinfo->subcache);   //TODO: AURORA-BU
-
-				dprintk(CVP_WARN,
-					"de-activate %s status: %d\n",
+			rc = llcc_slice_deactivate(sinfo->subcache);
+			if (rc) {
+				dprintk(CVP_ERR, "Failed to deactivate %s: %d\n",
 					sinfo->name, rc);
+				//msm_cvp_res_handle_fatal_hw_error(device->res, true);
+				goto err_deactivate_fail;
+			}
+
+			dprintk(CVP_WARN,
+				"de-activate %s status: %d\n", sinfo->name, rc);
 
 			sinfo->isactive = false;
 		}
 	}
-	mutex_unlock(&device->lock);
 	dprintk(CVP_PWR, "%s X\n", __func__);
 	return 0;
+err_deactivate_fail:
+	dprintk(CVP_WARN, "%s X\n", __func__);
+	return -EINVAL;
 }
 
 static void interrupt_init_iris2(struct iris_hfi_device *device)
@@ -4515,6 +4521,11 @@ static int __iris_power_on(struct iris_hfi_device *device)
 	}
 #endif
 
+		rc = __vote_spad_clks(device);
+		dprintk(CVP_WARN, "EVA_POWER_ON: voting spad in regular power on sequence, rc = %d \n", rc);
+		if (rc)
+			goto fail_voting_spad;
+
 	/* Vote for all hardware resources */
 	rc = __vote_buses(device, device->bus_vote.data,
 			device->bus_vote.data_count);
@@ -4527,24 +4538,6 @@ static int __iris_power_on(struct iris_hfi_device *device)
 	if (rc)
 		goto fail_enable_controller;
 
-	if (!reset_pulse_timeout)
-	{
-		rc = __vote_spad_clks(device);
-		dprintk(CVP_WARN, "EVA_POWER_ON: voting spad in regular power on sequence, rc = %d \n", rc);
-		if (rc)
-			goto fail_voting_spad;
-	}
-	else
-	{
-		dprintk(CVP_WARN, "EVA_POWER_ON: Time-out occurred in previous session, un-voting spad \n");
-		__unvote_spad(device);  // to manage the reference counting in clock driver & 1.b
-		dprintk(CVP_WARN, "EVA_POWER_ON: After unvote of spad \n");
-
-		rc = __vote_spad_clks(device);
-		dprintk(CVP_WARN, "EVA_POWER_ON: spad vote in timout case , rc = %d\n", rc);
-		if (rc)
-			goto fail_voting_spad;
-	}
 
 	rc = __power_on_core(device);	
 	if (rc)
@@ -4562,10 +4555,6 @@ static int __iris_power_on(struct iris_hfi_device *device)
 	/*Do not access registers before this point!*/
 	device->power_enabled = true;
 
-	/* reinit the comletion to avoid side-effect of multiple MMCX callbacks */
-	reinit_completion(&reset_pulse_completion);
-	dprintk(CVP_WARN,
-			"EXPERIMENT_SIGNALING: reinit_completion done\n");
 	/*
 	 * Re-program all of the registers that get reset as a result of
 	 * regulator_disable() and _enable()
@@ -4580,14 +4569,24 @@ static int __iris_power_on(struct iris_hfi_device *device)
 	__write_register(device,
 		CVP_WRAPPER_DEBUG_BRIDGE_LPI_CONTROL, 0x7);
 	pr_info(CVP_DBG_TAG "cvp (eva) powered on\n", "pwr");
+
+#ifndef SPAD_UC_BOUNDRY
+	if(!auto_boot_time) {
+		rc = iris_enable_spad_subcache(device);
+		if (rc)
+			dprintk(CVP_ERR,
+				"Failed to activate subcaches\n");
+	}
+#endif
+
 	return 0;
-fail_voting_spad:
-	__unvote_spad(device);
 fail_enable_core:
 	__power_off_controller(device);
 fail_enable_controller:
 	__unvote_buses(device);
 fail_vote_buses:
+	__unvote_spad(device);
+fail_voting_spad:
 	device->power_enabled = false;
 	return rc;
 }
@@ -4698,10 +4697,6 @@ static int eva_mmcx_cb(struct notifier_block *nb, unsigned long evt, void *p)
 			reset_pulse_applied = true;
 		}
 		break;
-	case REGULATOR_EVENT_DISABLE:
-		dprintk(CVP_WARN, "EXPERIMENT_SIGNALING: MMCX REGULATOR_EVENT_DISABLE - Callback completion!\n");
-		complete(&reset_pulse_completion);
-		break;
 	default:
 	    dprintk(CVP_WARN, "default evt type = %d\n", evt);
 		break;
@@ -4720,11 +4715,7 @@ static int __register_for_MMCX(struct iris_hfi_device *device)
 		rc = regulator_register_notifier(device->rpmh_mmcx_reg,
 				&device->mmcx_PC_nb);
 		if (rc) {
-			dprintk(CVP_ERR, "EXPERIMENT_SIGNALING: Failed to register cb for MMCX PC, rc %d \n", rc);
-		}
-		else {
-			dprintk(CVP_CORE, "EXPERIMENT_SIGNALING: MMCX CB registration success! \n");
-			init_completion(&reset_pulse_completion);
+			dprintk(CVP_ERR, "Failed to register cb for MMCX PC, rc %d \n", rc);
 		}
 	} else {
 		dprintk(CVP_ERR, "RPMH regulator is not enabled\n");
@@ -5028,16 +5019,18 @@ static int __unvote_spad(struct iris_hfi_device *device)
 }
 static void power_off_iris2(struct iris_hfi_device *device)
 {
-#ifdef MMCX_PROXY_ENABLE
 	int rc = 0;
-#else
-	#ifdef MMCX_VOLTAGE_CHANGE
-		int rc = 0;
-	#endif
-#endif
 
 	if (!device->power_enabled || !device->res->sw_power_collapsible)
 		return;
+
+#ifndef SPAD_UC_BOUNDRY
+	if(!auto_boot_time) {
+		rc = iris_disable_spad_subcache(device);
+		if(rc)
+			dprintk(CVP_ERR, "%s: Failed to deactivate SPAD, rc %d\n", __func__, rc);
+	}
+#endif
 
 	if (!(device->intr_status & CVP_WRAPPER_INTR_STATUS_A2HWD_BMSK))
 		disable_irq_nosync(device->cvp_hal_data->irq);
@@ -5067,27 +5060,7 @@ static void power_off_iris2(struct iris_hfi_device *device)
 
 	if (__unvote_buses(device))
 		dprintk(CVP_WARN, "Failed to unvote for buses\n");
-/*
-#ifdef MMCX_CB_RESET_ENABLE
-	dprintk(CVP_WARN,
-			"EXPERIMENT_SIGNALING: waiting for reset_pulse_completion signal\n");
-	if (!wait_for_completion_timeout(
-			&reset_pulse_completion,
-			msecs_to_jiffies(EVA_RESET_PULSE_RESPONSE_TIMEOUT))) {
-		dprintk(CVP_ERR, "%s EXPERIMENT_SIGNALING: MMCX callback timeout\n",
-			__func__);
-		reset_pulse_timeout = true;
-	} else {
-		dprintk(CVP_WARN, "%s EXPERIMENT_SIGNALING: MMCX callback done!\n",
-			__func__);
-		msleep(200);
-		dprintk(CVP_WARN, "EXPERIMENT_SIGNALING: Before  unvote of spad \n");
-		__unvote_spad(device);
-		dprintk(CVP_WARN, "EXPERIMENT_SIGNALING: After unvote of spad \n");
-		reset_pulse_timeout = false;
-	}
-#endif
-*/
+
 #ifdef MMCX_CB_RESET_ENABLE
 	dprintk(CVP_WARN, "EXPERIMENT_SIGNALING: Before  unvote of spad \n");
 	__unvote_spad(device);
