@@ -51,6 +51,9 @@ struct cvp_tzbsp_memprot {
 /* Poll interval in uS */
 #define POLL_INTERVAL_US 50
 
+/* MMCX related */
+#define MMCX_CB_RESET_ENABLE
+
 enum tzbsp_subsys_state {
 	TZ_SUBSYS_STATE_SUSPEND = 0,
 	TZ_SUBSYS_STATE_RESUME = 1,
@@ -64,7 +67,7 @@ const struct msm_cvp_gov_data CVP_DEFAULT_BUS_VOTE = {
 
 const int cvp_max_packets = 32;
 static bool from_callback = false;
-
+static bool reset_pulse_applied = false;
 static void iris_hfi_pm_handler(struct work_struct *work);
 static DECLARE_DELAYED_WORK(iris_hfi_pm_work, iris_hfi_pm_handler);
 static inline int __resume(struct iris_hfi_device *device);
@@ -102,7 +105,7 @@ static void __noc_error_info_iris2(struct iris_hfi_device *device);
 static int __enable_hw_power_collapse(struct iris_hfi_device *device);
 
 static int __power_off_controller(struct iris_hfi_device *device);
-static void __register_for_MMCX(struct iris_hfi_device *device);
+static int __register_for_MMCX(struct iris_hfi_device *device);
 
 static struct iris_hfi_vpu_ops iris2_ops = {
 	.interrupt_init = interrupt_init_iris2,
@@ -1817,6 +1820,7 @@ static int iris_pm_qos_update(void *device)
 static int iris_hfi_core_init(void *device)
 {
 	int rc = 0;
+	u32 core_status = 0;
 	u32 ipcc_iova;
 	struct cvp_hfi_cmd_sys_init_packet pkt;
 	struct cvp_hfi_cmd_sys_get_property_packet version_pkt;
@@ -1955,6 +1959,9 @@ pm_qos_bail:
 	pm_relax(dev->res->pdev->dev.parent);
 	dprintk(CVP_CORE, "Core inited successfully\n");
 
+	core_status = __read_register(device, CVP_CORE_POWER_STATUS);
+	dprintk(CVP_SESS, "At the end of iris_hfi_core_init: Core status: %x\n", core_status);
+
 	return 0;
 
 err_core_init:
@@ -2020,7 +2027,7 @@ static int iris_hfi_core_release(void *dev)
 		session->device = NULL;
 	}
 
-	dprintk(CVP_CORE, "Core released successfully\n");
+	dprintk(CVP_WARN, "Core released successfully\n");
 	mutex_unlock(&device->lock);
 
 	return rc;
@@ -2086,10 +2093,16 @@ err_create_pkt:
 
 static void __set_default_sys_properties(struct iris_hfi_device *device)
 {
+	u32 core_status = 0;
 	if (__sys_set_debug(device, msm_cvp_fw_debug))
 		dprintk(CVP_WARN, "Setting fw_debug msg ON failed\n");
+
+	core_status = __read_register(device, CVP_CORE_POWER_STATUS);
+	dprintk(CVP_SESS, "Before __sys_set_power_control: Core status: %x\n", core_status);
 	if (__sys_set_power_control(device, msm_cvp_fw_low_power_mode))
 		dprintk(CVP_WARN, "Setting h/w power collapse ON failed\n");
+	core_status = __read_register(device, CVP_CORE_POWER_STATUS);
+	dprintk(CVP_SESS, "After __sys_set_power_control: Core status: %x\n", core_status);
 }
 
 static void __session_clean(struct cvp_hal_session *session)
@@ -3205,6 +3218,112 @@ failed_to_reset:
 	return rc;
 }
 
+static int __handle_sw_ctrl_disable(struct iris_hfi_device *device,
+			int reset_index)
+{
+	int rc = 0;
+	struct reset_control *rst;
+	struct reset_info rst_info;
+	struct msm_cvp_platform_resources *res = device->res;
+	struct reset_set *rst_set = &res->reset_set;
+	char *sreg_name = NULL;
+
+	if (!rst_set->reset_tbl)
+		return 0;
+
+	rst_info = rst_set->reset_tbl[reset_index];
+	rst = rst_info.rst;
+
+	if (!(strcmp(rst_set->reset_tbl[reset_index].name, "cvp_axi0_reset"))) {
+		sreg_name = "gcc_video_axi0_sreg";
+		rc = msm_cvp_disable_sw_ctrl(device, "gcc_video_axi0_sreg");
+		if (rc)
+			goto failed_to_sw_ctrl;
+	}
+	else if (!(strcmp(rst_set->reset_tbl[reset_index].name, "cvp_axi1_reset"))) {
+		sreg_name = "gcc_video_axi1_sreg";
+		rc = msm_cvp_disable_sw_ctrl(device, "gcc_video_axi1_sreg");
+		if (rc)
+			goto failed_to_sw_ctrl;
+	}
+	else if (!(strcmp(rst_set->reset_tbl[reset_index].name, "iris_ss_hf_axi1_reset"))) {
+		sreg_name = "gcc_iris_ss_hf_axi1_sreg";
+		rc = msm_cvp_disable_sw_ctrl(device, "gcc_iris_ss_hf_axi1_sreg");
+		if (rc)
+			goto failed_to_sw_ctrl;
+	}
+	else if (!(strcmp(rst_set->reset_tbl[reset_index].name, "iris_ss_spd_axi1_reset"))) {
+		sreg_name = "gcc_iris_ss_spd_axi1_sreg";
+		rc = msm_cvp_disable_sw_ctrl(device, "gcc_iris_ss_spd_axi1_sreg");
+		if (rc)
+			goto failed_to_sw_ctrl;
+	}
+	else {
+		dprintk(CVP_WARN, "SW_CTRL not required for %s\n", rst_set->reset_tbl[reset_index].name);
+		goto skip_sw_ctrl;
+	}
+
+	return 0;
+
+failed_to_sw_ctrl:
+	dprintk(CVP_ERR, "Failed to disable SW_CTRL for %s, rc = %d \n", sreg_name, rc);
+skip_sw_ctrl:
+	return rc;
+}
+
+static int __handle_sw_ctrl_enable(struct iris_hfi_device *device,
+			int reset_index)
+{
+	int rc = 0;
+	struct reset_control *rst;
+	struct reset_info rst_info;
+	struct msm_cvp_platform_resources *res = device->res;
+	struct reset_set *rst_set = &res->reset_set;
+	char *sreg_name = NULL;
+
+	if (!rst_set->reset_tbl)
+		return 0;
+
+	rst_info = rst_set->reset_tbl[reset_index];
+	rst = rst_info.rst;
+
+	if (!(strcmp(rst_set->reset_tbl[reset_index].name, "cvp_axi0_reset"))) {
+		sreg_name = "gcc_video_axi0_sreg";
+		rc = msm_cvp_enable_sw_ctrl(device, "gcc_video_axi0_sreg");
+		if (rc)
+			goto failed_to_sw_ctrl;
+	}
+	else if (!(strcmp(rst_set->reset_tbl[reset_index].name, "cvp_axi1_reset"))) {
+		sreg_name = "gcc_video_axi1_sreg";
+		rc = msm_cvp_enable_sw_ctrl(device, "gcc_video_axi1_sreg");
+		if (rc)
+			goto failed_to_sw_ctrl;
+	}
+	else if (!(strcmp(rst_set->reset_tbl[reset_index].name, "iris_ss_hf_axi1_reset"))) {
+		sreg_name = "gcc_iris_ss_hf_axi1_sreg";
+		rc = msm_cvp_enable_sw_ctrl(device, "gcc_iris_ss_hf_axi1_sreg");
+		if (rc)
+			goto failed_to_sw_ctrl;
+	}
+	else if (!(strcmp(rst_set->reset_tbl[reset_index].name, "iris_ss_spd_axi1_reset"))) {
+		sreg_name = "gcc_iris_ss_spd_axi1_sreg";
+		rc = msm_cvp_enable_sw_ctrl(device, "gcc_iris_ss_spd_axi1_sreg");
+		if (rc)
+			goto failed_to_sw_ctrl;
+	}
+	else {
+		dprintk(CVP_WARN, "SW_CTRL not required for %s\n", rst_set->reset_tbl[reset_index].name);
+		goto skip_sw_ctrl;
+	}
+
+	return 0;
+
+failed_to_sw_ctrl:
+	dprintk(CVP_ERR, "Failed to enable SW_CTRL for %s, rc = %d \n", sreg_name, rc);
+skip_sw_ctrl:
+	return rc;
+}
+
 static int reset_ahb2axi_bridge(struct iris_hfi_device *device)
 {
 	int rc, i;
@@ -3225,6 +3344,14 @@ static int reset_ahb2axi_bridge(struct iris_hfi_device *device)
 		s = CVP_POWER_IGNORED;
 
 	for (i = 0; i < device->res->reset_set.count; i++) {
+		if (s == CVP_POWER_IGNORED) {
+			rc = __handle_sw_ctrl_enable(device, i);
+			if (rc) {
+				dprintk(CVP_ERR,
+					"failed to assert SW_CTRL clocks\n");
+				goto failed_to_reset;
+			}
+		}
 		rc = __handle_reset_clk(device->res, i, ASSERT, s);
 		if (rc) {
 			dprintk(CVP_ERR,
@@ -3242,6 +3369,14 @@ static int reset_ahb2axi_bridge(struct iris_hfi_device *device)
 			dprintk(CVP_ERR,
 				"failed to deassert reset clocks\n");
 			goto failed_to_reset;
+		}
+		if (s == CVP_POWER_IGNORED) {
+			rc = __handle_sw_ctrl_disable(device, i);
+			if (rc) {
+				dprintk(CVP_ERR,
+				"failed to deassert SW_CTRL clocks\n");
+				goto failed_to_reset;
+			}
 		}
 	}
 
@@ -3886,6 +4021,9 @@ static int __iris_power_on(struct iris_hfi_device *device)
 	if (device->power_enabled)
 		return 0;
 
+	/* Since EVA powering-up again, reset pulse can be applied during MMCX down */
+	reset_pulse_applied = false;
+	from_callback = false;
 	/* Vote for all hardware resources */
 	rc = __vote_buses(device, device->bus_vote.data,
 			device->bus_vote.data_count);
@@ -4019,48 +4157,63 @@ exit:
 
 static int eva_mmcx_cb(struct notifier_block *nb, unsigned long evt, void *p)
 {
+#ifdef MMCX_CB_RESET_ENABLE
 	int rc = 0;
 	struct iris_hfi_device *device = container_of(nb, struct iris_hfi_device, mmcx_PC_nb);
+#endif
 
+	dprintk(CVP_WARN, "evt type = %d\n", evt);
+
+#ifdef MMCX_CB_RESET_ENABLE
 	switch (evt) {
 	case REGULATOR_EVENT_PRE_DISABLE:
-		dprintk(CVP_CORE, "Got the callback from MMCX\n");
+		if(reset_pulse_applied) {
+			dprintk(CVP_WARN, "Skipping reset pulse; Not required when EVA-PC is done!\n");
+			return NOTIFY_OK;
+		}
+
 		from_callback = true;
 		rc = call_iris_op(device, reset_ahb2axi_bridge, device);
-		if (rc)
-			dprintk(CVP_ERR, "Failed to reset ahb2axi with error %d\n", rc);
-		else
-			dprintk(CVP_CORE, "reset pulse executed successfully\n");
-		from_callback = false;
+		if (rc) {
+			dprintk(CVP_ERR, "Failed to execute reset pulse %d\n", rc);
+		}
+		else {
+			dprintk(CVP_WARN, "reset pulse executed successfully\n");
+			from_callback = false;
+			reset_pulse_applied = true;
+		}
 		break;
 	default:
+		dprintk(CVP_WARN, "default evt type = %d\n", evt);
 		break;
 	}
+#endif
 
 	return NOTIFY_OK;
 }
 
-static void __register_for_MMCX(struct iris_hfi_device *device)
+static int __register_for_MMCX(struct iris_hfi_device *device)
 {
-	int rc = 0;
+	int rc = 1;
 
 	if (regulator_is_enabled(device->rpmh_mmcx_reg)) {
 		device->mmcx_PC_nb.notifier_call = eva_mmcx_cb;
 		rc = regulator_register_notifier(device->rpmh_mmcx_reg,
 				&device->mmcx_PC_nb);
-		if (rc)
+		if (rc) {
 			dprintk(CVP_ERR, "Failed to register cb for MMCX PC, rc %d \n", rc);
-		else
-			dprintk(CVP_CORE, "MMCX CB registration success! \n");
+		}
 	} else {
 		dprintk(CVP_ERR, "RPMH regulator is not enabled\n");
 	}
+
+	return rc;
 }
 
 static int __power_off_controller(struct iris_hfi_device *device)
 {
 	u32 lpi_status, reg_status = 0, count = 0, max_count = 1000;
-	// int rc = 0;
+
 
 	/* HPG 6.2.2 Step 1  */
 	__write_register(device, CVP_CPU_CS_X2RPMh, 0x3);
@@ -4097,7 +4250,7 @@ static int __power_off_controller(struct iris_hfi_device *device)
 	/* HPG 6.2.2 Step 4, Set Debug bridge Low power */
 	__write_register(device,
  		CVP_WRAPPER_DEBUG_BRIDGE_LPI_CONTROL, 0x7);
- 
+
  	reg_status = 0;
  	count = 0;
  	while ((reg_status != 0x7) && count < max_count) {
@@ -4148,6 +4301,8 @@ static int __power_off_controller(struct iris_hfi_device *device)
 	/* HPG 6.2.2 Step 8, Controller collapse */
 	__disable_regulator(device, "cvp");
 
+	msm_cvp_disable_unprepare_clk(device, "video_cc_mvs1_clk_src");
+
 	return 0;
 }
 
@@ -4172,7 +4327,6 @@ static int __power_off_core(struct iris_hfi_device *device)
 		}
 		__disable_regulator(device, "cvp-core");
 		msm_cvp_disable_unprepare_clk(device, "core_clk");
-		msm_cvp_disable_unprepare_clk(device, "video_cc_mvs1_clk_src");
 		return 0;
 	}
 
@@ -4381,7 +4535,11 @@ static int __load_fw(struct iris_hfi_device *device)
 		goto fail_iris_power_on;
 	}
 
-	__register_for_MMCX(device);
+	rc = __register_for_MMCX(device);
+	if (rc) {
+		dprintk(CVP_ERR, "Failed to register MMCX callback\n");
+		goto fail_iris_power_on;
+	}
 
 	if ((!device->res->use_non_secure_pil && !device->res->firmware_base)
 			|| device->res->use_non_secure_pil) {
