@@ -649,7 +649,7 @@ static void handle_sys_error(enum hal_command_response cmd, void *data)
 	/* handle the hw error before core released to get full debug info */
 	msm_cvp_handle_hw_error(core);
 
-	dprintk(CVP_CORE, "Calling core_release\n");
+	dprintk(CVP_WARN, "Calling core_release\n");
 	rc = call_hfi_op(hdev, core_release, hdev->hfi_device_data);
 	if (rc) {
 		dprintk(CVP_ERR, "core_release failed\n");
@@ -661,7 +661,7 @@ static void handle_sys_error(enum hal_command_response cmd, void *data)
 	mutex_unlock(&core->clk_lock);
 	mutex_unlock(&core->lock);
 
-	dprintk(CVP_WARN, "SYS_ERROR handled.\n");
+	dprintk(CVP_WARN, "SYS_ERROR handled %d \n", core->resources.fatal_ssr);
 	BUG_ON(core->resources.fatal_ssr);
 }
 

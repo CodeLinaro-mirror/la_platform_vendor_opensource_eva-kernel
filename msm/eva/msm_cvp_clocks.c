@@ -302,6 +302,54 @@ int msm_cvp_scale_clocks(struct iris_hfi_device *device)
 	return rc;
 }
 
+int msm_cvp_enable_sw_ctrl(struct iris_hfi_device *device,
+		const char *name)
+{
+	struct clock_info *cl = NULL;
+	int rc = 0;
+
+	if (!device) {
+		dprintk(CVP_ERR, "Invalid params: %pK\n", device);
+		return -EINVAL;
+	}
+
+	iris_hfi_for_each_clock(device, cl) {
+		if (strcmp(cl->name, name))
+                        continue;
+
+		if (!cl->clk) {
+			dprintk(CVP_WARN, "%s: clk handle for %s is NULL, getting clk handle!! \n", __func__, cl->name);
+			cl->clk = clk_get(&device->res->pdev->dev, cl->name);
+			if (IS_ERR_OR_NULL(cl->clk)) {
+				dprintk(CVP_ERR,
+					"Failed to get clock: %s\n", cl->name);
+				rc = PTR_ERR(cl->clk) ? : -EINVAL;
+				cl->clk = NULL;
+				return rc;
+			}
+		}
+		rc = clk_prepare_enable(cl->clk);
+		if (rc) {
+			dprintk(CVP_ERR, "Failed to enable clock %s\n",
+				cl->name);
+			return rc;
+		}
+		if (!__clk_is_enabled(cl->clk)) {
+			dprintk(CVP_ERR, "%s: clock %s not actually enabled\n",
+					__func__, cl->name);
+			// qcom_clk_dump(cl->clk, NULL, NULL);
+			return -EINVAL;
+		}
+
+		dprintk(CVP_PWR, "Clock: %s prepared and enabled\n",
+				cl->name);
+		return 0;
+	}
+
+	dprintk(CVP_ERR, "%s clock %s not found\n", __func__, name);
+	return -EINVAL;
+}
+
 int msm_cvp_prepare_enable_clk(struct iris_hfi_device *device,
 		const char *name)
 {
@@ -339,6 +387,7 @@ int msm_cvp_prepare_enable_clk(struct iris_hfi_device *device,
 						clk_round_rate(cl->clk, 0));
 			}
 		}
+
 		rc = clk_prepare_enable(cl->clk);
 		if (rc) {
 			dprintk(CVP_ERR, "Failed to enable clock %s\n",
@@ -346,7 +395,7 @@ int msm_cvp_prepare_enable_clk(struct iris_hfi_device *device,
 			return rc;
 		}
 		if (!__clk_is_enabled(cl->clk)) {
-			dprintk(CVP_ERR, "%s: clock %s not enabled\n",
+			dprintk(CVP_ERR, "%s: clock %s not actually enabled\n",
 					__func__, cl->name);
 			clk_disable_unprepare(cl->clk);
 			return -EINVAL;
@@ -354,6 +403,52 @@ int msm_cvp_prepare_enable_clk(struct iris_hfi_device *device,
 
 		dprintk(CVP_PWR, "Clock: %s prepared and enabled\n",
 				cl->name);
+		return 0;
+	}
+
+	dprintk(CVP_ERR, "%s clock %s not found\n", __func__, name);
+	return -EINVAL;
+}
+
+int msm_cvp_disable_sw_ctrl(struct iris_hfi_device *device,
+		const char *name)
+{
+	struct clock_info *cl;
+
+	if (!device) {
+		dprintk(CVP_ERR, "Invalid params: %pK\n", device);
+		return -EINVAL;
+	}
+
+	iris_hfi_for_each_clock_reverse(device, cl) {
+		if (strcmp(cl->name, name))
+			continue;
+
+		if (!cl->clk) {
+			dprintk(CVP_ERR, "%s: clk handle for %s is NULL!! \n", __func__, cl->name);
+			return -EINVAL;
+		}
+
+		clk_disable_unprepare(cl->clk);
+		dprintk(CVP_PWR, "Clock: %s disable and unprepare\n",
+			cl->name);
+
+		if (__clk_is_enabled(cl->clk)) {
+			dprintk(CVP_ERR, "%s: clock %s could not be disabled\n",
+					__func__, cl->name);
+			if (cl->clk) {
+				clk_put(cl->clk);
+				cl->clk = NULL;
+			}
+			return -EINVAL;
+		}
+
+		if (cl->clk) {
+			dprintk(CVP_WARN, "%s: Get clk handle for %s done earlier, putting clk handle!! \n", __func__, cl->name);
+			clk_put(cl->clk);
+			cl->clk = NULL;
+		}
+
 		return 0;
 	}
 
