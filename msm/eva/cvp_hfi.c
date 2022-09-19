@@ -3439,7 +3439,7 @@ static void __deinit_subcaches(struct iris_hfi_device *device)
 		if (sinfo->subcache) {
 			dprintk(CVP_CORE, "deinit_subcaches: %s\n",
 				sinfo->name);
-			// llcc_slice_putd(sinfo->subcache);  //TODO: AURORA-BU
+			llcc_slice_putd(sinfo->subcache);
 			sinfo->subcache = NULL;
 		}
 	}
@@ -3464,9 +3464,9 @@ static int __init_subcaches(struct iris_hfi_device *device)
 
 	iris_hfi_for_each_subcache(device, sinfo) {
 		if (!strcmp("cvp", sinfo->name)) {
-			// sinfo->subcache = llcc_slice_getd(LLCC_CVP);  //TODO: AURORA-BU
+			sinfo->subcache = llcc_slice_getd(LLCC_CVP);
 		} else if (!strcmp("cvpfw", sinfo->name)) {
-			// sinfo->subcache = llcc_slice_getd(LLCC_CVPFW);  //TODO: AURORA-BU
+			sinfo->subcache = llcc_slice_getd(LLCC_CVPFW);
 		} else {
 			dprintk(CVP_ERR, "Invalid subcache name %s\n",
 					sinfo->name);
@@ -3673,7 +3673,7 @@ static int __enable_subcaches(struct iris_hfi_device *device)
 
 	/* Activate subcaches */
 	iris_hfi_for_each_subcache(device, sinfo) {
-		// rc = llcc_slice_activate(sinfo->subcache);   //TODO: AURORA-BU
+		rc = llcc_slice_activate(sinfo->subcache);
 		if (rc) {
 			dprintk(CVP_WARN, "Failed to activate %s: %d\n",
 				sinfo->name, rc);
@@ -3813,7 +3813,7 @@ static int __disable_subcaches(struct iris_hfi_device *device)
 		if (sinfo->isactive) {
 			dprintk(CVP_CORE, "De-activate subcache %s\n",
 				sinfo->name);
-			// rc = llcc_slice_deactivate(sinfo->subcache);   //TODO: AURORA-BU
+			rc = llcc_slice_deactivate(sinfo->subcache);
 			if (rc) {
 				dprintk(CVP_WARN,
 					"Failed to de-activate %s: %d\n",
