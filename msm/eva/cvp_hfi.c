@@ -1058,8 +1058,7 @@ static inline int __boot_firmware(struct iris_hfi_device *device)
 		}
 
 		/* Reduce to 1/100th and x100 of max_tries */
-		// usleep_range(500, 1000);
-		msleep(5);
+		usleep_range(500, 1000);
 		count++;
 	}
 
@@ -1948,10 +1947,6 @@ static int iris_hfi_core_init(void *device)
 		rc = -ENOMEM;
 		goto err_core_init;
 	}
-
-	dprintk(CVP_INFO, "SHIVANI: Going to sleep for 10 seconds\n");
-	msleep(10000);
-	dprintk(CVP_INFO, "SHIVANI: From iris_hfi_core_init: __interface_queues_init done\n");
 
 	// Add node for dev struct
 	add_va_node_to_list(CVP_QUEUE_DUMP, dev,
