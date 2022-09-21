@@ -37,11 +37,11 @@ enum queue_state {
 #define CVP_MINIDUMP_ENABLED 1
 #endif
 
-#ifdef CONFIG_EVA_ANORAK   // TODO: HALLIDAY
+#ifdef CONFIG_EVA_ANORAK
 #define CVP_SYNX_ENABLED 1
-#define CVP_MMRM_ENABLED 0
+#define CVP_MMRM_ENABLED 1
 #define CVP_FASTRPC_ENABLED 1
-#define CVP_MINIDUMP_ENABLED 0
+#define CVP_MINIDUMP_ENABLED 1
 #endif
 
 #endif
