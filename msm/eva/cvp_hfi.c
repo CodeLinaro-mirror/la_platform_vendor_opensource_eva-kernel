@@ -5348,18 +5348,20 @@ static int __dev_regspace_unmap(struct iris_hfi_device *device)
 	cb = msm_cvp_smem_get_context_bank(device->res, 0);
 	if (!cb) {
 			dprintk(CVP_ERR," %s: failed to get context bank\n", __func__);
+			rc = -EINVAL;
+			return rc;
 	}
+	else{
 	iommu_unmap(cb->domain, device->res->ipclite_iova, device->res->ipclite_size);//
 	iommu_unmap(cb->domain, device->res->display_iova, device->res->display_size);//
 	iommu_unmap(cb->domain, device->res->aontimers_iova, device->res->aontimers_size);//
 	iommu_unmap(cb->domain, device->res->hwmutex_iova, device->res->hwmutex_size);//
-
 	iommu_unmap(cb->domain, SPAD0_LPI_LB_IOVA, SPAD0_LPI_LB_REG_SIZE);//
 	iommu_unmap(cb->domain, SPAD1_LPI_LB_IOVA, SPAD1_LPI_LB_REG_SIZE);//
 	iommu_unmap(cb->domain, SPAD_BROADCAST_ORLPI_LB_IOVA, SPAD_BROADCAST_ORLPI_LB_REG_SIZE);//
 	iommu_unmap(cb->domain, SPAD_BROADCAST_ANDLPI_LB_IOVA, SPAD_BROADCAST_ANDLPI_LB_REG_SIZE);//
+	}
 	return rc;
-
 }
 static int __llcc_regspace_unmap(struct iris_hfi_device *device)
 {
@@ -5369,14 +5371,15 @@ static int __llcc_regspace_unmap(struct iris_hfi_device *device)
 	cb = msm_cvp_smem_get_context_bank(device->res, 0);
 	if (!cb) {
 			dprintk(CVP_ERR," %s: failed to get context bank\n", __func__);
+			rc = -EINVAL;
+            return rc;
 	}
-
+	else{
 	iommu_unmap(cb->domain, device->res->llccevaleft_iova, device->res->llccevaleft_size);//
 	iommu_unmap(cb->domain, device->res->llccevaright_iova, device->res->llccevaright_size);//
 	iommu_unmap(cb->domain, device->res->llccevagain_iova, device->res->llccevagain_size);//
-
+	}
 	return rc;
-
 }
 static int __load_fw(struct iris_hfi_device *device)
 {
