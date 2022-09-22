@@ -144,6 +144,9 @@ int kgsl_eva_notifier_callback( struct notifier_block *this, unsigned long event
 			dprintk(CVP_INFO, "Received GPU_SSR_FATAL %d", msg);
 			gpu_ssr_delay_handler((struct work_struct *)gpu_eva_workq);
 			break;
+		case GPU_GMU_STOP:
+			dprintk(CVP_INFO, "Received GPU_GMU_STOP: EVA FW handling internally \n");
+			break;
 		default:
 			dprintk(CVP_ERR, "Invalid message \n");
 			break;
