@@ -331,7 +331,7 @@ static void handle_sys_release_res_done(
 static void handle_session_gmu_stop_done(enum hal_command_response cmd, void *data)
 {
 	struct msm_cvp_cb_cmd_done *response = data;
-	struct msm_cvp_inst *inst;
+	struct msm_cvp_inst *inst = NULL;
 	struct msm_cvp_core *core;
 	struct cvp_hal_session *session = NULL;
 		core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
@@ -360,7 +360,7 @@ static void handle_session_gmu_start_done(enum hal_command_response cmd, void *d
 {
 	struct msm_cvp_cb_cmd_done *response = data;
 	struct msm_cvp_core *core;
-	struct msm_cvp_inst *inst;
+	struct msm_cvp_inst *inst = NULL;
 	struct cvp_hal_session *session = NULL;
 	core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
 	if (core){
