@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/debugfs.h>
@@ -550,6 +551,12 @@ const struct msm_cvp_hfi_defs cvp_hfi_defs[] = {
 	{
 		.size = 0xFFFFFFFF,
 		.type = HFI_CMD_SESSION_STOP,
+		.is_config_pkt = false,
+		.resp = HAL_NO_RESP,
+	},
+	{
+		.size = 0xFFFFFFFF,
+		.type = HFI_CMD_SESSION_START,
 		.is_config_pkt = false,
 		.resp = HAL_NO_RESP,
 	},

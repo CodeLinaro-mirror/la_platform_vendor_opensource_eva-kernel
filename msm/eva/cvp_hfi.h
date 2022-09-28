@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef __H_CVP_HFI_H__
@@ -186,6 +187,10 @@
     (HFI_CMD_SESSION_CVP_START + 0x085)
 #define  HFI_MSG_SESSION_STOP_DONE\
     (HFI_MSG_SESSION_CVP_START + 0x56)
+#define  HFI_CMD_SESSION_START\
+    (HFI_CMD_SESSION_CVP_START + 0x087)
+#define  HFI_MSG_SESSION_START_DONE\
+    (HFI_MSG_SESSION_CVP_START + 0x57)
 
 #define  HFI_MSG_SESSION_CVP_SYNX\
 	(HFI_MSG_SESSION_CVP_START + 0x53)
