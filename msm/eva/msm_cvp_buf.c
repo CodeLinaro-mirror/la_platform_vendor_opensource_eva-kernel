@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/pid.h>
@@ -900,7 +901,7 @@ int msm_cvp_map_frame_lsr(struct msm_cvp_inst *inst,
 			}
 			buf->fd = iova;
 		}
-		for (i = 0; i < 19; i++) {
+		for (i = 0; i < 23; i++) {
 			fence_buf = (struct cvp_fence_buf_type *)&in_pkt->pkt_data[offset];
 			offset += sizeof(*fence_buf) >> 2;
 			buf = (struct cvp_buf_type *)fence_buf;
@@ -945,6 +946,22 @@ int msm_cvp_map_frame_lsr(struct msm_cvp_inst *inst,
 //#ifdef DISPLAY_BUF_IGNORE
 }
 //#endif
+		}
+		//to add mapping support for HFI_CVP_BUFFER_TYPE        sConfigList;
+		for (i = 0; i < 1; i++) {
+			buf = (struct cvp_buf_type *)&in_pkt->pkt_data[offset];
+			offset += sizeof(*buf) >> 2;
+			if (buf->fd < 0 || !buf->size)
+				continue;
+	        iova = msm_cvp_map_frame_buf(inst, buf, frame);
+			if (!iova) {
+				dprintk(CVP_ERR,
+					"%s: buf %d register failed.\n",
+					__func__, i);
+				msm_cvp_unmap_frame_buf(inst, frame);
+				return -EINVAL;
+			}
+			buf->fd = iova;
 		}
 	}
 	else if(in_pkt->pkt_data[1] == HFI_CMD_SESSION_EVA_LSR_SET_DISPLAY_BUFFER){
