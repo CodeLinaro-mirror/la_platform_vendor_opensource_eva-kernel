@@ -701,7 +701,6 @@ static void handle_sys_error(enum hal_command_response cmd, void *data)
 				dprintk(CVP_ERR, "Failed to clean fences\n");
 			for (i = 0; i < ARRAY_SIZE(inst->completions); i++)
 				complete(&inst->completions[i]);
-			synx_recover(SYNX_CLIENT_EVA_CTX0);
 			spin_lock_irqsave(&inst->event_handler.lock, flags);
 			inst->event_handler.event = CVP_SSR_EVENT;
 			spin_unlock_irqrestore(
@@ -728,6 +727,7 @@ static void handle_sys_error(enum hal_command_response cmd, void *data)
 	mutex_unlock(&core->clk_lock);
 	mutex_unlock(&core->lock);
 
+	synx_recover(SYNX_CLIENT_EVA_CTX0);
 	dprintk(CVP_WARN, "SYS_ERROR handled %d \n", core->resources.fatal_ssr);
 	BUG_ON(core->resources.fatal_ssr);
 }
