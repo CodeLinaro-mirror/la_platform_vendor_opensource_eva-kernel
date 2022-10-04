@@ -59,7 +59,6 @@ msm-eva-objs := eva/cvp.o \
         eva/msm_cvp_res_parse.o \
         eva/cvp_dump.o \
         eva/cvp_hfi.o \
-        eva/msm_gpu_eva.o \
         eva/hfi_response_handler.o \
         eva/hfi_packetization.o \
         eva/cvp_core_hfi.o \

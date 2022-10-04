@@ -143,8 +143,9 @@ int cvp_create_pkt_cmd_sys_set_resource(
 		pkt->resource_type = HFI_RESOURCE_SYSCACHE;
 		hfi_sc_info->num_entries = res_sc_info->num_entries;
 
-		pkt->size += (sizeof(struct cvp_hfi_resource_subcache_type))
-				 * hfi_sc_info->num_entries;
+		pkt->size += ((sizeof(struct cvp_hfi_resource_syscache_info_type))
+                  + ((sizeof(struct cvp_hfi_resource_subcache_type)) * hfi_sc_info->num_entries)
+                  - sizeof(u32));
 
 		for (i = 0; i < hfi_sc_info->num_entries; i++) {
 			hfi_sc[i] = res_sc[i];

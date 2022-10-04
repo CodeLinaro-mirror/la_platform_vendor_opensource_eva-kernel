@@ -10,7 +10,7 @@
 #include <media/msm_eva_private.h>
 #include "cvp_comm_def.h"
 
-#define DISABLE_SYNX
+// #define DISABLE_SYNX
 
 #ifndef DISABLE_SYNX
 

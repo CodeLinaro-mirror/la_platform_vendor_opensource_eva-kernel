@@ -84,10 +84,8 @@ static bool __is_session_valid(struct iris_hfi_device *device,
 static int __iface_cmdq_write(struct iris_hfi_device *device,
 					void *pkt);
 static int __load_fw(struct iris_hfi_device *device);
-#ifndef HALLIDAY_DISABLE
 static int __dev_regspace_mapping(struct iris_hfi_device *device);
 static int __dev_regspace_unmap(struct iris_hfi_device *device);
-#endif
 static void __unload_fw(struct iris_hfi_device *device);
 static int __tzbsp_set_cvp_state(enum tzbsp_subsys_state state);
 static int __enable_subcaches(struct iris_hfi_device *device);
@@ -1916,13 +1914,11 @@ static int iris_hfi_core_init(void *device)
 	dev->bus_vote.data_count = 1;
 	dev->bus_vote.data->power_mode = CVP_POWER_TURBO;
 
-	#ifndef HALLIDAY_DISABLE
     rc = __dev_regspace_mapping(dev);
     if (rc) {
         dprintk(CVP_ERR, "Failed to do Devices RegisterSpace Mapping FW\n");
       //  goto err_load_fw;
     }
-    #endif
 
 	rc = __load_fw(dev);
 	if (rc) {
@@ -2094,7 +2090,7 @@ static int iris_hfi_core_release(void *dev)
 
 	__disable_subcaches(device);
 	__unload_fw(device);
-
+		__dev_regspace_unmap(device);
 	if (msm_cvp_mmrm_enabled) {
 		rc = msm_cvp_mmrm_deregister(device);
 		if (rc) {
@@ -3443,7 +3439,7 @@ static void __deinit_subcaches(struct iris_hfi_device *device)
 		if (sinfo->subcache) {
 			dprintk(CVP_CORE, "deinit_subcaches: %s\n",
 				sinfo->name);
-			// llcc_slice_putd(sinfo->subcache);  //TODO: AURORA-BU
+			llcc_slice_putd(sinfo->subcache);
 			sinfo->subcache = NULL;
 		}
 	}
@@ -3468,9 +3464,9 @@ static int __init_subcaches(struct iris_hfi_device *device)
 
 	iris_hfi_for_each_subcache(device, sinfo) {
 		if (!strcmp("cvp", sinfo->name)) {
-			// sinfo->subcache = llcc_slice_getd(LLCC_CVP);  //TODO: AURORA-BU
+			sinfo->subcache = llcc_slice_getd(LLCC_CVP);
 		} else if (!strcmp("cvpfw", sinfo->name)) {
-			// sinfo->subcache = llcc_slice_getd(LLCC_CVPFW);  //TODO: AURORA-BU
+			sinfo->subcache = llcc_slice_getd(LLCC_CVPFW);
 		} else {
 			dprintk(CVP_ERR, "Invalid subcache name %s\n",
 					sinfo->name);
@@ -3677,7 +3673,7 @@ static int __enable_subcaches(struct iris_hfi_device *device)
 
 	/* Activate subcaches */
 	iris_hfi_for_each_subcache(device, sinfo) {
-		// rc = llcc_slice_activate(sinfo->subcache);   //TODO: AURORA-BU
+		rc = llcc_slice_activate(sinfo->subcache);
 		if (rc) {
 			dprintk(CVP_WARN, "Failed to activate %s: %d\n",
 				sinfo->name, rc);
@@ -3817,7 +3813,7 @@ static int __disable_subcaches(struct iris_hfi_device *device)
 		if (sinfo->isactive) {
 			dprintk(CVP_CORE, "De-activate subcache %s\n",
 				sinfo->name);
-			// rc = llcc_slice_deactivate(sinfo->subcache);   //TODO: AURORA-BU
+			rc = llcc_slice_deactivate(sinfo->subcache);
 			if (rc) {
 				dprintk(CVP_WARN,
 					"Failed to de-activate %s: %d\n",
@@ -4435,13 +4431,12 @@ err_iris_power_on:
 	return rc;
 }
 
-#ifndef HALLIDAY_DISABLE
 static int __dev_regspace_mapping(struct iris_hfi_device *device)
 {
     int rc = 0;
     struct context_bank_info *cb;
-    struct subcache_info *sinfo = NULL;
-    uint32_t scid = 0;
+    // struct subcache_info *sinfo = NULL;
+    // uint32_t scid = 0;
     //non-secure context bank
     cb = msm_cvp_smem_get_context_bank(device->res, 0);
         if (!cb) {
@@ -4573,7 +4568,7 @@ static int __dev_regspace_mapping(struct iris_hfi_device *device)
     }
     dprintk(CVP_INFO,"sssanjee iommu_map3\n");
     return rc;
-err_subcache_get:
+// err_subcache_get:
 	__deinit_subcaches(device);
 	return rc;
 }
@@ -4586,7 +4581,9 @@ static int __dev_regspace_unmap(struct iris_hfi_device *device)
     //non-secure context bank
     cb = msm_cvp_smem_get_context_bank(device->res, 0);
     if (!cb) {
-            dprintk(CVP_ERR," %s: failed to get context bank\n", __func__);
+        dprintk(CVP_ERR," %s: failed to get context bank\n", __func__);
+        rc = -EINVAL;
+        goto err_get_context_bank;
     }
     iommu_unmap(cb->domain, device->res->ipclite_iova, device->res->ipclite_size);//
 
@@ -4596,10 +4593,10 @@ static int __dev_regspace_unmap(struct iris_hfi_device *device)
 //    iommu_unmap(cb->domain, device->res->display_iova, device->res->display_size);//
 //    iommu_unmap(cb->domain, device->res->aontimers_iova, device->res->aontimers_size);//
     iommu_unmap(cb->domain, device->res->hwmutex_iova, device->res->hwmutex_size);//
-    return rc;
 
+err_get_context_bank:
+    return rc;
 }
-#endif
 
 static int __load_fw(struct iris_hfi_device *device)
 {
