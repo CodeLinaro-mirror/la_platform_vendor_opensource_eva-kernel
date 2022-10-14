@@ -1070,7 +1070,10 @@ static int adjust_bw_freqs(void)
 	lsr_ddr_bus = &core->resources.bus_set.bus_tbl[3];
 #endif
 	max_bw = bus->range[1];
-	min_bw = max_bw/10;
+//	min_bw = max_bw/10;
+        /*As per TLM suggestion  minimum DDR BW required for
+	 AR viewer is 250* 1024 KBPS*/
+        min_bw = 250*1024;
 #ifdef LSR_SPLIT_VOTING
 	lsr_llcc_max_bw = lsr_llcc_bus->range[1];
 	lsr_llcc_min_bw = lsr_llcc_bus->range[0];
@@ -1110,7 +1113,15 @@ static int adjust_bw_freqs(void)
 	bw_sum = rt_pwr.bw_sum + nrt_pwr.bw_sum;
 	bw_sum = bw_sum >> 10;
 	bw_sum = (bw_sum > max_bw) ? max_bw : bw_sum;
-	bw_sum = (bw_sum < min_bw) ? min_bw : bw_sum;
+        if(bw_sum) {
+		bw_sum = (bw_sum < min_bw) ? min_bw : bw_sum;
+	} else {
+		//if bw_sum is 0 then vote for 1KB
+                /* minimum BW need to be vote for DDR
+		at the time of stop session. other wise
+		FW will hang forever*/
+		bw_sum = 1;
+	}
 #ifdef LSR_SPLIT_VOTING
 	lsr_llcc_bw_sum = rt_pwr.lsr_llcc_bw_sum + nrt_pwr.lsr_llcc_bw_sum;
 	lsr_ddr_bw_sum = rt_pwr.lsr_ddr_bw_sum + nrt_pwr.lsr_ddr_bw_sum;
