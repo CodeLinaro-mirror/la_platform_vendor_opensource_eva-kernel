@@ -10,7 +10,6 @@
 #include "msm_cvp_clocks.h"
 #include <linux/clk/qcom.h>
 
-extern sreg_clocks_deinited;
 static bool __mmrm_client_check_scaling_supported(
 				struct mmrm_client_desc *client)
 {
@@ -319,32 +318,9 @@ int msm_cvp_enable_sw_ctrl(struct iris_hfi_device *device,
 	iris_hfi_for_each_clock(device, cl) {
 		if (strcmp(cl->name, name))
                         continue;
-		/*
-		* For the clocks we control, set the rate prior to preparing
-		* them.  Since we don't really have a load at this point,
-		* scale it to the lowest frequency possible
-		*/
-		if (cl->has_scaling) {
-			if (device->mmrm_cvp != NULL) {
-				// set min freq and cur freq to 0;
-				rc = msm_cvp_mmrm_set_value_in_range(device,
-						0, 0);
-				if (rc)
-					dprintk(CVP_ERR,
-						"%s Failed set clock %s: %d\n",
-						__func__, cl->name, rc);
-			}
-			else {
-				dprintk(CVP_PWR,
-					"%s: set clock with clk_set_rate\n",
-					__func__);
-				clk_set_rate(cl->clk,
-						clk_round_rate(cl->clk, 0));
-			}
-		}
 
 		if (!cl->clk) {
-			dprintk(CVP_WARN, "%s: clk handle for %s is NULL, getting clk handle again!! \n", __func__, cl->name);
+			dprintk(CVP_PWR, "%s: clk handle for %s is NULL, getting clk handle again!! \n", __func__, cl->name);
 			cl->clk = clk_get(&device->res->pdev->dev, cl->name);
 			if (IS_ERR_OR_NULL(cl->clk)) {
 				dprintk(CVP_ERR,
@@ -353,23 +329,17 @@ int msm_cvp_enable_sw_ctrl(struct iris_hfi_device *device,
 				cl->clk = NULL;
 				return rc;
 			}
-			sreg_clocks_deinited = true;
 		}
-		dprintk(CVP_WARN, "%s: CLK dump before enabling clk %s\n", __func__, name);
-		qcom_clk_dump(cl->clk, NULL, NULL);
 		rc = clk_prepare_enable(cl->clk);
 		if (rc) {
 			dprintk(CVP_ERR, "Failed to enable clock %s\n",
 				cl->name);
 			return rc;
 		}
-		dprintk(CVP_WARN, "%s: CLK dump after enabling clk %s\n", __func__, name);
-		qcom_clk_dump(cl->clk, NULL, NULL);
 		if (!__clk_is_enabled(cl->clk)) {
 			dprintk(CVP_ERR, "%s: clock %s not actually enabled\n",
 					__func__, cl->name);
 			qcom_clk_dump(cl->clk, NULL, NULL);
-			// clk_disable_unprepare(cl->clk);
 			return -EINVAL;
 		}
 
@@ -497,35 +467,26 @@ int msm_cvp_disable_sw_ctrl(struct iris_hfi_device *device,
 		if (strcmp(cl->name, name))
 			continue;
 
-		clk_disable_unprepare(cl->clk);
-		dprintk(CVP_PWR, "Clock: %s disable and unprepare\n",
-			cl->name);
+		if (cl->clk) {
+			clk_disable_unprepare(cl->clk);
+			dprintk(CVP_PWR, "Clock: %s disable and unprepare\n",
+				cl->name);
 
-		if (__clk_is_enabled(cl->clk)) {
-			dprintk(CVP_ERR, "%s: clock %s could not be disabled\n",
-					__func__, cl->name);
-			return -EINVAL;
-		}
-
-		if (cl->has_scaling) {
-			if (device->mmrm_cvp != NULL) {
-				// set min freq and cur freq to 0;
-				rc = msm_cvp_mmrm_set_value_in_range(device,
-					0, 0);
-				if (rc)
-					dprintk(CVP_ERR,
-						"%s Failed set clock %s: %d\n",
-						__func__, cl->name, rc);
+			if (__clk_is_enabled(cl->clk)) {
+				dprintk(CVP_ERR, "%s: clock %s could not be disabled\n",
+						__func__, cl->name);
+				rc = -EINVAL;
 			}
-		}
-		
-		if (cl->clk && sreg_clocks_deinited) {
-			dprintk(CVP_WARN, "%s: Get clk handle for %s done earlier, putting clk handle again!! \n", __func__, cl->name);
+
+			dprintk(CVP_PWR, "%s: Putting clk handle for %s \n", __func__, cl->name);
 			clk_put(cl->clk);
 			cl->clk = NULL;
+		} else {
+			dprintk(CVP_ERR, "%s: clk handle for %s is NULL!\n", __func__, cl->name);
+			rc = -EINVAL;
 		}
 
-		return 0;
+		return rc;
 	}
 
 	dprintk(CVP_ERR, "%s clock %s not found\n", __func__, name);

@@ -83,7 +83,6 @@ static bool poweron_inprogress = false;
 #ifdef MMCX_PROXY_ENABLE
 static bool mmcx_proxy_vote = false;
 #endif
-bool sreg_clocks_deinited = false;
 
 static void iris_hfi_pm_handler(struct work_struct *work);
 static DECLARE_DELAYED_WORK(iris_hfi_pm_work, iris_hfi_pm_handler);
@@ -3419,7 +3418,7 @@ static int __handle_sw_ctrl_disable(struct iris_hfi_device *device,
 
 	rst_info = rst_set->reset_tbl[reset_index];
 	rst = rst_info.rst;
-	dprintk(CVP_WARN, "SW_CTRL_CLK_DISABLE: reset name %s \n", rst_set->reset_tbl[reset_index].name);
+	dprintk(CVP_PWR, "SW_CTRL_CLK_DISABLE: reset name %s \n", rst_set->reset_tbl[reset_index].name);
 
 	if (!(strcmp(rst_set->reset_tbl[reset_index].name, "cvp_axi0_reset"))) {
 		rc = msm_cvp_disable_sw_ctrl(device, "gcc_video_axi0_sreg");
@@ -3438,12 +3437,11 @@ static int __handle_sw_ctrl_disable(struct iris_hfi_device *device,
 	}
 	else if (!(strcmp(rst_set->reset_tbl[reset_index].name, "iris_ss_spd_axi1_reset"))) {
 		rc = msm_cvp_disable_sw_ctrl(device, "gcc_iris_ss_spd_axi1_sreg");
-		sreg_clocks_deinited = false;
 		if (rc)
 			goto failed_to_sw_ctrl;
 	}
 	else {
-		dprintk(CVP_WARN, "SW_CTRL_CLK_DISABLE: SW_CTRL not required for %s\n", rst_set->reset_tbl[reset_index].name);
+		dprintk(CVP_PWR, "SW_CTRL_CLK_DISABLE: SW_CTRL not required for %s\n", rst_set->reset_tbl[reset_index].name);
 		goto skip_sw_ctrl;
 	}
 
@@ -3470,7 +3468,7 @@ static int __handle_sw_ctrl_enable(struct iris_hfi_device *device,
 
 	rst_info = rst_set->reset_tbl[reset_index];
 	rst = rst_info.rst;
-	dprintk(CVP_WARN, "SW_CTRL_CLK_ENABLE: reset name %s \n", rst_set->reset_tbl[reset_index].name);
+	dprintk(CVP_PWR, "SW_CTRL_CLK_ENABLE: reset name %s \n", rst_set->reset_tbl[reset_index].name);
 
 	if (!(strcmp(rst_set->reset_tbl[reset_index].name, "cvp_axi0_reset"))) {
 		sreg_name = "gcc_video_axi0_sreg";
@@ -3497,14 +3495,13 @@ static int __handle_sw_ctrl_enable(struct iris_hfi_device *device,
 			goto failed_to_sw_ctrl;
 	}
 	else {
-		dprintk(CVP_WARN, "SW_CTRL_CLK_ENABLE: SW_CTRL not required for %s\n", rst_set->reset_tbl[reset_index].name);
+		dprintk(CVP_PWR, "SW_CTRL_CLK_ENABLE: SW_CTRL not required for %s\n", rst_set->reset_tbl[reset_index].name);
 		goto skip_sw_ctrl;
 	}
 
 	return 0;
 
 failed_to_sw_ctrl:
-	// dprintk(CVP_ERR, "SW_CTRL_CLK_ENABLE: Failed to enable SW_CTRL for %s, rc = %d \n", rst_set->reset_tbl[reset_index].name, rc);
 	dprintk(CVP_ERR, "SW_CTRL_CLK_ENABLE: Failed to enable SW_CTRL for %s, rc = %d \n", sreg_name, rc);
 skip_sw_ctrl:
 	return rc;
