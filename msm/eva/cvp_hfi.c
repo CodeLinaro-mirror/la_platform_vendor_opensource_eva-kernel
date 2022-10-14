@@ -2161,6 +2161,7 @@ static int iris_hfi_core_release(void *dev)
 //#endif
 	__dsp_shutdown(device, 0);
 
+	__release_subcaches(device);
 	__disable_subcaches(device);
 	__unload_fw(device);
 		__dev_regspace_unmap(device);
@@ -4194,6 +4195,7 @@ static int __set_subcaches(struct iris_hfi_device *device)
 	return 0;
 
 err_fail_set_subacaches:
+	__release_subcaches(device);
 	__disable_subcaches(device);
 
 	return 0;
@@ -4234,13 +4236,13 @@ static int __release_subcaches(struct iris_hfi_device *device)
 		dprintk(CVP_CORE, "Releasing %d subcaches\n", c);
 		rhdr.resource_handle = sc_res_info; /* cookie */
 		rhdr.resource_id = CVP_RESOURCE_SYSCACHE;
-
-		rc = __core_release_resource(device, &rhdr);
-		if (rc)
-			dprintk(CVP_WARN,
-				"Failed to release %d subcaches\n", c);
-	}
-
+		if(device->state != IRIS_STATE_DEINIT) {
+			rc = __core_release_resource(device, &rhdr);
+			if (rc)
+				dprintk(CVP_WARN,
+					"Failed to release %d subcaches\n", c);
+			}
+		}
 	device->res->sys_cache_res_set = false;
 
 	return 0;
@@ -4644,7 +4646,7 @@ static inline int __suspend(struct iris_hfi_device *device)
 		dprintk(CVP_WARN, "Failed to suspend cvp core %d\n", rc);
 		goto err_tzbsp_suspend;
 	}
-
+	__release_subcaches(device);
 	__disable_subcaches(device);
 
 	call_iris_op(device, power_off, device);
