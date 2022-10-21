@@ -880,7 +880,7 @@ static void aggregate_power_update(struct msm_cvp_core *core,
 		fw_sum[i] += inst->prop.fw_cycles;
 #ifdef LSR_SPLIT_VOTING
 		lsr_sum[i] += inst->prop.lsr_cycles;
-		op_lsr_max[i] += (op_lsr_max[i] >= inst->prop.lsr_op_cycles) ?
+		op_lsr_max[i] = (op_lsr_max[i] >= inst->prop.lsr_op_cycles) ?
 		op_lsr_max[i] : inst->prop.lsr_op_cycles;
 		dprintk(CVP_PROF, " i = %d lsr_sum[i] = %d, op_lsr_max[i] = %d \n",
 				i, lsr_sum[i], op_lsr_max[i] );
