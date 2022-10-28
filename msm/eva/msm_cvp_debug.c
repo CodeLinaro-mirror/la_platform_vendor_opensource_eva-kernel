@@ -39,7 +39,7 @@ bool msm_cvp_mmrm_enabled = true;
 bool msm_cvp_mmrm_enabled = !true;
 #endif
 bool msm_cvp_dcvs_disable = !true;
-int msm_cvp_minidump_enable = !1;
+int msm_cvp_minidump_enable = 1;
 bool msm_cvp_noc_enable = true;
 bool lsr_session_enabled = false;
 #define MAX_DBG_BUF_SIZE 4096
