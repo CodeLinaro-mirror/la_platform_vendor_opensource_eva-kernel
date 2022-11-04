@@ -256,8 +256,9 @@ static void msm_cvp_clean_sess_queue(struct msm_cvp_inst *inst,
 		struct cvp_session_queue *sq)
 {
 	struct cvp_session_msg *mptr, *dummy;
-	u64 ktid;
+	u64 ktid  = 0LL;
 
+check_again:
 	spin_lock(&sq->lock);
 	if (sq->msg_count && sq->state != QUEUE_ACTIVE) {
 		list_for_each_entry_safe(mptr, dummy, &sq->msgs, node) {
@@ -265,13 +266,21 @@ static void msm_cvp_clean_sess_queue(struct msm_cvp_inst *inst,
 			if (ktid) {
 				list_del_init(&mptr->node);
 				sq->msg_count--;
-				msm_cvp_unmap_frame(inst, ktid);
-				kmem_cache_free(cvp_driver->msg_cache, mptr);
+				break;
 			}
 		}
 	}
 	spin_unlock(&sq->lock);
+
+	if (ktid) {
+		msm_cvp_unmap_frame(inst, ktid);
+                kmem_cache_free(cvp_driver->msg_cache, mptr);
+		mptr = NULL;
+		ktid = 0LL;
+		goto check_again;
+	}
 }
+
 static int msm_cvp_session_stop_notify(struct msm_cvp_inst *inst)
 {
 	int rc = 0;
