@@ -79,6 +79,7 @@ extern bool auto_boot_time;
 const int cvp_max_packets = 32;
 static bool from_callback = false;
 static bool reset_pulse_applied = false;
+static bool poweron_inprogress = false;
 #ifdef MMCX_PROXY_ENABLE
 static bool mmcx_proxy_vote = false;
 #endif
@@ -4708,7 +4709,7 @@ exit:
 static int eva_mmcx_cb(struct notifier_block *nb, unsigned long evt, void *p)
 {
 #ifdef MMCX_CB_RESET_ENABLE
-	int rc = 0;
+	int rc = NOTIFY_OK;
 	struct iris_hfi_device *device = container_of(nb, struct iris_hfi_device, mmcx_PC_nb);
 #endif
 	dprintk(CVP_WARN, " ENTER: %s function \n", __FUNCTION__);
@@ -4722,9 +4723,16 @@ static int eva_mmcx_cb(struct notifier_block *nb, unsigned long evt, void *p)
 			return NOTIFY_OK;
 		}
 
+		if (poweron_inprogress) {
+			dprintk(CVP_WARN, "EVA Power-ON in-progress, notify stop to MMCX!\n");
+			return NOTIFY_STOP;
+		}
+
+		mutex_lock(&device->mmcx_lock);
 		from_callback = true;
 		rc = call_iris_op(device, reset_ahb2axi_bridge, device);
 		if (rc) {
+			rc = NOTIFY_STOP;
 			dprintk(CVP_ERR, "Failed to execute reset pulse %d\n", rc);
 		}
 		else {
@@ -4732,6 +4740,8 @@ static int eva_mmcx_cb(struct notifier_block *nb, unsigned long evt, void *p)
 			from_callback = false;
 			reset_pulse_applied = true;
 		}
+		mutex_unlock(&device->mmcx_lock);
+
 		break;
 	default:
 	    dprintk(CVP_WARN, "default evt type = %d\n", evt);
@@ -4739,7 +4749,7 @@ static int eva_mmcx_cb(struct notifier_block *nb, unsigned long evt, void *p)
 	}
 #endif
     dprintk(CVP_WARN, " EXIT: %s function \n", __FUNCTION__);
-	return NOTIFY_OK;
+	return rc;
 }
 
 static int __register_for_MMCX(struct iris_hfi_device *device)
@@ -5127,7 +5137,11 @@ static inline int __resume(struct iris_hfi_device *device)
 	core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
 
 	dprintk(CVP_PWR, "Resuming from power collapse\n");
+	mutex_lock(&device->mmcx_lock);
+	poweron_inprogress = true;
 	rc = __iris_power_on(device);
+	poweron_inprogress = false;
+	mutex_unlock(&device->mmcx_lock);
 	if (rc) {
 		dprintk(CVP_ERR, "Failed to power on cvp\n");
 		goto err_iris_power_on;
@@ -5400,7 +5414,11 @@ static int __load_fw(struct iris_hfi_device *device)
 		goto fail_init_pkt;
 	}
 
+	mutex_lock(&device->mmcx_lock);
+	poweron_inprogress = true;
 	rc = __iris_power_on(device);
+	poweron_inprogress = false;
+	mutex_unlock(&device->mmcx_lock);
 	if (rc) {
 		dprintk(CVP_ERR, "Failed to power on iris in in load_fw\n");
 		goto fail_iris_power_on;
@@ -5758,6 +5776,7 @@ static struct iris_hfi_device *__add_device(u32 device_id,
 	}
 
 	mutex_init(&hdevice->lock);
+	mutex_init(&hdevice->mmcx_lock);
 	INIT_LIST_HEAD(&hdevice->sess_head);
 
 	return hdevice;
@@ -5802,6 +5821,7 @@ void cvp_iris_hfi_delete_device(void *device)
 		return;
 
 	mutex_destroy(&dev->lock);
+	mutex_destroy(&dev->mmcx_lock);
 	destroy_workqueue(dev->cvp_workq);
 	destroy_workqueue(dev->iris_pm_workq);
 	free_irq(dev->cvp_hal_data->irq, dev);
