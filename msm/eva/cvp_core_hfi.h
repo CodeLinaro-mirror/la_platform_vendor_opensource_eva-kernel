@@ -239,6 +239,7 @@ struct iris_hfi_device {
 	bool power_enabled;
 	bool reg_dumped;
 	struct mutex lock;
+	struct mutex mmcx_lock;
 	msm_cvp_callback callback;
 	struct cvp_mem_addr iface_q_table;
 	struct cvp_mem_addr dsp_iface_q_table;
