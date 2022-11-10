@@ -75,7 +75,7 @@ static int msm_eva_notify_gpu_status( u32 status )
 	if (core){
 			dprintk(CVP_INFO, "Valid Core Identified\n");
 				list_for_each_entry(inst, &core->instances, list) {
-			if( (inst->state != MSM_CVP_CORE_INVALID ) &&
+			if( (inst) &&  (inst->state != MSM_CVP_CORE_INVALID ) &&
 					(inst->prop.type == HFI_SESSION_LSR ) ) {
 				session = inst->session;
 				break;
@@ -91,24 +91,27 @@ static int msm_eva_notify_gpu_status( u32 status )
 	else if ( status == HFI_CMD_SESSION_EVA_LSR_GMU_START ) {
 		res_msg_id = HAL_SESSION_GMU_START_DONE;
 	}
-	rc = call_hfi_op(core->device, notify_gpu_status,
-		core->device->hfi_device_data, status,session );
-	if (rc) {
-		dprintk(CVP_ERR,"notify gpu status failed\n");
-		return -EINVAL;
-	}
-	else {
-		wait_ret = wait_for_completion_timeout(
-			&inst->completions[SESSION_MSG_INDEX(res_msg_id)],
-			msecs_to_jiffies(
-			inst->core->resources.msm_cvp_hw_rsp_timeout));
-
-		if (!wait_ret) {
-			dprintk(CVP_ERR, "Wait timed out for HFI_CMD_SYS_GMU_CMD: %d\n",
-			SESSION_MSG_INDEX(res_msg_id));
-			rc = -ETIMEDOUT;
+	if(core->state != CVP_CORE_UNINIT){
+		rc = call_hfi_op(core->device, notify_gpu_status,
+			core->device->hfi_device_data, status,session );
+		if (rc) {
+			dprintk(CVP_ERR,"notify gpu status failed\n");
+			return -EINVAL;
 		}
+		else {
+			if((inst) && ( inst->state != MSM_CVP_CORE_INVALID)){
+				wait_ret = wait_for_completion_timeout(
+					&inst->completions[SESSION_MSG_INDEX(res_msg_id)],
+					msecs_to_jiffies(
+					inst->core->resources.msm_cvp_hw_rsp_timeout));
 
+				if (!wait_ret) {
+					dprintk(CVP_ERR, "Wait timed out for HFI_CMD_SYS_GMU_CMD: %d\n",
+					SESSION_MSG_INDEX(res_msg_id));
+					rc = -ETIMEDOUT;
+				}
+			}
+		}
 	}
 	return rc;
 }
