@@ -520,7 +520,7 @@ const struct msm_cvp_hfi_defs cvp_hfi_defs[] = {
 	},
 	{
 		.size = 0xFFFFFFFF,
-		.type = HFI_CMD_SESSION_EVA_LSR_SET_GAINMAP,
+		.type = HFI_CMD_SESSION_EVA_LSR_SET_GAINMAP_GAMMA,
 		.is_config_pkt = true,
 		.resp = HAL_NO_RESP,
 	},

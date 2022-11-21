@@ -46,7 +46,7 @@
 
 
 // increased size for LSR
-#define ARP_BUF_SIZE 0x600000
+#define ARP_BUF_SIZE 0x700000
 
 #define CVP_RT_PRIO_THRESHOLD 1
 
