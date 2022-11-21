@@ -192,6 +192,7 @@ struct cvp_iface_q_info {
 
 struct cvp_hal_data {
 	u32 irq;
+	u32 irq_wd;
 	phys_addr_t firmware_base;
 	u8 __iomem *register_base;
 	u8 __iomem *gcc_reg_base;

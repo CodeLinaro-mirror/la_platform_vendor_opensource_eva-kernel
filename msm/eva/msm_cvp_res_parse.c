@@ -976,6 +976,9 @@ int cvp_read_platform_resources_from_dt(
 
 	kres = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
 	res->irq = kres ? kres->start : -1;
+	//Parsing for WD interrupt
+	kres = platform_get_resource(pdev, IORESOURCE_IRQ, 1);
+	res->irq_wd = kres ? kres->start : -1;
 
 	rc = msm_cvp_load_fw_name(res);
 	dprintk(CVP_CORE, "EVA fw: %s found.\n", res->fw_name);
