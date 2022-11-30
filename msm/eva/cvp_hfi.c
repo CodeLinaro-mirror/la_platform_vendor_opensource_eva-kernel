@@ -94,6 +94,7 @@ static bool reset_pulse_applied = false;
 static bool poweron_inprogress = false;
 static bool sreg_prepared = false;
 static bool sreg_inited = false;
+static uint64_t rd_intr_time = 0;
 
 static void iris_hfi_pm_handler(struct work_struct *work);
 static DECLARE_DELAYED_WORK(iris_hfi_pm_work, iris_hfi_pm_handler);
@@ -743,6 +744,37 @@ static void __write_register(struct iris_hfi_device *device,
 	wmb();
 }
 
+static uint64_t __read_aon_time(struct iris_hfi_device *device)
+{
+	u8 *base_addr;
+	u32 lower_word = 0;
+	u32 higher_word = 0;
+	u64 aon_time = 0;
+	if (!device) {
+		dprintk(CVP_ERR, "Invalid params: %pK\n", device);
+		return -EINVAL;
+	}
+	__strict_check(device);
+	base_addr = device->cvp_hal_data->aon_reg_base;
+	lower_word = readl_relaxed(base_addr);
+	dprintk(CVP_REG,
+		"Aon Base addr: %pK,  lower_word: 0x%x...\n",
+		base_addr,  lower_word );
+	higher_word = readl_relaxed(base_addr + 4);
+	dprintk(CVP_REG,
+		"Aon Base addr: %pK,  higher_word: 0x%x...\n",
+		(base_addr+4), higher_word);
+	aon_time = ( (uint64_t)lower_word | ( ((uint64_t)higher_word << 32)) );
+	/*
+	 * Memory barrier to make sure value is read correctly from the
+	 * register.
+	 */
+	rmb();
+	dprintk(CVP_REG,
+		"Aon Base addr: %pK,  aon_time: 0x%x...\n",
+		base_addr, aon_time);
+	return aon_time;
+}
 static int __read_gcc_register(struct iris_hfi_device *device, u32 reg)
 {
 	int rc = 0;
@@ -1291,7 +1323,6 @@ static int __iface_cmdq_write_relaxed(struct iris_hfi_device *device,
 	struct cvp_iface_q_info *q_info;
 	struct cvp_hal_cmd_pkt_hdr *cmd_packet;
 	int result = -E2BIG;
-
 	if (!device || !pkt) {
 		dprintk(CVP_ERR, "Invalid Params\n");
 		return -EINVAL;
@@ -1350,14 +1381,20 @@ err_q_null:
 static int __iface_cmdq_write(struct iris_hfi_device *device, void *pkt)
 {
 	bool needs_interrupt = false;
+	uint32_t *pkt_payload = NULL;
 	int rc = __iface_cmdq_write_relaxed(device, pkt, &needs_interrupt);
-
+	pkt_payload = (uint32_t *)pkt;
 	if (!rc && needs_interrupt) {
 		/* Consumer of cmdq prefers that we raise an interrupt */
 		rc = 0;
 		__write_register(device, CVP_CPU_CS_H2ASOFTINT, 1);
-	}
+		dprintk(CVP_PROF, "wr_intr at_time = 0x%llx for pkt_type = 0x%x,sess_id = 0x%x, tid = 0x%x\n",
+					 __read_aon_time(device), pkt_payload[1],pkt_payload[2],pkt_payload[3]);
 
+	} else {
+		dprintk(CVP_PROF, "wr_no_intr at_time = 0x%llx for pkt_type = 0x%x,sess_id = 0x%x, tid = 0x%x\n",
+					 __read_aon_time(device), pkt_payload[1],pkt_payload[2],pkt_payload[3]);
+	}
 	return rc;
 }
 
@@ -3066,7 +3103,6 @@ static int __response_handler(struct iris_hfi_device *device)
 
 	if (!device || device->state != IRIS_STATE_INIT)
 		return 0;
-
 	packets = device->response_pkt;
 
 	raw_packet = device->raw_packet;
@@ -3112,6 +3148,9 @@ static int __response_handler(struct iris_hfi_device *device)
 			(struct cvp_hfi_msg_session_hdr *)raw_packet;
 		int rc = 0;
 
+		dprintk(CVP_PROF,"rd_intr at_time = 0x%llx  for MSG 0x%x  at_time  =0x%llx, sess_id = 0x%x, t_id = 0x%x \n",
+
+					rd_intr_time,hdr->packet_type, __read_aon_time(device), hdr->session_id,hdr->client_data.transaction_id);
 		print_msg_hdr(hdr);
 		rc = cvp_hfi_process_msg_packet(device->device_id,
 					raw_packet, info);
@@ -3196,6 +3235,8 @@ static void iris_hfi_core_work_handler(struct work_struct *work)
 		device = core->device->hfi_device_data;
 	else
 		return;
+	if(msm_cvp_debug & CVP_PROF)
+	rd_intr_time = __read_aon_time(device);
 
 	mutex_lock(&device->lock);
 
@@ -3354,6 +3395,15 @@ static int __init_regs_and_interrupts(struct iris_hfi_device *device,
 				"could not map gcc reg addr %pa of size %d\n",
 				&res->gcc_reg_base, res->gcc_reg_size);
 	}
+       if (res->aontimers_phyaddr) {
+               hal->aon_reg_base = devm_ioremap(&res->pdev->dev,
+                               res->aontimers_phyaddr, res->aontimers_size);
+               hal->aon_reg_size = res->aontimers_size;
+               if (!hal->aon_reg_base)
+                       dprintk(CVP_ERR,
+                               "could not map Aon reg addr %pa of size %d\n",
+                               &res->aontimers_phyaddr, res->aontimers_size);
+       }
 
 	device->cvp_hal_data = hal;
 	rc = request_irq(res->irq, iris_hfi_isr, IRQF_TRIGGER_HIGH,
@@ -5947,6 +5997,7 @@ void cvp_iris_hfi_delete_device(void *device)
 	free_irq(dev->cvp_hal_data->irq, dev);
 	iounmap(dev->cvp_hal_data->register_base);
 	iounmap(dev->cvp_hal_data->gcc_reg_base);
+	iounmap(dev->cvp_hal_data->aon_reg_base);
 	kfree(dev->cvp_hal_data);
 	kfree(dev->response_pkt);
 	kfree(dev->raw_packet);
