@@ -142,6 +142,15 @@ static inline bool is_sys_cache_present(struct iris_hfi_device *device)
 	return device->res->sys_cache_present;
 }
 
+static int cvp_synx_recover(void)
+{
+#ifdef CVP_SYNX_ENABLED
+	return synx_recover(SYNX_CLIENT_EVA_CTX0);
+#else
+	return 0;
+#endif	/* End of CVP_SYNX_ENABLED */
+}
+
 #define ROW_SIZE 32
 
 int get_hfi_version(void)
@@ -1992,6 +2001,13 @@ static int iris_hfi_core_init(void *device)
 
 	__set_ubwc_config(device);
 	__sys_set_idle_indicator(device, true);
+#ifdef CVP_CONFIG_SYNX_V2
+	rc = cvp_synx_recover();
+	if (rc) {
+		dprintk(CVP_ERR, "Failed to recover synx\n");
+		goto err_core_init;
+	}
+#endif
 
 	if (dev->res->pm_qos.latency_us) {
 		int err = 0;

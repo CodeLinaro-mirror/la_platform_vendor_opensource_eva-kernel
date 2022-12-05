@@ -7,12 +7,23 @@
 #include "cvp_hfi.h"
 #include "cvp_core_hfi.h"
 #include "msm_cvp_buf.h"
+#include "cvp_comm_def.h"
+
+//static bool isHWFence =false;
 
 struct cvp_power_level {
 	unsigned long core_sum;
 	unsigned long op_core_sum;
 	unsigned long bw_sum;
 };
+
+static int cvp_enqueue_pkt(struct msm_cvp_inst* inst,
+	struct eva_kmd_hfi_packet *in_pkt,
+	unsigned int in_offset,
+	unsigned int in_buf_num);
+
+static int cvp_check_clock(struct msm_cvp_inst *inst,
+		struct cvp_hfi_msg_session_hdr_ext *hdr);
 
 int msm_cvp_get_session_info(struct msm_cvp_inst *inst, u32 *session)
 {
@@ -124,6 +135,35 @@ exit:
 	return rc;
 }
 
+static bool check_clock_required(struct msm_cvp_inst *inst,
+				struct eva_kmd_hfi_packet *hdr)
+{
+	struct cvp_hfi_msg_session_hdr_ext *ehdr =
+		(struct cvp_hfi_msg_session_hdr_ext *)hdr;
+	bool clock_check = false;
+	if (!msm_cvp_dcvs_disable &&
+			ehdr->packet_type == HFI_MSG_SESSION_CVP_FD) {
+		if (ehdr->size == sizeof(struct cvp_hfi_msg_session_hdr_ext)
+				+ sizeof(struct cvp_hfi_buf_type)) {
+			struct msm_cvp_core *core = inst->core;
+
+			dprintk(CVP_PWR, "busy cycle %d, total %d\n",
+					ehdr->busy_cycles, ehdr->total_cycles);
+
+			if (core->dyn_clk.sum_fps[HFI_HW_FDU] ||
+					core->dyn_clk.sum_fps[HFI_HW_MPU] ||
+					core->dyn_clk.sum_fps[HFI_HW_OD] ||
+					core->dyn_clk.sum_fps[HFI_HW_ICA]) {
+				clock_check = true;
+			}
+		} else {
+			dprintk(CVP_WARN, "dcvs is disabled, %d != %d + %d\n",
+					ehdr->size, sizeof(struct cvp_hfi_msg_session_hdr_ext),
+					sizeof(struct cvp_hfi_buf_type));
+		}
+	}
+	return clock_check;
+}
 static int msm_cvp_session_receive_hfi(struct msm_cvp_inst *inst,
 			struct eva_kmd_hfi_packet *out_pkt)
 {
@@ -131,6 +171,7 @@ static int msm_cvp_session_receive_hfi(struct msm_cvp_inst *inst,
 	struct cvp_session_queue *sq;
 	struct msm_cvp_inst *s;
 	int rc = 0;
+	bool clock_check = false;
 
 	if (!inst) {
 		dprintk(CVP_ERR, "%s invalid session\n", __func__);
@@ -146,6 +187,11 @@ static int msm_cvp_session_receive_hfi(struct msm_cvp_inst *inst,
 
 	rc = cvp_wait_process_message(inst, sq, NULL, wait_time, out_pkt);
 
+	clock_check = check_clock_required(inst, out_pkt);
+	if (clock_check){
+		cvp_check_clock(inst,
+			(struct cvp_hfi_msg_session_hdr_ext *)out_pkt);
+	}
 	cvp_put_inst(inst);
 	return rc;
 }
@@ -156,14 +202,13 @@ static int msm_cvp_session_process_hfi(
 	unsigned int in_offset,
 	unsigned int in_buf_num)
 {
-	int pkt_idx, pkt_type, rc = 0;
-	struct cvp_hfi_device *hdev;
+	int pkt_idx, rc = 0;
+
 	unsigned int offset = 0, buf_num = 0, signal;
 	struct cvp_session_queue *sq;
 	struct msm_cvp_inst *s;
 	bool is_config_pkt;
-	enum buf_map_type map_type;
-	struct cvp_hfi_cmd_session_hdr *cmd_hdr;
+
 
 	if (!inst || !inst->core || !in_pkt) {
 		dprintk(CVP_ERR, "%s: invalid params\n", __func__);
@@ -174,7 +219,6 @@ static int msm_cvp_session_process_hfi(
 	if (!s)
 		return -ECONNRESET;
 
-	hdev = inst->core->device;
 
 	pkt_idx = get_pkt_index((struct cvp_hal_session_cmd_pkt *)in_pkt);
 	if (pkt_idx < 0) {
@@ -216,51 +260,13 @@ static int msm_cvp_session_process_hfi(
 		dprintk(CVP_ERR, "Incorrect buffer num and offset in cmd\n");
 		return -EINVAL;
 	}
-	pkt_type = in_pkt->pkt_data[1];
-	map_type = cvp_find_map_type(pkt_type);
-
-#ifndef HALLIDAY_DISABLE
-	if((pkt_type == HFI_CMD_SESSION_EVA_LSR_FRAME)|| (pkt_type == HFI_CMD_SESSION_EVA_LSR_SET_DISPLAY_BUFFER))
-	{
-	    rc = msm_cvp_map_frame_lsr(inst, in_pkt, offset, buf_num);
-	}
-	else
-	{
-#endif
-	    cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)in_pkt;
-	    /* The kdata will be overriden by transaction ID if the cmd has buf */
-	    cmd_hdr->client_data.kdata = pkt_idx;
-
-	    if (map_type == MAP_PERSIST)
-	    	rc = msm_cvp_map_user_persist(inst, in_pkt, offset, buf_num);
-	    else if (map_type == UNMAP_PERSIST)
-	    	rc = msm_cvp_mark_user_persist(inst, in_pkt, offset, buf_num);
-	    else
-	    	rc = msm_cvp_map_frame(inst, in_pkt, offset, buf_num);
-#ifndef HALLIDAY_DISABLE
-	}
-#endif
-	if (rc)
-		goto exit;
-
-	rc = call_hfi_op(hdev, session_send, (void *)inst->session, in_pkt);
-	if (rc) {
-		dprintk(CVP_ERR,
-			"%s: Failed in call_hfi_op %d, %x\n",
-			__func__, in_pkt->pkt_data[0], in_pkt->pkt_data[1]);
-		goto exit;
-	}
-
-	if (signal != HAL_NO_RESP)
-		dprintk(CVP_ERR, "%s signal %d from UMD is not HAL_NO_RESP\n",
-			__func__, signal);
+	cvp_enqueue_pkt(inst, in_pkt, offset, buf_num);
 
 exit:
 	cvp_put_inst(inst);
 	return rc;
 }
 
-#ifndef DISABLE_SYNX
 static bool cvp_fence_wait(struct cvp_fence_queue *q,
 			struct cvp_fence_command **fence,
 			enum queue_state *state)
@@ -473,11 +479,15 @@ static int cvp_fence_proc(struct msm_cvp_inst *inst,
 
 	dprintk(CVP_SYNX, "%s %s\n", current->comm, __func__);
 
+	if (!inst || !inst->core)
+		return -EINVAL;
+
 	hdev = inst->core->device;
 	sq = &inst->session_queue_fence;
 	ktid = pkt->client_data.kdata;
 
-	rc = cvp_synx_ops(inst, CVP_INPUT_SYNX, fc, &synx_state);
+	rc = inst->core->synx_ftbl->cvp_synx_ops(inst, CVP_INPUT_SYNX,
+			fc, &synx_state);
 	if (rc) {
 		msm_cvp_unmap_frame(inst, pkt->client_data.kdata);
 		goto exit;
@@ -488,11 +498,7 @@ static int cvp_fence_proc(struct msm_cvp_inst *inst,
 	if (rc) {
 		dprintk(CVP_ERR, "%s %s: Failed in call_hfi_op %d, %x\n",
 			current->comm, __func__, pkt->size, pkt->packet_type);
-		#if IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX)
-		synx_state = SYNX_STATE_SIGNALED_ERROR;
-		#elif IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX_V2)
 		synx_state = SYNX_STATE_SIGNALED_CANCEL;
-		#endif
 		goto exit;
 	}
 
@@ -501,38 +507,14 @@ static int cvp_fence_proc(struct msm_cvp_inst *inst,
 				(struct eva_kmd_hfi_packet *)&hdr);
 
 	/* Only FD support dcvs at certain FW */
-	if (!msm_cvp_dcvs_disable &&
-		hdr.packet_type == HFI_MSG_SESSION_CVP_FD) {
-		if (hdr.size == sizeof(struct cvp_hfi_msg_session_hdr_ext)
-			+ sizeof(struct cvp_hfi_buf_type)) {
-			struct cvp_hfi_msg_session_hdr_ext *fhdr =
-				(struct cvp_hfi_msg_session_hdr_ext *)&hdr;
-			struct msm_cvp_core *core = inst->core;
+	clock_check = check_clock_required(inst,
+					(struct eva_kmd_hfi_packet *)&hdr);
 
-			dprintk(CVP_PWR, "busy cycle %d, total %d\n",
-				fhdr->busy_cycles, fhdr->total_cycles);
-
-			if (core && (core->dyn_clk.sum_fps[HFI_HW_FDU] ||
-				core->dyn_clk.sum_fps[HFI_HW_MPU] ||
-				core->dyn_clk.sum_fps[HFI_HW_OD] ||
-				core->dyn_clk.sum_fps[HFI_HW_ICA])) {
-				clock_check = true;
-			}
-		} else {
-			dprintk(CVP_WARN, "dcvs is disabled, %d != %d + %d\n",
-				hdr.size, sizeof(struct cvp_hfi_msg_session_hdr_ext),
-				sizeof(struct cvp_hfi_buf_type));
-		}
-	}
 	hfi_err = hdr.error_type;
 	if (rc) {
 		dprintk(CVP_ERR, "%s %s: cvp_wait_process_message rc %d\n",
 			current->comm, __func__, rc);
-		#if IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX)
-		synx_state = SYNX_STATE_SIGNALED_ERROR;
-		#elif IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX_V2)
 		synx_state = SYNX_STATE_SIGNALED_CANCEL;
-		#endif
 		goto exit;
 	}
 	if (hfi_err == HFI_ERR_SESSION_FLUSHED) {
@@ -550,7 +532,8 @@ static int cvp_fence_proc(struct msm_cvp_inst *inst,
 	}
 
 exit:
-	rc = cvp_synx_ops(inst, CVP_OUTPUT_SYNX, fc, &synx_state);
+	rc = inst->core->synx_ftbl->cvp_synx_ops(inst, CVP_OUTPUT_SYNX,
+			fc, &synx_state);
 	if (clock_check)
 		cvp_check_clock(inst,
 			(struct cvp_hfi_msg_session_hdr_ext *)&hdr);
@@ -587,7 +570,7 @@ static void cvp_free_fence_data(struct cvp_fence_command *f)
 
 static int cvp_fence_thread(void *data)
 {
-	int rc = 0;
+	int rc = 0, num_fences;
 	struct msm_cvp_inst *inst;
 	struct cvp_fence_queue *q;
 	enum queue_state state;
@@ -621,14 +604,21 @@ wait:
 	pkt = f->pkt;
 	synx = (u32 *)f->synx;
 
-	ktid = pkt->client_data.kdata & (FENCE_BIT - 1);
+	num_fences = f->num_fences - f->output_index;
+	/*
+	 * If there is output fence, go through fence path
+	 * Otherwise, go through non-fenced path
+	 */
+	if (num_fences)
+		ktid = pkt->client_data.kdata & (FENCE_BIT - 1);
+
 	dprintk(CVP_SYNX, "%s pkt type %d on ktid %llu frameID %llu\n",
 		current->comm, pkt->packet_type, ktid, f->frame_id);
 
 	rc = cvp_fence_proc(inst, f, pkt);
 
 	mutex_lock(&q->lock);
-	cvp_release_synx(inst, f);
+	inst->core->synx_ftbl->cvp_release_synx(inst, f);
 	list_del_init(&f->list);
 	state = q->state;
 	mutex_unlock(&q->lock);
@@ -646,7 +636,6 @@ wait:
 exit:
 	dprintk(CVP_SYNX, "%s exit\n", current->comm);
 	cvp_put_inst(inst);
-	do_exit(rc);
 	return rc;
 }
 
@@ -745,9 +734,9 @@ static int msm_cvp_session_process_hfi_fence(struct msm_cvp_inst *inst,
 
 	f->pkt->client_data.kdata |= FENCE_BIT;
 
-	rc = cvp_import_synx(inst, f, fence);
+	rc = inst->core->synx_ftbl->cvp_import_synx(inst, f, fence);
 	if (rc) {
-		kfree(f);
+		cvp_free_fence_data(f);
 		goto exit;
 	}
 
@@ -761,7 +750,190 @@ exit:
 	cvp_put_inst(s);
 	return rc;
 }
-#endif
+
+
+static int cvp_populate_fences( struct eva_kmd_hfi_packet *in_pkt,
+	unsigned int offset, unsigned int num, struct msm_cvp_inst *inst)
+{
+#ifdef CVP_CONFIG_SYNX_V2
+	u32 i, buf_offset;
+	struct eva_kmd_fence fences[MAX_HFI_FENCE_SIZE >> 2];
+	struct cvp_fence_command *f;
+	struct cvp_hfi_cmd_session_hdr *cmd_hdr;
+	struct cvp_fence_queue *q;
+	enum op_mode mode;
+	struct cvp_buf_type *buf;
+
+	int rc = 0;
+	q = &inst->fence_cmd_queue;
+
+	mutex_lock(&q->lock);
+	mode = q->mode;
+	mutex_unlock(&q->lock);
+
+	if (mode == OP_DRAINING) {
+		dprintk(CVP_SYNX, "%s: flush in progress\n", __func__);
+		rc = -EBUSY;
+		goto exit;
+	}
+
+	cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)in_pkt;
+	rc = cvp_alloc_fence_data((&f), cmd_hdr->size);
+	if (rc)
+		goto exit;
+
+	f->type = cmd_hdr->packet_type;
+	f->mode = OP_NORMAL;
+	f->signature = 0xFEEDFACE;
+	f->num_fences = 0;
+	f->output_index = 0;
+	buf_offset = offset;
+
+	if (!cvp_kernel_fence_enabled) {
+		for (i = 0; i < num; i++) {
+			buf = (struct cvp_buf_type *)&in_pkt->pkt_data[buf_offset];
+			buf_offset += sizeof(*buf) >> 2;
+
+			if (buf->input_handle || buf->output_handle) {
+				f->num_fences++;
+				if (buf->input_handle)
+					f->output_index++;
+			}
+		}
+		f->signature = 0xB0BABABE;
+		if (f->num_fences)
+			goto fence_cmd_queue;
+
+		goto free_exit;
+	}
+
+	/* First pass to find INPUT synx handles */
+	for (i = 0; i < num; i++) {
+		buf = (struct cvp_buf_type *)&in_pkt->pkt_data[buf_offset];
+		buf_offset += sizeof(*buf) >> 2;
+
+		if (buf->input_handle) {
+			/* Check fence_type? */
+			fences[f->num_fences].h_synx = buf->input_handle;
+			f->num_fences++;
+			buf->fence_type &= ~INPUT_FENCE_BITMASK;
+			buf->input_handle = 0;
+		}
+	}
+	f->output_index = f->num_fences;
+
+	dprintk(CVP_SYNX, "%s:Input Fence passed - Number of Fences is %d\n",
+			__func__, f->num_fences);
+
+	/*
+	 * Second pass to find OUTPUT synx handle
+	 * If no of fences is 0 dont execute the below portion until line 911, return 0
+	 */
+	buf_offset = offset;
+	for (i = 0; i < num; i++) {
+			buf = (struct cvp_buf_type*)&in_pkt->pkt_data[buf_offset];
+			buf_offset += sizeof(*buf) >> 2;
+
+			if (buf->output_handle) {
+				/* Check fence_type? */
+				fences[f->num_fences].h_synx = buf->output_handle;
+				f->num_fences++;
+				buf->fence_type &= ~OUTPUT_FENCE_BITMASK;
+				buf->output_handle = 0;
+			}
+	}
+	dprintk(CVP_SYNX, "%s:Output Fence passed - Number of Fences is %d\n",
+			__func__, f->num_fences);
+//  if (!cvp_kernel_fence_enabled)
+//      {
+//          if (f->num_fences == 0)
+//              goto free_exit;
+//          else
+//          {
+//              isHWFence = true;
+//              goto free_exit;
+//          }
+//       }
+
+	if (f->num_fences == 0)
+			goto free_exit;
+
+	rc = inst->core->synx_ftbl->cvp_import_synx(inst, f,
+			(u32*)fences);
+
+	if (rc)
+			goto free_exit;
+
+fence_cmd_queue:
+	memcpy(f->pkt, cmd_hdr, cmd_hdr->size);
+	f->pkt->client_data.kdata |= FENCE_BIT;
+
+	mutex_lock(&q->lock);
+	list_add_tail(&f->list, &inst->fence_cmd_queue.wait_list);
+	mutex_unlock(&q->lock);
+
+	wake_up(&inst->fence_cmd_queue.wq);
+
+	return f->num_fences;
+
+free_exit:
+	cvp_free_fence_data(f);
+exit:
+#endif	/* CVP_CONFIG_SYNX_V2 */
+	return rc;
+}
+
+
+static int cvp_enqueue_pkt(struct msm_cvp_inst* inst,
+	struct eva_kmd_hfi_packet *in_pkt,
+	unsigned int in_offset,
+	unsigned int in_buf_num)
+{
+	struct cvp_hfi_device *hdev;
+	struct cvp_hfi_cmd_session_hdr *cmd_hdr;
+	int pkt_type, rc = 0;
+	enum buf_map_type map_type;
+	hdev = inst->core->device;
+
+	pkt_type = in_pkt->pkt_data[1];
+	map_type = cvp_find_map_type(pkt_type);
+
+	cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)in_pkt;
+	/* The kdata will be overriden by transaction ID if the cmd has buf */
+	cmd_hdr->client_data.kdata = 0;
+
+	if (map_type == MAP_PERSIST)
+		rc = msm_cvp_map_user_persist(inst, in_pkt, in_offset, in_buf_num);
+	else if (map_type == UNMAP_PERSIST)
+		rc = msm_cvp_mark_user_persist(inst, in_pkt, in_offset, in_buf_num);
+	else
+		rc = msm_cvp_map_frame(inst, in_pkt, in_offset, in_buf_num);
+
+	if (rc)
+		return rc;
+
+	rc = cvp_populate_fences(in_pkt, in_offset, in_buf_num, inst);
+	if (rc == 0) {
+		rc = call_hfi_op(hdev, session_send, (void*)inst->session,
+			in_pkt);
+		if (rc) {
+			dprintk(CVP_ERR,"%s: Failed in call_hfi_op %d, %x\n",
+					__func__, in_pkt->pkt_data[0],
+					in_pkt->pkt_data[1]);
+			if (map_type == MAP_FRAME)
+				msm_cvp_unmap_frame(inst,
+					cmd_hdr->client_data.kdata);
+		}
+		goto exit;
+	} else {
+		if (rc > 0)
+			dprintk(CVP_SYNX, "Going fenced path\n");
+		goto exit;
+	}
+
+exit:
+	return rc;
+}
 
 static inline int div_by_1dot5(unsigned int a)
 {
@@ -1067,9 +1239,7 @@ int msm_cvp_session_create(struct msm_cvp_inst *inst)
 		goto fail_init;
 	}
 
-#ifndef DISABLE_SYNX
-	cvp_sess_init_synx(inst);
-#endif
+	inst->core->synx_ftbl->cvp_sess_init_synx(inst);
 	sq = &inst->session_queue;
 	spin_lock(&sq->lock);
 	sq->state = QUEUE_ACTIVE;
@@ -1091,7 +1261,6 @@ static int session_state_check_init(struct msm_cvp_inst *inst)
 	return msm_cvp_session_create(inst);
 }
 
-#ifndef DISABLE_SYNX
 static int cvp_fence_thread_start(struct msm_cvp_inst *inst)
 {
 	u32 tnum = 0;
@@ -1164,7 +1333,6 @@ static int cvp_fence_thread_stop(struct msm_cvp_inst *inst)
 
 	return 0;
 }
-#endif
 
 static int msm_cvp_session_start(struct msm_cvp_inst *inst,
 		struct eva_kmd_arg *arg)
@@ -1191,12 +1359,7 @@ static int msm_cvp_session_start(struct msm_cvp_inst *inst,
 		hdev = inst->core->device;
 		call_hfi_op(hdev, pm_qos_update, hdev->hfi_device_data);
 	}
-
-	#ifndef DISABLE_SYNX
-		return cvp_fence_thread_start(inst);
-	#else
-		return 0;
-	#endif
+	return cvp_fence_thread_start(inst);
 }
 
 static int msm_cvp_session_stop(struct msm_cvp_inst *inst,
@@ -1217,17 +1380,13 @@ static int msm_cvp_session_stop(struct msm_cvp_inst *inst,
 	}
 	sq->state = QUEUE_STOP;
 
-	pr_info(CVP_DBG_TAG "Stop session: %pK session_id = %d\n",
-		"sess", inst, hash32_ptr(inst->session));
+	dprintk(CVP_SESS, "Stop session: %pK session_id = %d\n",
+			inst, hash32_ptr(inst->session));
 	spin_unlock(&sq->lock);
 
 	wake_up_all(&inst->session_queue.wq);
 
-	#ifndef DISABLE_SYNX
-		return cvp_fence_thread_stop(inst);
-	#else
-		return 0;
-	#endif
+	return cvp_fence_thread_stop(inst);
 }
 
 int msm_cvp_session_queue_stop(struct msm_cvp_inst *inst)
@@ -1251,11 +1410,7 @@ int msm_cvp_session_queue_stop(struct msm_cvp_inst *inst)
 
 	wake_up_all(&inst->session_queue.wq);
 
-	#ifndef DISABLE_SYNX
-		return cvp_fence_thread_stop(inst);
-	#else
-		return 0;
-	#endif
+	return cvp_fence_thread_stop(inst);
 }
 
 static int msm_cvp_session_ctrl(struct msm_cvp_inst *inst,
@@ -1563,7 +1718,6 @@ static int msm_cvp_set_sysprop(struct msm_cvp_inst *inst,
 	return rc;
 }
 
-#ifndef DISABLE_SYNX
 static int cvp_drain_fence_sched_list(struct msm_cvp_inst *inst)
 {
 	unsigned long wait_time;
@@ -1630,8 +1784,9 @@ static void cvp_clean_fence_queue(struct msm_cvp_inst *inst, int synx_state)
 
 		list_del_init(&f->list);
 		msm_cvp_unmap_frame(inst, f->pkt->client_data.kdata);
-		cvp_cancel_synx(inst, CVP_OUTPUT_SYNX, f, synx_state);
-		cvp_release_synx(inst, f);
+		inst->core->synx_ftbl->cvp_cancel_synx(inst, CVP_OUTPUT_SYNX,
+			f, synx_state);
+		inst->core->synx_ftbl->cvp_release_synx(inst, f);
 		cvp_free_fence_data(f);
 	}
 
@@ -1640,46 +1795,33 @@ static void cvp_clean_fence_queue(struct msm_cvp_inst *inst, int synx_state)
 
 		dprintk(CVP_SYNX, "%s: (%#x)flush frame %llu %llu sched_list\n",
 			__func__, hash32_ptr(inst->session), ktid, f->frame_id);
-		cvp_cancel_synx(inst, CVP_INPUT_SYNX, f, synx_state);
+		inst->core->synx_ftbl->cvp_cancel_synx(inst, CVP_INPUT_SYNX,
+			f, synx_state);
 	}
 
 	mutex_unlock(&q->lock);
 }
-#endif
 
 int cvp_clean_session_queues(struct msm_cvp_inst *inst)
 {
-	#ifndef DISABLE_SYNX
 	struct cvp_fence_queue *q;
-	#endif
 	struct cvp_session_queue *sq;
-	#ifndef DISABLE_SYNX
 	u32 count = 0, max_retries = 100;
-	#endif
 
-	#ifndef DISABLE_SYNX
 	q = &inst->fence_cmd_queue;
 	mutex_lock(&q->lock);
 	if (q->state == QUEUE_START) {
 		mutex_unlock(&q->lock);
-	#if IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX)
-	cvp_clean_fence_queue(inst, SYNX_STATE_SIGNALED_ERROR);
-	#elif IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX_V2)
-	cvp_clean_fence_queue(inst, SYNX_STATE_SIGNALED_CANCEL);
-	#endif
+		cvp_clean_fence_queue(inst, SYNX_STATE_SIGNALED_CANCEL);
 	} else {
 		dprintk(CVP_WARN, "Incorrect fence cmd queue state %d\n",
 			q->state);
 		mutex_unlock(&q->lock);
 	}
-	#endif
 
-	#ifndef DISABLE_SYNX
 	cvp_fence_thread_stop(inst);
-	#endif
 
 	/* Waiting for all output synx sent */
-#ifndef DISABLE_SYNX
 retry:
 	mutex_lock(&q->lock);
 	if (list_empty(&q->sched_list)) {
@@ -1692,7 +1834,6 @@ retry:
 		return -EBUSY;
 
 	goto retry;
-#endif
 
 	sq = &inst->session_queue_fence;
 	spin_lock(&sq->lock);
@@ -1706,9 +1847,7 @@ static int cvp_flush_all(struct msm_cvp_inst *inst)
 {
 	int rc = 0;
 	struct msm_cvp_inst *s;
-	#ifndef DISABLE_SYNX
 	struct cvp_fence_queue *q;
-	#endif
 	struct cvp_hfi_device *hdev;
 
 	if (!inst || !inst->core) {
@@ -1722,14 +1861,10 @@ static int cvp_flush_all(struct msm_cvp_inst *inst)
 
 	dprintk(CVP_SESS, "session %llx (%#x)flush all starts\n",
 			inst, hash32_ptr(inst->session));
-	#ifndef DISABLE_SYNX
 	q = &inst->fence_cmd_queue;
-	#endif
 	hdev = inst->core->device;
 
-	#ifndef DISABLE_SYNX
 	cvp_clean_fence_queue(inst, SYNX_STATE_SIGNALED_CANCEL);
-	#endif
 
 	dprintk(CVP_SESS, "%s: (%#x) send flush to fw\n",
 			__func__, hash32_ptr(inst->session));
@@ -1752,15 +1887,11 @@ static int cvp_flush_all(struct msm_cvp_inst *inst)
 			__func__, hash32_ptr(inst->session));
 
 exit:
-	#ifndef DISABLE_SYNX
 	rc = cvp_drain_fence_sched_list(inst);
-	#endif
 
-	#ifndef DISABLE_SYNX
 	mutex_lock(&q->lock);
 	q->mode = OP_NORMAL;
 	mutex_unlock(&q->lock);
-	#endif
 
 	cvp_put_inst(s);
 	return rc;
@@ -1837,9 +1968,7 @@ int msm_cvp_handle_syscall(struct msm_cvp_inst *inst, struct eva_kmd_arg *arg)
 	}
 	case EVA_KMD_SEND_FENCE_CMD_PKT:
 	{
-		#ifndef DISABLE_SYNX
 		rc = msm_cvp_session_process_hfi_fence(inst, arg);
-		#endif
 		break;
 	}
 	case EVA_KMD_SESSION_CONTROL:

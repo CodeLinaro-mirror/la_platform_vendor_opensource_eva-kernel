@@ -336,7 +336,7 @@ wait:
 				frame->pkt_type);
 		mutex_unlock(&inst->frames.lock);
 		#ifndef DISABLE_SYNX
-		cvp_dump_fence_queue(inst);
+		inst->core->synx_ftbl->cvp_dump_fence_queue(inst);
 		#endif
 	}
 
@@ -391,7 +391,7 @@ int msm_cvp_destroy(struct msm_cvp_inst *inst)
 	__deinit_session_queue(inst);
 	#ifndef DISABLE_SYNX
 	__deinit_fence_queue(inst);
-	cvp_sess_deinit_synx(inst);
+	inst->core->synx_ftbl->cvp_sess_deinit_synx(inst);
 	#endif
 
 	pr_info(CVP_DBG_TAG "Closed cvp instance: %pK session_id = %d\n",
