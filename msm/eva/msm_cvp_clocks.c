@@ -7,6 +7,7 @@
 #include "cvp_hfi_api.h"
 #include "msm_cvp_debug.h"
 #include "msm_cvp_clocks.h"
+#include <linux/clk/qcom.h>
 
 static bool __mmrm_client_check_scaling_supported(
 				struct mmrm_client_desc *client)
@@ -318,7 +319,7 @@ int msm_cvp_enable_sw_ctrl(struct iris_hfi_device *device,
                         continue;
 
 		if (!cl->clk) {
-			dprintk(CVP_WARN, "%s: clk handle for %s is NULL, getting clk handle!! \n", __func__, cl->name);
+			dprintk(CVP_PWR, "%s: clk handle for %s is NULL, getting clk handle!! \n", __func__, cl->name);
 			cl->clk = clk_get(&device->res->pdev->dev, cl->name);
 			if (IS_ERR_OR_NULL(cl->clk)) {
 				dprintk(CVP_ERR,
@@ -337,7 +338,7 @@ int msm_cvp_enable_sw_ctrl(struct iris_hfi_device *device,
 		if (!__clk_is_enabled(cl->clk)) {
 			dprintk(CVP_ERR, "%s: clock %s not actually enabled\n",
 					__func__, cl->name);
-			// qcom_clk_dump(cl->clk, NULL, NULL);
+			qcom_clk_dump(cl->clk, NULL, NULL);
 			return -EINVAL;
 		}
 
@@ -414,6 +415,7 @@ int msm_cvp_disable_sw_ctrl(struct iris_hfi_device *device,
 		const char *name)
 {
 	struct clock_info *cl;
+	int rc = 0;
 
 	if (!device) {
 		dprintk(CVP_ERR, "Invalid params: %pK\n", device);
@@ -424,32 +426,26 @@ int msm_cvp_disable_sw_ctrl(struct iris_hfi_device *device,
 		if (strcmp(cl->name, name))
 			continue;
 
-		if (!cl->clk) {
-			dprintk(CVP_ERR, "%s: clk handle for %s is NULL!! \n", __func__, cl->name);
-			return -EINVAL;
-		}
-
-		clk_disable_unprepare(cl->clk);
-		dprintk(CVP_PWR, "Clock: %s disable and unprepare\n",
-			cl->name);
-
-		if (__clk_is_enabled(cl->clk)) {
-			dprintk(CVP_ERR, "%s: clock %s could not be disabled\n",
-					__func__, cl->name);
-			if (cl->clk) {
-				clk_put(cl->clk);
-				cl->clk = NULL;
-			}
-			return -EINVAL;
-		}
-
 		if (cl->clk) {
-			dprintk(CVP_WARN, "%s: Get clk handle for %s done earlier, putting clk handle!! \n", __func__, cl->name);
+			clk_disable_unprepare(cl->clk);
+			dprintk(CVP_PWR, "Clock: %s disable and unprepare\n",
+				cl->name);
+
+			if (__clk_is_enabled(cl->clk)) {
+				dprintk(CVP_ERR, "%s: clock %s could not be disabled\n",
+						__func__, cl->name);
+				rc = -EINVAL;
+			}
+
+			dprintk(CVP_PWR, "%s: Putting clk handle for %s \n", __func__, cl->name);
 			clk_put(cl->clk);
 			cl->clk = NULL;
+		} else {
+			dprintk(CVP_ERR, "%s: clk handle for %s is NULL!\n", __func__, cl->name);
+			rc = -EINVAL;
 		}
 
-		return 0;
+		return rc;
 	}
 
 	dprintk(CVP_ERR, "%s clock %s not found\n", __func__, name);

@@ -35,7 +35,7 @@ bool msm_cvp_mmrm_enabled = true;
 bool msm_cvp_mmrm_enabled = !true;
 #endif
 bool msm_cvp_dcvs_disable = !true;
-int msm_cvp_minidump_enable = !1;
+int msm_cvp_minidump_enable = 1;
 
 #define MAX_DBG_BUF_SIZE 4096
 
@@ -335,7 +335,7 @@ DEFINE_DEBUGFS_ATTRIBUTE(clk_rate_fops, _clk_rate_get, _clk_rate_set, "%llu\n");
 static int _dsp_dbg_set(void *data, u64 val)
 {
 
-	if (val == 0 || val >= (1 << (EVA_MEM_DEBUG_ON + 1))) {
+	if (val == 0 || val >= (1 << (EVA_QDI_PROFILE_ON + 1))) {
 		dprintk(CVP_WARN, "DSP debug mask cannot be %llx\n", val);
 		return 0;
 	}

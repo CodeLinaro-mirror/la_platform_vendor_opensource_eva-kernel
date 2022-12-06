@@ -79,7 +79,9 @@ enum eva_dsp_debug_bits {
 	EVA_PORT_DEBUG_ON = 1,
 	EVA_QDI_INFO_ON = 2,
 	EVA_QDI_DEBUG_ON = 3,
-	EVA_MEM_DEBUG_ON = 4
+	EVA_MEM_DEBUG_ON = 4,
+	EVA_PORT_PROFILE_ON = 5,
+	EVA_QDI_PROFILE_ON = 6
 };
 
 struct eva_power_req {
