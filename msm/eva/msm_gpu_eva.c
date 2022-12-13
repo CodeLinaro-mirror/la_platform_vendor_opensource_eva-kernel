@@ -67,7 +67,7 @@ static int msm_eva_notify_gpu_status( u32 status )
 	int rc = 0;
 	u32 res_msg_id = 0;
 	struct msm_cvp_core *core;
-	int wait_ret = 0;
+	//int wait_ret = 0;
 	struct msm_cvp_inst *inst = NULL;
 	struct cvp_hal_session *session = NULL;
 
@@ -98,6 +98,7 @@ static int msm_eva_notify_gpu_status( u32 status )
 			dprintk(CVP_ERR,"notify gpu status failed\n");
 			return -EINVAL;
 		}
+#if 0
 		else {
 			if((inst) && ( inst->state != MSM_CVP_CORE_INVALID)){
 				wait_ret = wait_for_completion_timeout(
@@ -112,6 +113,7 @@ static int msm_eva_notify_gpu_status( u32 status )
 				}
 			}
 		}
+#endif
 	}
 	return rc;
 }
