@@ -61,8 +61,6 @@ struct cvp_tzbsp_memprot {
 
 /* MMCX related */
 #define MMCX_CB_RESET_ENABLE
-// #define MMCX_PROXY_ENABLE
-// #define MMCX_VOLTAGE_CHANGE
 
 enum tzbsp_subsys_state {
 	TZ_SUBSYS_STATE_SUSPEND = 0,
@@ -81,9 +79,6 @@ const int cvp_max_packets = 32;
 static bool from_callback = false;
 static bool reset_pulse_applied = false;
 static bool poweron_inprogress = false;
-#ifdef MMCX_PROXY_ENABLE
-static bool mmcx_proxy_vote = false;
-#endif
 
 static void iris_hfi_pm_handler(struct work_struct *work);
 static DECLARE_DELAYED_WORK(iris_hfi_pm_work, iris_hfi_pm_handler);
@@ -93,10 +88,6 @@ static int __disable_regulator(struct iris_hfi_device *device,
 		const char *name);
 static int __enable_regulator(struct iris_hfi_device *device,
 		const char *name);
-#ifdef MMCX_VOLTAGE_CHANGE
-static int __set_voltage_regulator(struct iris_hfi_device *device,
-		const char *name, int min_uV, int max_uV);
-#endif
 static void __flush_debug_queue(struct iris_hfi_device *device, u8 *packet);
 static int __initialize_packetization(struct iris_hfi_device *device);
 static struct cvp_hal_session *__get_session(struct iris_hfi_device *device,
@@ -4021,31 +4012,7 @@ static int __enable_hw_power_collapse(struct iris_hfi_device *device)
 				__func__, rc);
 	return rc;
 }
-#ifdef MMCX_VOLTAGE_CHANGE
-static int __set_voltage_regulator(struct iris_hfi_device *device,
-		const char *name, int min_uV, int max_uV)
-{
-	int rc = 0;
-	struct regulator_info *rinfo;
 
-	iris_hfi_for_each_regulator(device, rinfo) {
-		if (strcmp(rinfo->name, name))
-			continue;
-		rc = regulator_set_voltage(rinfo->regulator, (int)min_uV, (int)max_uV);
-		if (rc) {
-			dprintk(CVP_ERR, "EXPERIMENT_PROXY: Failed to set voltage level %s: %d\n",
-					rinfo->name, rc);
-			return rc;
-		}
-
-		dprintk(CVP_WARN, "EXPERIMENT_PROXY: Done Setting Voltage level %d %d for regulator %s\n", min_uV, max_uV, rinfo->name);
-		return 0;
-	}
-
-	dprintk(CVP_ERR, "EXPERIMENT_PROXY: regulator %s not found\n");
-	return -EINVAL;
-}
-#endif
 static int __enable_regulator(struct iris_hfi_device *device,
 		const char *name)
 {
@@ -4089,10 +4056,6 @@ static int __disable_regulator(struct iris_hfi_device *device,
 
 		__disable_regulator_impl(rinfo, device);
 		dprintk(CVP_PWR, "%s Disabled regulator %s\n", __func__, name);
-#ifdef MMCX_PROXY_ENABLE
-		if (!strcmp(name, "rpmh-mmcx"))
-			mmcx_proxy_vote = false;
-#endif
 		return 0;
 	}
 
@@ -4573,44 +4536,10 @@ static int __iris_power_on(struct iris_hfi_device *device)
 	reset_pulse_applied = false;
 	from_callback = false;
 
-#ifdef MMCX_VOLTAGE_CHANGE
-	/* setting voltage level for MMCX regulator: min_uV, max_uV --> SVS, NOM */
-	rc = __set_voltage_regulator(device, "rpmh-mmcx", RPMH_REGULATOR_LEVEL_SVS, RPMH_REGULATOR_LEVEL_NOM);
-	if (rc) {
-		dprintk(CVP_ERR, "%s: EXPERIMENT_PROXY: Failed to set voltage rpmh-mmcx: %d\n", __func__, rc);
-		// return rc;
-	}
-	else
-	{
-		dprintk(CVP_WARN, "%s: EXPERIMENT_PROXY: Set Voltage level successful: %d\n", __func__, rc);
-	}
-#endif
-
-#ifdef MMCX_PROXY_ENABLE
-	/* Adding proxy vote for MMCX regulator */
-	if(!mmcx_proxy_vote)
-	{
-		rc = __enable_regulator(device, "rpmh-mmcx");
-		if (rc) {
-			dprintk(CVP_ERR, "EXPERIMENT_PROXY: Failed to enable rpmh-mmcx: %d\n", rc);
-			// return rc;
-		}
-		else
-		{
-			mmcx_proxy_vote = true;
-			dprintk(CVP_WARN, "EXPERIMENT_PROXY: Enabled MMCX regulator: %d\n", rc);
-		}
-	}
-	else
-	{
-		dprintk(CVP_WARN, "EXPERIMENT_PROXY: MMCX regulator already enabled!\n");
-	}
-#endif
-
-		rc = __vote_spad_clks(device);
-		dprintk(CVP_WARN, "EVA_POWER_ON: voting spad in regular power on sequence, rc = %d \n", rc);
-		if (rc)
-			goto fail_voting_spad;
+	rc = __vote_spad_clks(device);
+	dprintk(CVP_WARN, "EVA_POWER_ON: voting spad in regular power on sequence, rc = %d \n", rc);
+	if (rc)
+		goto fail_voting_spad;
 
 	/* Vote for all hardware resources */
 	rc = __vote_buses(device, device->bus_vote.data,
@@ -4761,14 +4690,12 @@ static int eva_mmcx_cb(struct notifier_block *nb, unsigned long evt, void *p)
 	int rc = NOTIFY_OK;
 	struct iris_hfi_device *device = container_of(nb, struct iris_hfi_device, mmcx_PC_nb);
 #endif
-	dprintk(CVP_WARN, " ENTER: %s function \n", __FUNCTION__);
-	dprintk(CVP_WARN, "evt type = %d\n", evt);
 
 #ifdef MMCX_CB_RESET_ENABLE
 	switch (evt) {
 	case REGULATOR_EVENT_PRE_DISABLE:
 		if(reset_pulse_applied) {
-			dprintk(CVP_WARN, "EXPERIMENT_SIGNALING: REGULATOR_EVENT_PRE_DISABLE - Skipping reset pulse; Not required when EVA-PC is done!\n");
+			dprintk(CVP_CORE, "Skipping reset pulse; Not required when EVA-PC is done!\n");
 			return NOTIFY_OK;
 		}
 
@@ -4793,11 +4720,9 @@ static int eva_mmcx_cb(struct notifier_block *nb, unsigned long evt, void *p)
 
 		break;
 	default:
-	    dprintk(CVP_WARN, "default evt type = %d\n", evt);
 		break;
 	}
 #endif
-    dprintk(CVP_WARN, " EXIT: %s function \n", __FUNCTION__);
 	return rc;
 }
 
@@ -4810,14 +4735,34 @@ static int __register_for_MMCX(struct iris_hfi_device *device)
 		rc = regulator_register_notifier(device->rpmh_mmcx_reg,
 				&device->mmcx_PC_nb);
 		if (rc) {
-			dprintk(CVP_ERR, "Failed to register cb for MMCX PC, rc %d \n", rc);
+			dprintk(CVP_ERR, "Failed to register cb for MMCX-PC, rc %d \n", rc);
 		}
 	} else {
-		dprintk(CVP_ERR, "RPMH regulator is not enabled\n");
+		dprintk(CVP_ERR, "%s: RPMH regulator is not enabled\n", __FUNCTION__);
 	}
 
 	return rc;
 }
+#if 0
+static int __unregister_for_MMCX(struct iris_hfi_device *device)
+{
+	int rc = 1;
+
+	if (regulator_is_enabled(device->rpmh_mmcx_reg)) {
+		device->mmcx_PC_nb.notifier_call = eva_mmcx_cb;
+		rc = regulator_unregister_notifier(device->rpmh_mmcx_reg,
+				&device->mmcx_PC_nb);
+		if (rc) {
+			dprintk(CVP_ERR, "Failed to unregister cb for MMCX-PC, rc %d \n", rc);
+		}
+	} else {
+		dprintk(CVP_ERR, "%s: RPMH regulator is not enabled\n", __FUNCTION__);
+	}
+
+	return rc;
+}
+#endif
+
 static int __power_off_controller(struct iris_hfi_device *device)
 {
 	u32 lpi_status, reg_status = 0, count = 0, max_count = 1000;
@@ -5135,36 +5080,14 @@ static void power_off_iris2(struct iris_hfi_device *device)
 
 	__power_off_controller(device);
 
-#ifdef MMCX_PROXY_ENABLE
-	 // rc = __disable_regulator(device, "rpmh-mmcx");
-	 dprintk(CVP_WARN, "%s: MMCX_PROXY_ENABLE: %d\n", __func__, rc);
-#endif
-
-#ifdef MMCX_VOLTAGE_CHANGE
-		/* setting voltage level for MMCX regulator: min_uV, max_uV --> LOW_SVS, NOM */
-		rc = __set_voltage_regulator(device, "rpmh-mmcx", RPMH_REGULATOR_LEVEL_LOW_SVS, RPMH_REGULATOR_LEVEL_NOM);
-		if (rc) {
-			dprintk(CVP_ERR, "%s: EXPERIMENT_PROXY: Failed to set voltage rpmh-mmcx: %d\n", __func__, rc);
-			// return rc;
-		}
-		else
-		{
-			dprintk(CVP_WARN, "%s: EXPERIMENT_PROXY: Set Volatage level successful: %d\n", __func__, rc);
-		}
-#endif
-
 	if (__unvote_buses(device))
 		dprintk(CVP_WARN, "Failed to unvote for buses\n");
 
-#ifdef MMCX_CB_RESET_ENABLE
-	dprintk(CVP_WARN, "EXPERIMENT_SIGNALING: Before  unvote of spad \n");
 	__unvote_spad(device);
-	dprintk(CVP_WARN, "EXPERIMENT_SIGNALING: After unvote of spad \n");
-#endif
 
 	/*Do not access registers after this point!*/
 	device->power_enabled = false;
-	pr_info(CVP_DBG_TAG "EXPERIMENT_SIGNALING: cvp (eva) power collapsed\n", "pwr");
+	pr_info(CVP_DBG_TAG "cvp (eva) power collapsed\n", "pwr");
 }
 
 static inline int __resume(struct iris_hfi_device *device)
@@ -5475,7 +5398,7 @@ static int __load_fw(struct iris_hfi_device *device)
 
 	rc = __register_for_MMCX(device);
 	if (rc) {
-		dprintk(CVP_ERR, "EXPERIMENT_SIGNALING: Failed to register MMCX callback\n");
+		dprintk(CVP_ERR, "Failed to register MMCX callback\n");
 		goto fail_iris_power_on;
 	}
 
@@ -5507,6 +5430,16 @@ static void __unload_fw(struct iris_hfi_device *device)
 		flush_workqueue(device->iris_pm_workq);
 
 	unload_cvp_fw_impl(device);
+	#if 0
+	/*
+		Need to decide where to call unregister mmcx call. Calling here is
+		leading to crash in SSR case.
+		Multiple register mmcx call will not cause issue as notifier call chain does
+		not create duplicate handle.
+	*/
+	if (__unregister_for_MMCX(device))
+		dprintk(CVP_ERR, "Failed to un-register MMCX callback\n");
+	#endif
 	__interface_queues_release(device);
 	call_iris_op(device, power_off, device);
 	__deinit_resources(device);
