@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/pid.h>
@@ -449,7 +449,7 @@ static int msm_cvp_session_add_smem(struct msm_cvp_inst *inst,
 			smem->bitmap_index = i;
 			SET_USE_BITMAP(i, inst);
 		} else {
-			dprintk(CVP_WARN, "%s: not enough memory\n", __func__);
+			dprintk(CVP_MEM, "%s: not enough memory\n", __func__);
 			mutex_unlock(&inst->dma_cache.lock);
 			return -ENOMEM;
 		}
