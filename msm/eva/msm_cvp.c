@@ -577,7 +577,7 @@ static int cvp_fence_thread(void *data)
 	struct cvp_fence_command *f;
 	struct cvp_hfi_cmd_session_hdr *pkt;
 	u32 *synx;
-	u64 ktid;
+	u64 ktid = 0U;
 
 	dprintk(CVP_SYNX, "Enter %s\n", current->comm);
 
