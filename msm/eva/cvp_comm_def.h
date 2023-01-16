@@ -42,6 +42,7 @@ enum queue_state {
 #define CVP_MMRM_ENABLED 1
 #define CVP_FASTRPC_ENABLED 1
 #define CVP_MINIDUMP_ENABLED 1
+#define CVP_CONFIG_SYNX_V2 1
 #endif
 
 #endif

@@ -354,6 +354,7 @@ struct msm_cvp_core {
 	struct device *dev;
 	struct cvp_hfi_device *device;
 	struct msm_cvp_platform_data *platform_data;
+	struct msm_cvp_synx_ops *synx_ftbl;
 	struct list_head instances;
 	struct dentry *debugfs_root;
 	enum cvp_core_state state;
@@ -405,14 +406,8 @@ struct msm_cvp_inst {
 	u32 error_code;
 	/* prev_error_code saves value of error_code before it's cleared */
 	u32 prev_error_code;
-    #ifndef DISABLE_SYNX
-	#if IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX)
-	struct synx_session synx_session_id;
-	#elif IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX_V2)
 	struct synx_session *synx_session_id;
-	#endif
 	struct cvp_fence_queue fence_cmd_queue;
-    #endif
 };
 
 extern struct msm_cvp_drv *cvp_driver;
