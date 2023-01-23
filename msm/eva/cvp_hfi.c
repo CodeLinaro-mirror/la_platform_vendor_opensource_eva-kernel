@@ -79,6 +79,8 @@ const int cvp_max_packets = 32;
 static bool from_callback = false;
 static bool reset_pulse_applied = false;
 static bool poweron_inprogress = false;
+static bool sreg_prepared = false;
+static bool sreg_inited = false;
 
 static void iris_hfi_pm_handler(struct work_struct *work);
 static DECLARE_DELAYED_WORK(iris_hfi_pm_work, iris_hfi_pm_handler);
@@ -3292,7 +3294,6 @@ static irqreturn_t iris_hfi_isr_wd(int irq, void *dev)
 	return IRQ_HANDLED;
 }
 
-
 static int __init_regs_and_interrupts(struct iris_hfi_device *device,
 		struct msm_cvp_platform_resources *res)
 {
@@ -3903,11 +3904,21 @@ static int __init_resources(struct iris_hfi_device *device,
 		return -ENODEV;
 	}
 
-	rc = msm_cvp_init_clocks(device);
+	/* Clock Initialization */
+	rc = msm_cvp_init_regular_clocks(device);
 	if (rc) {
-		dprintk(CVP_ERR, "Failed to init clocks\n");
+		dprintk(CVP_ERR, "Failed to init regular clocks\n");
 		rc = -ENODEV;
-		goto err_init_clocks;
+		goto err_init_reg_clocks;
+	}
+	if(!sreg_inited) {
+		rc = msm_cvp_init_sreg_clocks(device);
+		if (rc) {
+			dprintk(CVP_ERR, "Failed to init sreg clocks\n");
+			rc = -ENODEV;
+			goto err_init_sreg_clocks;
+		}
+		sreg_inited = true;
 	}
 
 	for (i = 0; i < device->res->reset_set.count; i++) {
@@ -3935,10 +3946,11 @@ static int __init_resources(struct iris_hfi_device *device,
 
 	return rc;
 
-err_init_reset_clk:
 err_init_bus:
-	msm_cvp_deinit_clocks(device);
-err_init_clocks:
+err_init_reset_clk:
+err_init_sreg_clocks:
+	msm_cvp_deinit_regular_clocks(device);
+err_init_reg_clocks:
 	__deinit_regulators(device);
 	return rc;
 }
@@ -3947,7 +3959,7 @@ static void __deinit_resources(struct iris_hfi_device *device)
 {
 	__deinit_subcaches(device);
 	__deinit_bus(device);
-	msm_cvp_deinit_clocks(device);
+	msm_cvp_deinit_regular_clocks(device);
 	__deinit_regulators(device);
 	kfree(device->sys_init_capabilities);
 	device->sys_init_capabilities = NULL;
@@ -4684,6 +4696,28 @@ exit:
 		cpu_cs_x2rpmh);
 }
 
+static void clk_unprepare_work_handler(struct work_struct *work)
+{
+	struct msm_cvp_core *core;
+	struct iris_hfi_device *device;
+
+	core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
+	if (core)
+		device = core->device->hfi_device_data;
+	else
+		return;
+
+	dprintk(CVP_CORE, "Unpreparing SREG's\n");
+	msm_cvp_unprepare_clk(device, "gcc_video_axi0_sreg");
+	msm_cvp_unprepare_clk(device, "gcc_video_axi1_sreg");
+	msm_cvp_unprepare_clk(device, "gcc_iris_ss_hf_axi1_sreg");
+	msm_cvp_unprepare_clk(device, "gcc_iris_ss_spd_axi1_sreg");
+
+	sreg_prepared = false;
+}
+
+static DECLARE_WORK(clk_unprepare_work, clk_unprepare_work_handler);
+
 static int eva_mmcx_cb(struct notifier_block *nb, unsigned long evt, void *p)
 {
 #ifdef MMCX_CB_RESET_ENABLE
@@ -4715,6 +4749,11 @@ static int eva_mmcx_cb(struct notifier_block *nb, unsigned long evt, void *p)
 			dprintk(CVP_WARN, "reset pulse executed successfully\n");
 			from_callback = false;
 			reset_pulse_applied = true;
+			/*  Can not call unprepare sreg in case of reset_ahb2_axi_bridge returns fail
+			    becasue if we unprepare the sreg clocks in fail case and mmcx_cb called
+				again, we will go and do clk enable operations on unprepared sreg clocks.
+			*/
+			queue_work(device->clk_unprepare_workq, &clk_unprepare_work);
 		}
 		mutex_unlock(&device->mmcx_lock);
 
@@ -4858,6 +4897,16 @@ static int __power_off_controller(struct iris_hfi_device *device)
 	__write_register(device, CVP_WRAPPER_QNS4PDXFIFO_RESET, 0x1);
 	__write_register(device, CVP_WRAPPER_QNS4PDXFIFO_RESET, 0x0);
 	__write_register(device, CVP_WRAPPER_AXI_CLOCK_CONFIG, 0x0);
+
+	/*Preparing SREG clks as we can't call clk_prepare in mmcx cb*/
+	if(!sreg_prepared) {
+		dprintk(CVP_CORE, "Preparing SREG's\n");
+		msm_cvp_prepare_clk(device, "gcc_video_axi0_sreg");
+		msm_cvp_prepare_clk(device, "gcc_video_axi1_sreg");
+		msm_cvp_prepare_clk(device, "gcc_iris_ss_hf_axi1_sreg");
+		msm_cvp_prepare_clk(device, "gcc_iris_ss_spd_axi1_sreg");
+		sreg_prepared = true;
+	}
 
 	/* HPG 6.2.2 Step 7 */
 #ifdef EVA_LSR
@@ -5754,6 +5803,13 @@ static struct iris_hfi_device *__add_device(u32 device_id,
 			"pm_workerq_iris");
 	if (!hdevice->iris_pm_workq) {
 		dprintk(CVP_ERR, ": create pm workq failed\n");
+		goto err_cleanup;
+	}
+
+	hdevice->clk_unprepare_workq = create_singlethread_workqueue(
+			"clk_unprepare_workq");
+	if (!hdevice->clk_unprepare_workq) {
+		dprintk(CVP_ERR, ": create clk unprepare workq failed\n");
 		goto err_cleanup;
 	}
 

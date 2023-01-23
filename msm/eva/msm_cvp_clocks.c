@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "msm_cvp_common.h"
@@ -318,19 +318,7 @@ int msm_cvp_enable_sw_ctrl(struct iris_hfi_device *device,
 	iris_hfi_for_each_clock(device, cl) {
 		if (strcmp(cl->name, name))
                         continue;
-
-		if (!cl->clk) {
-			dprintk(CVP_PWR, "%s: clk handle for %s is NULL, getting clk handle again!! \n", __func__, cl->name);
-			cl->clk = clk_get(&device->res->pdev->dev, cl->name);
-			if (IS_ERR_OR_NULL(cl->clk)) {
-				dprintk(CVP_ERR,
-					"Failed to get clock: %s\n", cl->name);
-				rc = PTR_ERR(cl->clk) ? : -EINVAL;
-				cl->clk = NULL;
-				return rc;
-			}
-		}
-		rc = clk_prepare_enable(cl->clk);
+		rc = clk_enable(cl->clk);
 		if (rc) {
 			dprintk(CVP_ERR, "Failed to enable clock %s\n",
 				cl->name);
@@ -343,8 +331,58 @@ int msm_cvp_enable_sw_ctrl(struct iris_hfi_device *device,
 			return -EINVAL;
 		}
 
-		dprintk(CVP_PWR, "Clock: %s prepared and enabled\n",
+		dprintk(CVP_PWR, "Clock: %s enabled\n",
 				cl->name);
+		return 0;
+	}
+
+	dprintk(CVP_ERR, "%s clock %s not found\n", __func__, name);
+	return -EINVAL;
+}
+
+int msm_cvp_prepare_clk(struct iris_hfi_device *device,
+		const char *name)
+{
+	struct clock_info *cl = NULL;
+	int rc = 0;
+
+	if (!device) {
+		dprintk(CVP_ERR, "Invalid params: %pK\n", device);
+		return -EINVAL;
+	}
+
+	iris_hfi_for_each_clock(device, cl) {
+		if (strcmp(cl->name, name))
+                        continue;
+		rc = clk_prepare(cl->clk);
+		if (rc) {
+			dprintk(CVP_ERR, "Failed to prepare clock %s\n",
+				cl->name);
+			return rc;
+		}
+		dprintk(CVP_PWR, "Clock: %s prepared \n", cl->name);
+		return 0;
+	}
+
+	dprintk(CVP_ERR, "%s clock %s not found\n", __func__, name);
+	return -EINVAL;
+}
+
+int msm_cvp_unprepare_clk(struct iris_hfi_device *device,
+		const char *name)
+{
+	struct clock_info *cl = NULL;
+
+	if (!device) {
+		dprintk(CVP_ERR, "Invalid params: %pK\n", device);
+		return -EINVAL;
+	}
+
+	iris_hfi_for_each_clock_reverse(device, cl) {
+		if (strcmp(cl->name, name))
+                        continue;
+		clk_unprepare(cl->clk);
+		dprintk(CVP_PWR, "Clock: %s unprepared \n", cl->name);
 		return 0;
 	}
 
@@ -468,8 +506,8 @@ int msm_cvp_disable_sw_ctrl(struct iris_hfi_device *device,
 			continue;
 
 		if (cl->clk) {
-			clk_disable_unprepare(cl->clk);
-			dprintk(CVP_PWR, "Clock: %s disable and unprepare\n",
+			clk_disable(cl->clk);
+			dprintk(CVP_PWR, "Clock: %s disabled\n",
 				cl->name);
 
 			if (__clk_is_enabled(cl->clk)) {
@@ -477,10 +515,6 @@ int msm_cvp_disable_sw_ctrl(struct iris_hfi_device *device,
 						__func__, cl->name);
 				rc = -EINVAL;
 			}
-
-			dprintk(CVP_PWR, "%s: Putting clk handle for %s \n", __func__, cl->name);
-			clk_put(cl->clk);
-			cl->clk = NULL;
 		} else {
 			dprintk(CVP_ERR, "%s: clk handle for %s is NULL!\n", __func__, cl->name);
 			rc = -EINVAL;
@@ -535,7 +569,7 @@ int msm_cvp_disable_unprepare_clk(struct iris_hfi_device *device,
 	return -EINVAL;
 }
 
-int msm_cvp_init_clocks(struct iris_hfi_device *device)
+int msm_cvp_init_regular_clocks(struct iris_hfi_device *device)
 {
 	int rc = 0;
 	struct clock_info *cl = NULL;
@@ -545,21 +579,24 @@ int msm_cvp_init_clocks(struct iris_hfi_device *device)
 		return -EINVAL;
 	}
 
-	iris_hfi_for_each_clock(device, cl) {
-
-		dprintk(CVP_PWR, "%s: scalable? %d, count %d\n",
-			cl->name, cl->has_scaling, cl->count);
-	}
+	dprintk(CVP_PWR, "Getting regular clocks\n");
 
 	iris_hfi_for_each_clock(device, cl) {
 		if (!cl->clk) {
-			cl->clk = clk_get(&device->res->pdev->dev, cl->name);
-			if (IS_ERR_OR_NULL(cl->clk)) {
-				dprintk(CVP_ERR,
-					"Failed to get clock: %s\n", cl->name);
-				rc = PTR_ERR(cl->clk) ? : -EINVAL;
-				cl->clk = NULL;
-				goto err_clk_get;
+			if( strcmp(cl->name, "gcc_video_axi0_sreg") &&
+				strcmp(cl->name, "gcc_video_axi1_sreg") &&
+				strcmp(cl->name, "gcc_iris_ss_hf_axi1_sreg") &&
+				strcmp(cl->name, "gcc_iris_ss_spd_axi1_sreg") ) {
+				dprintk(CVP_PWR, "%s: scalable? %d, count %d\n",
+					cl->name, cl->has_scaling, cl->count);
+				cl->clk = clk_get(&device->res->pdev->dev, cl->name);
+				if (IS_ERR_OR_NULL(cl->clk)) {
+					dprintk(CVP_ERR,
+						"Failed to get clock: %s\n", cl->name);
+					rc = PTR_ERR(cl->clk) ? : -EINVAL;
+					cl->clk = NULL;
+					goto err_clk_get;
+				}
 			}
 		}
 	}
@@ -567,19 +604,83 @@ int msm_cvp_init_clocks(struct iris_hfi_device *device)
 	return 0;
 
 err_clk_get:
-	msm_cvp_deinit_clocks(device);
+	msm_cvp_deinit_regular_clocks(device);
 	return rc;
 }
 
-void msm_cvp_deinit_clocks(struct iris_hfi_device *device)
+int msm_cvp_init_sreg_clocks(struct iris_hfi_device *device)
+{
+	int rc = 0;
+	struct clock_info *cl = NULL;
+
+	if (!device) {
+		dprintk(CVP_ERR, "Invalid params: %pK\n", device);
+		return -EINVAL;
+	}
+
+	dprintk(CVP_PWR, "Getting sreg clocks\n");
+
+	iris_hfi_for_each_clock(device, cl) {
+		if (!cl->clk) {
+			if( !strcmp(cl->name, "gcc_video_axi0_sreg") ||
+				!strcmp(cl->name, "gcc_video_axi1_sreg") ||
+				!strcmp(cl->name, "gcc_iris_ss_hf_axi1_sreg") ||
+				!strcmp(cl->name, "gcc_iris_ss_spd_axi1_sreg") ) {
+				dprintk(CVP_PWR, "%s: scalable? %d, count %d\n",
+					cl->name, cl->has_scaling, cl->count);
+				cl->clk = clk_get(&device->res->pdev->dev, cl->name);
+				if (IS_ERR_OR_NULL(cl->clk)) {
+					dprintk(CVP_ERR,
+						"Failed to get clock: %s\n", cl->name);
+					rc = PTR_ERR(cl->clk) ? : -EINVAL;
+					cl->clk = NULL;
+					goto err_clk_get;
+				}
+			}
+		}
+	}
+	device->clk_freq = 0;
+	return 0;
+
+err_clk_get:
+	msm_cvp_deinit_sreg_clocks(device);
+	return rc;
+}
+
+void msm_cvp_deinit_regular_clocks(struct iris_hfi_device *device)
 {
 	struct clock_info *cl;
 
 	device->clk_freq = 0;
 	iris_hfi_for_each_clock_reverse(device, cl) {
 		if (cl->clk) {
-			clk_put(cl->clk);
-			cl->clk = NULL;
+			if( strcmp(cl->name, "gcc_video_axi0_sreg") &&
+				strcmp(cl->name, "gcc_video_axi1_sreg") &&
+				strcmp(cl->name, "gcc_iris_ss_hf_axi1_sreg") &&
+				strcmp(cl->name, "gcc_iris_ss_spd_axi1_sreg") ) {
+					dprintk(CVP_PWR, "Putting regular clk %s\n", cl->name);
+					clk_put(cl->clk);
+					cl->clk = NULL;
+			}
+		}
+	}
+}
+
+void msm_cvp_deinit_sreg_clocks(struct iris_hfi_device *device)
+{
+	struct clock_info *cl;
+
+	device->clk_freq = 0;
+	iris_hfi_for_each_clock_reverse(device, cl) {
+		if (cl->clk) {
+			if( !strcmp(cl->name, "gcc_video_axi0_sreg") ||
+				!strcmp(cl->name, "gcc_video_axi1_sreg") ||
+				!strcmp(cl->name, "gcc_iris_ss_hf_axi1_sreg") ||
+				!strcmp(cl->name, "gcc_iris_ss_spd_axi1_sreg") ) {
+					dprintk(CVP_PWR, "Putting sreg clk %s\n", cl->name);
+					clk_put(cl->clk);
+					cl->clk = NULL;
+			}
 		}
 	}
 }
