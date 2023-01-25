@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/compat.h>
@@ -390,6 +391,7 @@ static int convert_from_user(struct eva_kmd_arg *kp,
 		break;
 	}
 	case EVA_KMD_RECEIVE_MSG_PKT:
+		get_user(kp->data.hfi_pkt.pkt_data[1], &(up->data.hfi_pkt.pkt_data[1]));
 		break;
 	case EVA_KMD_SESSION_CONTROL:
 	{

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include "msm_cvp.h"
@@ -92,8 +92,33 @@ static int cvp_wait_process_message(struct msm_cvp_inst *inst,
 	struct cvp_session_msg *msg = NULL;
 	struct cvp_hfi_msg_session_hdr *hdr;
 	int rc = 0;
+	int32_t return_val = -1;
 
-	if (wait_event_timeout(sq->wq,
+	if( out && (out->pkt_data[1] ==  HFI_MSG_SESSION_EVA_LSR ))
+	{
+		while(1){
+			if((inst->state == MSM_CVP_CLOSE_DONE) || ( inst->state ==  MSM_CVP_CORE_INVALID ) ){
+				dprintk(CVP_WARN, "!!!!!!!!!!!!!Session closed due to some external interrupt " );
+				break;
+			}
+			return_val = wait_event_interruptible_timeout(sq->wq,cvp_msg_pending(sq, &msg, ktid), timeout);
+			if((return_val == 0) && (msg == NULL)){
+				dprintk(CVP_WARN, "session queue wait timeout for msg = 0x%x \
+					but not tearing down", out->pkt_data[1] );
+			}
+			else {
+				if (return_val == -ERESTARTSYS){
+					dprintk(CVP_WARN, "coming out of wait for interrupt due to extenral interrupt\n" );
+				}
+				else{
+					dprintk(CVP_INFO, "LSR MSG packet received\n" );
+				}
+				break;
+			}
+		}//while
+	}
+
+	else if (wait_event_timeout(sq->wq,
 		cvp_msg_pending(sq, &msg, ktid), timeout) == 0) {
 		dprintk(CVP_WARN, "session queue wait timeout\n");
 		rc = -ETIMEDOUT;
