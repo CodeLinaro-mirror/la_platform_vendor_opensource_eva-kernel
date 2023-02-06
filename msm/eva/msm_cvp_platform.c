@@ -351,6 +351,12 @@ const struct msm_cvp_hfi_defs cvp_hfi_defs[] = {
 		.resp = HAL_NO_RESP,
 	},
 	{
+		.size = HFI_DS_CONFIG_CMD_SIZE,
+		.type = HFI_CMD_SESSION_CVP_DS_CONFIG,
+		.is_config_pkt = true,
+		.resp = HAL_NO_RESP,
+	},
+	{
 		.size = HFI_DS_CMD_SIZE,
 		.type = HFI_CMD_SESSION_CVP_DS,
 		.is_config_pkt = false,
@@ -554,6 +560,12 @@ const struct msm_cvp_hfi_defs cvp_hfi_defs[] = {
 	{
 		.size = 0xFFFFFFFF,
 		.type = HFI_CMD_SESSION_STOP,
+		.is_config_pkt = false,
+		.resp = HAL_NO_RESP,
+	},
+	{
+		.size = 0xFFFFFFFF,
+		.type = HFI_CMD_SESSION_START,
 		.is_config_pkt = false,
 		.resp = HAL_NO_RESP,
 	},
