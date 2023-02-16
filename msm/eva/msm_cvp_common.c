@@ -703,7 +703,8 @@ static void handle_sys_error(enum hal_command_response cmd, void *data)
 	mutex_unlock(&core->clk_lock);
 	mutex_unlock(&core->lock);
 
-	dprintk(CVP_WARN, "SYS_ERROR handled.\n");
+	synx_recover(SYNX_CLIENT_EVA_CTX0);
+	dprintk(CVP_WARN, "SYS_ERROR handled %d \n", core->resources.fatal_ssr);
 	BUG_ON(core->resources.fatal_ssr);
 }
 
