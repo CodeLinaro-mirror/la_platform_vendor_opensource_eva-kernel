@@ -428,6 +428,7 @@ int msm_cvp_destroy(struct msm_cvp_inst *inst)
 		"sess", inst, hash32_ptr(inst->session));
 	inst->session = (void *)0xdeadbeef;
 	kfree(inst);
+	inst = NULL;
 	return 0;
 }
 
