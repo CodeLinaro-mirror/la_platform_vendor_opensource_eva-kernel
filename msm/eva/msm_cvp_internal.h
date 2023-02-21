@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef _MSM_CVP_INTERNAL_H_
@@ -45,8 +45,8 @@
 #define SESSION_MSG_INDEX(__msg) (__msg - SESSION_MSG_START)
 
 
-// increased size for LSR
-#define ARP_BUF_SIZE 0x700000
+// increased size for RGB display configuration.
+#define ARP_BUF_SIZE 0x8E0000
 
 #define CVP_RT_PRIO_THRESHOLD 1
 
