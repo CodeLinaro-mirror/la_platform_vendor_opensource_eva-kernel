@@ -908,27 +908,27 @@ int msm_cvp_map_frame_lsr(struct msm_cvp_inst *inst,
 			if (buf->fd < 0 || !buf->size)
 				continue;
 //#ifdef DISPLAY_BUF_IGNORE
-			if ( (  (i >= 10)&&(i <= 15)  ) && (display_fd_map == 1))
+			if ( (  (i >= 14)&&(i <= 19)  ) && (display_fd_map == 1))
 			{
 				dprintk(CVP_MEM,":%s: LSR buf %d not mapping \n",__func__, i);
 				switch( i )
 				{
-					case 10:
+					case 14:
 					 buf->fd  = display_iova[0];
 					 break;
-					case 11:
+					case 15:
 					 buf->fd  = display_iova[5];
 					 break;
-					case 12:
+					case 16:
 					 buf->fd  = display_iova[1];
 					 break;
-					case 13:
+					case 17:
 					 buf->fd  = display_iova[6];
 					 break;
-					case 14:
+					case 18:
 					 buf->fd  = display_iova[2];
 					 break;
-					case 15:
+					case 19:
 					 buf->fd  = display_iova[7];
 					 break;
 				}
