@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <asm/memory.h>
@@ -1828,7 +1828,7 @@ static int __sys_set_debug(struct iris_hfi_device *device, u32 debug)
 	int rc = 0;
 	struct cvp_hfi_cmd_sys_set_property_packet *pkt =
 		(struct cvp_hfi_cmd_sys_set_property_packet *) &packet;
-
+        debug = debug | 0x00400000;
 	rc = call_hfi_pkt_op(device, sys_debug_config, pkt, debug);
 	if (rc) {
 		dprintk(CVP_WARN,
