@@ -235,6 +235,7 @@ struct iris_hfi_device {
 	u32 clk_freq;
 	u32 last_packet_type;
 	u32 error;
+	u32 reg_map_status_flg;
 	unsigned long clk_bitrate;
 	unsigned long scaled_rate;
 	struct msm_cvp_gov_data bus_vote;

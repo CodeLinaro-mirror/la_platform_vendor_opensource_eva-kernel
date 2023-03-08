@@ -68,6 +68,19 @@ enum tzbsp_subsys_state {
 	TZ_SUBSYS_STATE_RESTORE_THRESHOLD = 2,
 };
 
+enum regspace_bit{
+	IPCLITE_REG_MAP_FLG = 1,
+	DISPLAY_REG_MAP_FLG = 2,
+	AONTIMERS_REG_MAP_FLG = 4,
+	HWMUTEX_REG_MAP_FLG = 8,
+	SPAD0_LPI_LB_REG_MAP_FLG = 16,
+	SPAD1_LPI_LB_REG_MAP_FLG = 32,
+	SPAD_BROADCAST_ORLPI_LB_REG_MAP_FLG = 64,
+	SPAD_BROADCAST_ANDLPI_LB_REG_MAP_FLG = 128,
+	LLCCEVALEFT_REG_MAP_FLG = 256,
+	LLCCEVARIGHT_REG_MAP_FLG = 512,
+	LLCCEVAGAIN_REG_MAP_FLG = 1024
+};
 const struct msm_cvp_gov_data CVP_DEFAULT_BUS_VOTE = {
 	.data = NULL,
 	.data_count = 0,
@@ -1975,6 +1988,8 @@ static int iris_hfi_core_init(void *device)
 	pm_stay_awake(dev->res->pdev->dev.parent);
 	mutex_lock(&dev->lock);
 
+	dev->reg_map_status_flg = 0x0;
+	dprintk(CVP_INFO, "dev->reg_map_status_flg set to 0\n");
 	dev->bus_vote.data =
 		kzalloc(sizeof(struct cvp_bus_vote_data), GFP_KERNEL);
 	if (!dev->bus_vote.data) {
@@ -2115,6 +2130,7 @@ err_core_init:
 err_load_fw:
 err_no_mem:
 	dprintk(CVP_ERR, "Core init failed\n");
+	__dev_regspace_unmap(device);
 	mutex_unlock(&dev->lock);
 	pm_relax(dev->res->pdev->dev.parent);
 	return rc;
@@ -3758,6 +3774,7 @@ static int map_llcc_iommu_addr(struct iris_hfi_device *device, struct subcache_i
 							device->res->llccevaleft_size);
 
 					 iova = device->res->llccevaleft_iova;
+					 device->reg_map_status_flg |= LLCCEVALEFT_REG_MAP_FLG;
 			 }
 
 		  }
@@ -3779,6 +3796,7 @@ static int map_llcc_iommu_addr(struct iris_hfi_device *device, struct subcache_i
 							device->res->llccevaright_size);
 
 					 iova = device->res->llccevaright_iova;
+					 device->reg_map_status_flg |= LLCCEVARIGHT_REG_MAP_FLG;
 			 }
 		  }
 		  else if (!strcmp("eva_gain", sinfo->name))
@@ -3799,6 +3817,7 @@ static int map_llcc_iommu_addr(struct iris_hfi_device *device, struct subcache_i
 							device->res->llccevagain_size);
 
 					 iova = device->res->llccevagain_iova;
+					 device->reg_map_status_flg |= LLCCEVAGAIN_REG_MAP_FLG;
 			 }
 		}else if (!strcmp("spad", sinfo->name))
 			{
@@ -5246,10 +5265,11 @@ static int __dev_regspace_mapping(struct iris_hfi_device *device)
 	   }
 	   else
 	   {
-		   dprintk(CVP_INFO," %s:  iommu_map ipclite Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
+			dprintk(CVP_INFO," %s:  iommu_map ipclite Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
 				      device->res->ipclite_iova ,
 					  device->res->ipclite_phyaddr,
 					  device->res->ipclite_size);
+			device->reg_map_status_flg |= IPCLITE_REG_MAP_FLG;
 	   }
 
 	   //Device Region
@@ -5265,10 +5285,11 @@ static int __dev_regspace_mapping(struct iris_hfi_device *device)
 	   }
 	   else
 	   {
-		   dprintk(CVP_INFO," %s:  iommu_map display Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
+			dprintk(CVP_INFO," %s:  iommu_map display Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
 				      device->res->display_iova ,
 					  device->res->display_phyaddr,
 					  device->res->display_size);
+			device->reg_map_status_flg |= DISPLAY_REG_MAP_FLG;
 
 	   }
 		//Always ON Timers
@@ -5282,10 +5303,11 @@ static int __dev_regspace_mapping(struct iris_hfi_device *device)
 	   }
 	   else
 	   {
-		   dprintk(CVP_INFO," %s:  iommu_map aon-timers Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
+			dprintk(CVP_INFO," %s:  iommu_map aon-timers Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
 				      device->res->aontimers_iova ,
 					  device->res->aontimers_phyaddr,
 					  device->res->aontimers_size);
+			device->reg_map_status_flg |= AONTIMERS_REG_MAP_FLG;
 
 	   }
 	   //hwmutex iova
@@ -5299,10 +5321,11 @@ static int __dev_regspace_mapping(struct iris_hfi_device *device)
 	   }
 	   else
 	   {
-		   dprintk(CVP_INFO," %s:  iommu_map hwmutex Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
+			dprintk(CVP_INFO," %s:  iommu_map hwmutex Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
 				      device->res->hwmutex_iova ,
 					  device->res->hwmutex_phyaddr,
 					  device->res->hwmutex_size);
+			device->reg_map_status_flg |= HWMUTEX_REG_MAP_FLG;
 
 	   }
 //spad regs mapping
@@ -5317,10 +5340,11 @@ static int __dev_regspace_mapping(struct iris_hfi_device *device)
 	   }
 	   else
 	   {
-		   dprintk(CVP_INFO," %s:  iommu_map SPAD0_LPI_LB Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
+			dprintk(CVP_INFO," %s:  iommu_map SPAD0_LPI_LB Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
 					  SPAD0_LPI_LB_IOVA,
 					  SPAD0_LPI_LB,
 					  SPAD0_LPI_LB_REG_SIZE);
+			device->reg_map_status_flg |= SPAD0_LPI_LB_REG_MAP_FLG;
 
 	   }
 	   //SPAD1_LPI_LB iova
@@ -5334,10 +5358,11 @@ static int __dev_regspace_mapping(struct iris_hfi_device *device)
 	   }
 	   else
 	   {
-		   dprintk(CVP_INFO," %s:  iommu_map SPAD1_LPI_LB Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
+			dprintk(CVP_INFO," %s:  iommu_map SPAD1_LPI_LB Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
 					  SPAD1_LPI_LB_IOVA,
 					  SPAD1_LPI_LB,
 					  SPAD1_LPI_LB_REG_SIZE);
+			device->reg_map_status_flg |= SPAD1_LPI_LB_REG_MAP_FLG;
 
 	   }
 	   //SPAD_BROADCAST_ORLPI_LB iova
@@ -5351,10 +5376,11 @@ static int __dev_regspace_mapping(struct iris_hfi_device *device)
 	   }
 	   else
 	   {
-		   dprintk(CVP_INFO," %s:  iommu_map SPAD_BROADCAST_ORLPI_LB Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
+			dprintk(CVP_INFO," %s:  iommu_map SPAD_BROADCAST_ORLPI_LB Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
 					  SPAD_BROADCAST_ORLPI_LB_IOVA,
 					  SPAD_BROADCAST_ORLPI_LB,
 					  SPAD_BROADCAST_ORLPI_LB_REG_SIZE);
+			device->reg_map_status_flg |= SPAD_BROADCAST_ORLPI_LB_REG_MAP_FLG;
 
 	   }
 	   //SPAD_BROADCAST_ANDLPI_LB iova
@@ -5368,10 +5394,11 @@ static int __dev_regspace_mapping(struct iris_hfi_device *device)
 	   }
 	   else
 	   {
-		   dprintk(CVP_INFO," %s:  iommu_map SPAD_BROADCAST_ANDLPI_LB Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
+			dprintk(CVP_INFO," %s:  iommu_map SPAD_BROADCAST_ANDLPI_LB Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
 					  SPAD_BROADCAST_ANDLPI_LB_IOVA,
 					  SPAD_BROADCAST_ANDLPI_LB,
 					  SPAD_BROADCAST_ANDLPI_LB_REG_SIZE);
+			device->reg_map_status_flg |= SPAD_BROADCAST_ANDLPI_LB_REG_MAP_FLG;
 	   }
 //spad regs mapping
 	}
@@ -5388,15 +5415,55 @@ static int __dev_regspace_unmap(struct iris_hfi_device *device)
 			rc = -EINVAL;
 			return rc;
 	}
-	else{
-	iommu_unmap(cb->domain, device->res->ipclite_iova, device->res->ipclite_size);//
-	iommu_unmap(cb->domain, device->res->display_iova, device->res->display_size);//
-	iommu_unmap(cb->domain, device->res->aontimers_iova, device->res->aontimers_size);//
-	iommu_unmap(cb->domain, device->res->hwmutex_iova, device->res->hwmutex_size);//
-	iommu_unmap(cb->domain, SPAD0_LPI_LB_IOVA, SPAD0_LPI_LB_REG_SIZE);//
-	iommu_unmap(cb->domain, SPAD1_LPI_LB_IOVA, SPAD1_LPI_LB_REG_SIZE);//
-	iommu_unmap(cb->domain, SPAD_BROADCAST_ORLPI_LB_IOVA, SPAD_BROADCAST_ORLPI_LB_REG_SIZE);//
-	iommu_unmap(cb->domain, SPAD_BROADCAST_ANDLPI_LB_IOVA, SPAD_BROADCAST_ANDLPI_LB_REG_SIZE);//
+	else {
+			if (((device->reg_map_status_flg) & IPCLITE_REG_MAP_FLG) == IPCLITE_REG_MAP_FLG) {
+				iommu_unmap(cb->domain, device->res->ipclite_iova, device->res->ipclite_size);//
+				dprintk(CVP_INFO," %s:  iommu_map ipclite unmapping done\n", __func__);
+			} else {
+				dprintk(CVP_ERR," %s:  iommu_map ipclite mapping is not done\n", __func__);
+			}
+			if (((device->reg_map_status_flg) & DISPLAY_REG_MAP_FLG) == DISPLAY_REG_MAP_FLG) {
+				iommu_unmap(cb->domain, device->res->display_iova, device->res->display_size);//
+				dprintk(CVP_INFO," %s:  iommu_map display unmapping done\n", __func__);
+			} else {
+				dprintk(CVP_ERR," %s:  iommu_map display mapping is not done\n", __func__);
+			}
+			if (((device->reg_map_status_flg) & AONTIMERS_REG_MAP_FLG) == AONTIMERS_REG_MAP_FLG) {
+				iommu_unmap(cb->domain, device->res->aontimers_iova, device->res->aontimers_size);//
+				dprintk(CVP_INFO," %s:  iommu_map aontimers unmapping done\n", __func__);
+			} else {
+				dprintk(CVP_ERR," %s:  iommu_map aontimers mapping is not done\n", __func__);
+			}
+			if (((device->reg_map_status_flg) & HWMUTEX_REG_MAP_FLG) == HWMUTEX_REG_MAP_FLG) {
+				iommu_unmap(cb->domain, device->res->hwmutex_iova, device->res->hwmutex_size);//
+				dprintk(CVP_INFO," %s:  iommu_map hwmutex unmapping done\n", __func__);
+			} else {
+				dprintk(CVP_ERR," %s:  iommu_map hwmutex mapping is not done\n", __func__);
+			}
+			if (((device->reg_map_status_flg) & SPAD0_LPI_LB_REG_MAP_FLG) == SPAD0_LPI_LB_REG_MAP_FLG) {
+				iommu_unmap(cb->domain, SPAD0_LPI_LB_IOVA, SPAD0_LPI_LB_REG_SIZE);//
+				dprintk(CVP_INFO," %s:  iommu_map SPAD0_LPI_LB unmapping done\n", __func__);
+			} else {
+				dprintk(CVP_ERR," %s:  iommu_map SPAD0_LPI_LB mapping is not done\n", __func__);
+			}
+			if (((device->reg_map_status_flg) & SPAD1_LPI_LB_REG_MAP_FLG) == SPAD1_LPI_LB_REG_MAP_FLG) {
+				iommu_unmap(cb->domain, SPAD1_LPI_LB_IOVA, SPAD1_LPI_LB_REG_SIZE);//
+				dprintk(CVP_INFO," %s:  iommu_map SPAD1_LPI_LB unmapping done\n", __func__);
+			} else {
+				dprintk(CVP_ERR," %s:  iommu_map SPAD1_LPI_LB mapping is not done\n", __func__);
+			}
+			if (((device->reg_map_status_flg) & SPAD_BROADCAST_ORLPI_LB_REG_MAP_FLG) == SPAD_BROADCAST_ORLPI_LB_REG_MAP_FLG) {
+				iommu_unmap(cb->domain, SPAD_BROADCAST_ORLPI_LB_IOVA, SPAD_BROADCAST_ORLPI_LB_REG_SIZE);//
+				dprintk(CVP_INFO," %s:  iommu_map SPAD_BROADCAST_ORLPI_LB unmapping done\n", __func__);
+			} else {
+				dprintk(CVP_ERR," %s:  iommu_map SPAD_BROADCAST_ORLPI_LB mapping is not done\n", __func__);
+			}
+			if (((device->reg_map_status_flg) & SPAD_BROADCAST_ANDLPI_LB_REG_MAP_FLG) == SPAD_BROADCAST_ANDLPI_LB_REG_MAP_FLG) {
+				iommu_unmap(cb->domain, SPAD_BROADCAST_ANDLPI_LB_IOVA, SPAD_BROADCAST_ANDLPI_LB_REG_SIZE);//
+				dprintk(CVP_INFO," %s:  iommu_map SPAD_BROADCAST_ANDLPI_LB unmapping done\n", __func__);
+			} else {
+				dprintk(CVP_ERR," %s:  iommu_map SPAD_BROADCAST_ANDLPI_LB mapping is not done\n", __func__);
+			}
 	}
 	return rc;
 }
@@ -5411,10 +5478,25 @@ static int __llcc_regspace_unmap(struct iris_hfi_device *device)
 			rc = -EINVAL;
             return rc;
 	}
-	else{
-	iommu_unmap(cb->domain, device->res->llccevaleft_iova, device->res->llccevaleft_size);//
-	iommu_unmap(cb->domain, device->res->llccevaright_iova, device->res->llccevaright_size);//
-	iommu_unmap(cb->domain, device->res->llccevagain_iova, device->res->llccevagain_size);//
+	else {
+			if (((device->reg_map_status_flg) & LLCCEVALEFT_REG_MAP_FLG) == LLCCEVALEFT_REG_MAP_FLG) {
+				iommu_unmap(cb->domain, device->res->llccevaleft_iova, device->res->llccevaleft_size);//
+				dprintk(CVP_INFO," %s:  iommu_map llccevaleft unmapping done\n", __func__);
+			} else {
+				dprintk(CVP_ERR," %s:  iommu_map llccevaleft mapping is not done\n", __func__);
+			}
+			if (((device->reg_map_status_flg) & LLCCEVARIGHT_REG_MAP_FLG) == LLCCEVARIGHT_REG_MAP_FLG) {
+				iommu_unmap(cb->domain, device->res->llccevaright_iova, device->res->llccevaright_size);//
+				dprintk(CVP_INFO," %s:  iommu_map llccevaright unmapping done\n", __func__);
+			} else {
+				dprintk(CVP_ERR," %s:  iommu_map llccevaright mapping is not done\n", __func__);
+			}
+			if (((device->reg_map_status_flg) & LLCCEVAGAIN_REG_MAP_FLG) == LLCCEVAGAIN_REG_MAP_FLG) {
+				iommu_unmap(cb->domain, device->res->llccevagain_iova, device->res->llccevagain_size);//
+				dprintk(CVP_INFO," %s:  iommu_map llccevagain unmapping done\n", __func__);
+			} else {
+				dprintk(CVP_ERR," %s:  iommu_map llccevagain mapping is not done\n", __func__);
+			}
 	}
 	return rc;
 }
