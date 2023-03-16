@@ -907,34 +907,7 @@ int msm_cvp_map_frame_lsr(struct msm_cvp_inst *inst,
 			buf = (struct cvp_buf_type *)fence_buf;
 			if (buf->fd < 0 || !buf->size)
 				continue;
-//#ifdef DISPLAY_BUF_IGNORE
-			if ( (  (i >= 14)&&(i <= 19)  ) && (display_fd_map == 1))
-			{
-				dprintk(CVP_MEM,":%s: LSR buf %d not mapping \n",__func__, i);
-				switch( i )
-				{
-					case 14:
-					 buf->fd  = display_iova[0];
-					 break;
-					case 15:
-					 buf->fd  = display_iova[5];
-					 break;
-					case 16:
-					 buf->fd  = display_iova[1];
-					 break;
-					case 17:
-					 buf->fd  = display_iova[6];
-					 break;
-					case 18:
-					 buf->fd  = display_iova[2];
-					 break;
-					case 19:
-					 buf->fd  = display_iova[7];
-					 break;
-				}
-			}else{
-//#endif
-	        iova = msm_cvp_map_frame_buf(inst, buf, frame);
+			iova = msm_cvp_map_frame_buf(inst, buf, frame);
 			if (!iova) {
 				dprintk(CVP_ERR,
 					"%s: fence_buf %d register failed.\n",
@@ -942,10 +915,7 @@ int msm_cvp_map_frame_lsr(struct msm_cvp_inst *inst,
 				msm_cvp_unmap_frame_buf(inst, frame);
 				return -EINVAL;
 			}
-                        buf->fd = iova;
-//#ifdef DISPLAY_BUF_IGNORE
-}
-//#endif
+			buf->fd = iova;
 		}
 		//to add mapping support for HFI_CVP_BUFFER_TYPE        sConfigList;
 		for (i = 0; i < 1; i++) {
