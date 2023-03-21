@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef __H_CVP_CORE_HFI_H__
@@ -269,6 +270,7 @@ struct iris_hfi_device {
 	struct iris_hfi_vpu_ops *vpu_ops;
 	struct notifier_block mmcx_PC_nb;
 	struct regulator       *rpmh_mmcx_reg;
+	struct workqueue_struct *clk_unprepare_workq;
 };
 
 void cvp_iris_hfi_delete_device(void *device);
