@@ -9,6 +9,7 @@
 #include "cvp_core_hfi.h"
 #include "msm_cvp_buf.h"
 #include "msm_gpu_eva.h"
+#include "cvp_hfi_api.h"
 
 struct cvp_power_level {
 	unsigned long core_sum;
@@ -121,6 +122,9 @@ static int cvp_wait_process_message(struct msm_cvp_inst *inst,
 	else if (wait_event_timeout(sq->wq,
 		cvp_msg_pending(sq, &msg, ktid), timeout) == 0) {
 		dprintk(CVP_WARN, "session queue wait timeout\n");
+		if(inst && inst->core && inst->core->device){
+			 print_hfi_queue_info(inst->core->device);
+		}
 		rc = -ETIMEDOUT;
 		goto exit;
 	}

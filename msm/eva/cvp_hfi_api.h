@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef __CVP_HFI_API_H__
@@ -326,5 +326,5 @@ unsigned int get_msg_errorcode(void *msg);
 int get_msg_opconfigs(void *msg, unsigned int *session_id,
 		unsigned int *error_type, unsigned int *config_id);
 extern const struct msm_cvp_hfi_defs cvp_hfi_defs[];
-
+void print_hfi_queue_info(struct cvp_hfi_device *hdev);
 #endif /*__CVP_HFI_API_H__ */
