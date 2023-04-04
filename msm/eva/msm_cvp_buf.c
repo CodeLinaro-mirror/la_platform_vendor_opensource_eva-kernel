@@ -493,8 +493,8 @@ static struct msm_cvp_smem *msm_cvp_session_get_smem(struct msm_cvp_inst *inst,
 		if (rc)
 			goto exit;
 		if (buf->size > smem->size || buf->size > smem->size - buf->offset) {
-			dprintk(CVP_ERR, "%s: invalid offset %d or size %d for a new entry\n",
-				__func__, buf->offset, buf->size);
+			dprintk(CVP_ERR, "%s: Buffer fd %d: invalid offset %d or size %d for a new entry; smem size %d\n",
+				__func__, buf->fd, buf->offset, buf->size, smem->size);
 			goto exit2;
 		}
 		rc = msm_cvp_session_add_smem(inst, smem);
@@ -503,8 +503,8 @@ static struct msm_cvp_smem *msm_cvp_session_get_smem(struct msm_cvp_inst *inst,
 	}
 
 	if (buf->size > smem->size || buf->size > smem->size - buf->offset) {
-		dprintk(CVP_ERR, "%s: invalid offset %d or size %d\n",
-			__func__, buf->offset, buf->size);
+		dprintk(CVP_ERR, "%s: Buffer fd %d: invalid offset %d or size %d; smem size %d\n",
+			__func__, buf->fd, buf->offset, buf->size, smem->size);
 		if (found) {
 			mutex_lock(&inst->dma_cache.lock);
 			atomic_dec(&smem->refcount);
