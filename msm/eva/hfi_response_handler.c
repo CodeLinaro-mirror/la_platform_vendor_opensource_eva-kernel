@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/bitops.h>
@@ -116,23 +116,23 @@ static int hfi_process_session_error(u32 device_id,
 	/* Ignore below errors */
 	case HFI_ERR_SESSION_INVALID_SCALE_FACTOR:
 	case HFI_ERR_SESSION_UPSCALE_NOT_SUPPORTED:
-		dprintk(CVP_INFO, "Non Fatal: HFI_EVENT_SESSION_ERROR\n");
+		dprintk(CVP_ERR, "Non Fatal:HFI_ERR_SESSION_INVALID_SCALE_FACTOR\n");
 		info->response_type = HAL_RESPONSE_UNUSED;
 		break;
 	case HFI_ERR_SESSION_LSR_STALL_DETECTED:
-		dprintk(CVP_INFO, "Fatal: HFI_EVENT_SESSION_ERROR\n");
+		dprintk(CVP_ERR, "Fatal: HFI_ERR_SESSION_LSR_STALL_DETECTED:\n");
                 info->response_type =  HAL_SESSION_ERROR;
 		break;
 	case HFI_ERR_SESSION_LSR_FENCE_FAILURE:
-		dprintk(CVP_INFO, "Fatal: HFI_EVENT_SESSION_ERROR\n");
+		dprintk(CVP_ERR, "Fatal: HFI_ERR_SESSION_LSR_FENCE_FAILURE\n");
                 info->response_type =  HAL_SESSION_ERROR;
 		break;
 	case  HFI_ERR_SESSION_CDM_BUFFER_NULL:
-		dprintk(CVP_INFO, "Fatal: HFI_EVENT_SESSION_ERROR\n");
+		dprintk(CVP_ERR, "Fatal: HFI_ERR_SESSION_CDM_BUFFER_NULL\n");
                 info->response_type =  HAL_SESSION_ERROR;
 		break;
 	case HFI_ERR_SESSION_INPUT_TASKQ_FULL:
-		dprintk(CVP_INFO, "Fatal: HFI_EVENT_SESSION_ERROR\n");
+		dprintk(CVP_ERR, "Fatal:HFI_ERR_SESSION_INPUT_TASKQ_FULL \n");
                 info->response_type =  HAL_SESSION_ERROR;
 		break;
 
