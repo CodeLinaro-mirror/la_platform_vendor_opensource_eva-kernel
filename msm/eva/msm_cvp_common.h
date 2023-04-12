@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 
@@ -32,4 +33,5 @@ int wait_for_sess_signal_receipt(struct msm_cvp_inst *inst,
 int cvp_comm_set_arp_buffers(struct msm_cvp_inst *inst);
 int cvp_comm_release_persist_buffers(struct msm_cvp_inst *inst);
 int msm_cvp_noc_error_info(struct msm_cvp_core *core);
+int msm_cvp_session_stop_notify(struct msm_cvp_inst *inst);
 #endif

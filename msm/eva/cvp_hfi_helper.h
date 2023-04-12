@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef __H_CVP_HFI_HELPER_H__
@@ -363,6 +363,15 @@ struct cvp_session_stop_packet {
 	u32 session_id;
 	struct cvp_hfi_client client_data;
 } __packed;
+
+struct cvp_session_stop_packet_done
+{
+	u32 size;
+	u32 packet_type;
+	u32 session_id;
+	u32 error_type;
+	struct cvp_hfi_client client_data;
+}__packed;
 
 struct cvp_hfi_cmd_session_hdr {
 	u32 size;

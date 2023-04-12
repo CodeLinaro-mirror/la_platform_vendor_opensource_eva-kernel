@@ -392,7 +392,35 @@ static int hfi_process_session_flush_done(u32 device_id,
 
 	return 0;
 }
+ static int hfi_process_session_stop_done(u32 device_id,
+		void *hdr, struct msm_cvp_cb_info *info)
+{
+	struct cvp_session_stop_packet_done *pkt =
+			(struct cvp_session_stop_packet_done *)hdr;
+	struct msm_cvp_cb_cmd_done cmd_done = {0};
 
+	if (!pkt || pkt->size <
+		sizeof(struct cvp_session_stop_packet_done)) {
+			dprintk(CVP_ERR, "%s: bad packet/packet size: %d\n",
+				__func__, pkt ? pkt->size : 0);
+		return -E2BIG;
+	}
+	dprintk(CVP_SESS, "RECEIVED: SESSION_STOP_DONE[%#x]\n",
+			pkt->session_id);
+
+	cmd_done.device_id = device_id;
+	cmd_done.session_id = (void *)(uintptr_t)pkt->session_id;
+	cmd_done.status = hfi_map_err_status(pkt->error_type);
+	if (cmd_done.status)
+		dprintk(CVP_WARN, "%s: status %#x hfi type %#x err %#x\n",
+			__func__, cmd_done.status, pkt->packet_type, pkt->error_type);
+	cmd_done.size = 0;
+
+	info->response_type = HAL_SESSION_STOP_DONE;
+	info->response.cmd = cmd_done;
+
+	return 0;
+ }
 static int hfi_process_session_rel_buf_done(u32 device_id,
 		void *hdr, struct msm_cvp_cb_info *info)
 {
@@ -680,6 +708,7 @@ int cvp_hfi_process_msg_packet(u32 device_id, void *hdr,
 	typedef int (*pkt_func_def)(u32, void *, struct msm_cvp_cb_info *info);
 	pkt_func_def pkt_func = NULL;
 	struct cvp_hal_msg_pkt_hdr *msg_hdr = (struct cvp_hal_msg_pkt_hdr *)hdr;
+	struct cvp_session_stop_packet_done *pkt = NULL;
 
 	if (!info || !msg_hdr || msg_hdr->size < CVP_IFACEQ_MIN_PKT_SIZE) {
 		dprintk(CVP_ERR, "%s: bad packet/packet size\n",
@@ -727,6 +756,14 @@ int cvp_hfi_process_msg_packet(u32 device_id, void *hdr,
 		pkt_func = (pkt_func_def)hfi_process_session_gmu_start_done;
 		break;
 #endif
+	case  HFI_MSG_SESSION_STOP_DONE:
+		pkt_func = (pkt_func_def)hfi_process_session_stop_done;
+		pkt = (struct cvp_session_stop_packet_done *)hdr;
+		if(pkt->client_data.data1)
+		{
+			hfi_process_session_cvp_msg(device_id, hdr, info);
+		}
+		break;
 	default:
 		dprintk(CVP_HFI, "Use default msg handler: %#x\n",
 				msg_hdr->packet);
