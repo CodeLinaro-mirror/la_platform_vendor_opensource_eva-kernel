@@ -102,7 +102,7 @@ static int cvp_wait_process_message(struct msm_cvp_inst *inst,
 				dprintk(CVP_WARN, "!!!!!!!!!!!!!Session closed due to some external interrupt " );
 				break;
 			}
-			return_val = wait_event_interruptible_timeout(sq->wq,cvp_msg_pending(sq, &msg, ktid), timeout);
+			return_val = wait_event_killable_timeout(sq->wq,cvp_msg_pending(sq, &msg, ktid), timeout);
 			if((return_val == 0) && (msg == NULL)){
 				dprintk(CVP_WARN, "session queue wait timeout for msg = 0x%x \
 					but not tearing down", out->pkt_data[1] );
@@ -110,6 +110,7 @@ static int cvp_wait_process_message(struct msm_cvp_inst *inst,
 			else {
 				if (return_val == -ERESTARTSYS){
 					dprintk(CVP_WARN, "coming out of wait for interrupt due to extenral interrupt\n" );
+					dprintk(CVP_ERR, "signal = 0x%08x current->comm = %s current->pid = %d \n", current->pending.signal, current->comm, current->pid);
 				}
 				else{
 					dprintk(CVP_INFO, "LSR MSG packet received\n" );
