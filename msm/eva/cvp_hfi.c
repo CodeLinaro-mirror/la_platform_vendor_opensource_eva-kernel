@@ -5253,7 +5253,7 @@ static int __dev_regspace_mapping(struct iris_hfi_device *device)
 	if (cb)
 	{
 	   if (cb->name)
-			dprintk(CVP_ERR," %s:  cb name:%s\n", __func__,cb->name);
+			dprintk(CVP_INFO," %s:  cb name:%s\n", __func__,cb->name);
 	   //ipclite Global Memory iova - UC region
 	   rc = iommu_map(cb->domain,
 					  device->res->ipclite_iova ,//0xFE500000 or 0xdd000000
