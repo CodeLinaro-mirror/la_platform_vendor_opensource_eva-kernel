@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/dma-direction.h>
@@ -281,7 +281,7 @@ check_again:
 	}
 }
 
-static int msm_cvp_session_stop_notify(struct msm_cvp_inst *inst)
+int msm_cvp_session_stop_notify(struct msm_cvp_inst *inst)
 {
 	int rc = 0;
 	struct msm_cvp_core *core;
@@ -308,7 +308,17 @@ static int msm_cvp_session_stop_notify(struct msm_cvp_inst *inst)
 		if(rc){
 			dprintk(CVP_ERR, "Failed to send stop session cmd\n");
 		}
+		else{/* Wait for FW response */
+			rc = wait_for_sess_signal_receipt(inst, HAL_SESSION_STOP_DONE);
+			if (rc) {
+				dprintk(CVP_ERR, "%s: wait for signal failed for stop done, rc %d\n",
+					__func__, rc);
+			}
+		}
+
 	}
+
+
 	return rc;
 }
 static void msm_cvp_cleanup_instance(struct msm_cvp_inst *inst)

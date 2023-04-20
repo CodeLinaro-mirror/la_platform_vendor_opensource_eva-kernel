@@ -836,7 +836,33 @@ static void handle_session_close(enum hal_command_response cmd, void *data)
 	show_stats(inst);
 	cvp_put_inst(inst);
 }
+static void handle_session_ctrl(enum hal_command_response cmd, void *data)
+{
+	struct msm_cvp_cb_cmd_done *response = data;
+	struct msm_cvp_inst *inst;
 
+	if (!response) {
+		dprintk(CVP_ERR,
+			"Failed to get valid response for release resource\n");
+		return;
+	}
+
+	inst = cvp_get_inst(get_cvp_core(response->device_id),
+			response->session_id);
+	if (!inst) {
+		dprintk(CVP_WARN, "%s:Got a response for an inactive session\n",
+				__func__);
+		return;
+	}
+
+	if (response->status)
+		dprintk(CVP_WARN, "HFI sess ctrl err 0x%x HAL cmd %d\n",
+			response->status, cmd);
+
+	inst->error_code = response->status;
+	signal_session_msg_receipt(cmd, inst);
+	cvp_put_inst(inst);
+}
 void cvp_handle_cmd_response(enum hal_command_response cmd, void *data)
 {
 	dprintk(CVP_HFI, "Command response = %d\n", cmd);
@@ -887,6 +913,9 @@ void cvp_handle_cmd_response(enum hal_command_response cmd, void *data)
 		handle_session_gmu_start_done(cmd, data);
 		break;
 #endif
+	case HAL_SESSION_STOP_DONE:
+		handle_session_ctrl(cmd, data);
+		break;
 	default:
 		dprintk(CVP_HFI, "response unhandled: %d\n", cmd);
 		break;
@@ -968,6 +997,13 @@ static int msm_comm_session_abort(struct msm_cvp_inst *inst)
 
 	dprintk(CVP_WARN, "%s: inst %pK session %x\n", __func__,
 		inst, hash32_ptr(inst->session));
+
+	if (inst->session_type != MSM_CVP_BOOT) {
+		if (inst->prop.type == HFI_SESSION_LSR){
+			msm_cvp_session_stop_notify(inst);
+		}
+	}
+
 	rc = call_hfi_op(hdev, session_abort, (void *)inst->session);
 	if (rc) {
 		dprintk(CVP_ERR,
