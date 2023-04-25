@@ -1065,7 +1065,7 @@ static int adjust_bw_freqs(void)
 {
 	struct msm_cvp_core *core;
 	struct iris_hfi_device *hdev;
-	struct bus_info *bus;
+	struct bus_info *bus = NULL;
 #ifdef LSR_SPLIT_VOTING
 	struct bus_info *lsr_llcc_bus = NULL;
 	struct bus_info *lsr_ddr_bus = NULL;
@@ -1087,7 +1087,7 @@ static int adjust_bw_freqs(void)
 #ifdef LSR_SPLIT_VOTING
 	unsigned long lsr_llcc_bw_sum = 0, lsr_ddr_bw_sum = 0;
 #endif
-	int i, rc = 0;
+	int i =0, rc = 0, bus_count = 0;
 	unsigned long ctrl_freq;
 
 	core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
@@ -1099,23 +1099,37 @@ static int adjust_bw_freqs(void)
 	tbl_size = core->resources.allowed_clks_tbl_size;
 	cvp_min_rate = tbl[0].clock_rate;
 	cvp_max_rate = tbl[tbl_size - 1].clock_rate;
-	bus = &core->resources.bus_set.bus_tbl[1];
-#ifdef LSR_SPLIT_VOTING
-	lsr_llcc_bus = &core->resources.bus_set.bus_tbl[2];
-	lsr_ddr_bus = &core->resources.bus_set.bus_tbl[3];
-#endif
-	max_bw = bus->range[1];
-//	min_bw = max_bw/10;
-        /*As per TLM suggestion  minimum DDR BW required for
-	 AR viewer is 250* 1024 KBPS*/
-        min_bw = 250*1024;
-#ifdef LSR_SPLIT_VOTING
-	lsr_llcc_max_bw = lsr_llcc_bus->range[1];
-	lsr_llcc_min_bw = lsr_llcc_bus->range[0];
-	lsr_ddr_max_bw = lsr_ddr_bus->range[1];
-	lsr_ddr_min_bw = lsr_ddr_bus->range[0];
-#endif
 
+	for(bus_count = 0; bus_count < core->resources.bus_set.count; bus_count++)
+	{
+		if(!strcmp(core->resources.bus_set.bus_tbl[bus_count].name,"cvp-ddr")){
+			bus = &core->resources.bus_set.bus_tbl[bus_count];
+			max_bw = bus->range[1];
+			//	min_bw = max_bw/10;
+			/*As per TLM suggestion  minimum DDR BW required for
+			AR viewer is 250* 1024 KBPS*/
+			min_bw = 250*1024;
+		}
+		if(!strcmp(core->resources.bus_set.bus_tbl[bus_count].name,"lsr-llcc")){
+#ifdef LSR_SPLIT_VOTING
+			lsr_llcc_bus = &core->resources.bus_set.bus_tbl[bus_count];
+			lsr_llcc_max_bw = lsr_llcc_bus->range[1];
+			lsr_llcc_min_bw = lsr_llcc_bus->range[0];
+#endif
+		}
+		if(!strcmp(core->resources.bus_set.bus_tbl[bus_count].name,"lsr-ddr")){
+#ifdef LSR_SPLIT_VOTING
+			lsr_ddr_bus = &core->resources.bus_set.bus_tbl[bus_count];
+			lsr_ddr_max_bw = lsr_ddr_bus->range[1];
+			lsr_ddr_min_bw = lsr_ddr_bus->range[0];
+#endif
+		}
+	}
+	if( !bus || !lsr_ddr_bus || !lsr_llcc_bus ){
+		dprintk(CVP_ERR,"one of this bus node is NULL,  bus = 0x%x lsr_ddr_bus =0x%x lsr_llcc_bus=0x%x \n",
+			bus, lsr_ddr_bus, lsr_llcc_bus);
+		return -EINVAL;
+	}
 	aggregate_power_update(core, &nrt_pwr, &rt_pwr, cvp_max_rate);
 
 

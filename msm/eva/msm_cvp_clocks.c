@@ -692,6 +692,7 @@ int msm_cvp_set_bw(struct bus_info *bus, unsigned long bw)
 	if (!bus->client)
 		return -EINVAL;
 
+	dprintk(CVP_PWR, "bus->name =  %s to bw =  %u\n",bus->name, bw);
 	rc = icc_set_bw(bus->client, bw, 0);
 	if (rc)
 		dprintk(CVP_ERR, "Failed voting bus %s to ab %u\n",
