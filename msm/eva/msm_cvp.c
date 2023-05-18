@@ -893,12 +893,12 @@ static int adjust_bw_freqs(void)
 {
 	struct msm_cvp_core *core;
 	struct iris_hfi_device *hdev;
-	struct bus_info *bus;
+	struct bus_info *bus = NULL;
 	struct clock_set *clocks;
 	struct clock_info *cl;
 	struct allowed_clock_rates_table *tbl = NULL;
 	unsigned int tbl_size;
-	unsigned int cvp_min_rate, cvp_max_rate, max_bw, min_bw;
+	unsigned int cvp_min_rate, cvp_max_rate, max_bw = 0, min_bw = 0;
 	struct cvp_power_level rt_pwr = {0}, nrt_pwr = {0};
 	unsigned long tmp, core_sum, op_core_sum, bw_sum;
 	int i, rc = 0, bus_count = 0;
@@ -921,7 +921,10 @@ static int adjust_bw_freqs(void)
 			min_bw = max_bw/10;
                }
 	}
-
+	if(!bus){
+		dprintk(CVP_ERR,"bus node is NULL for cvp-ddr\n");
+		return -EINVAL;
+	}
 	aggregate_power_update(core, &nrt_pwr, &rt_pwr, cvp_max_rate);
 	dprintk(CVP_PROF, "PwrUpdate nrt %u %u rt %u %u\n",
 		nrt_pwr.core_sum, nrt_pwr.op_core_sum,
