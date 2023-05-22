@@ -757,7 +757,7 @@ static int cvp_populate_fences( struct eva_kmd_hfi_packet *in_pkt,
 {
 #ifdef CVP_CONFIG_SYNX_V2
 	u32 i, buf_offset;
-	struct eva_kmd_fence fences[MAX_HFI_FENCE_SIZE >> 2];
+	struct eva_kmd_fence fences[MAX_HFI_FENCE_SIZE];
 	struct cvp_fence_command *f;
 	struct cvp_hfi_cmd_session_hdr *cmd_hdr;
 	struct cvp_fence_queue *q;
