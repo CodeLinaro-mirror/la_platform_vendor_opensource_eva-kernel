@@ -1319,9 +1319,9 @@ static void print_power(const struct eva_power_req *pwr_req)
 				pwr_req->op_clock_fdu, pwr_req->op_clock_ica,
 				pwr_req->op_clock_od, pwr_req->op_clock_mpu,
 				pwr_req->op_clock_fw);
-		dprintk(CVP_DSP, "Actual Bw: Ddr %d, SysCache %d",
+		dprintk(CVP_DSP, "Actual Bw: Ddr %u, SysCache %u",
 				pwr_req->bw_ddr, pwr_req->bw_sys_cache);
-		dprintk(CVP_DSP, "OpBw: Ddr %d, SysCache %d",
+		dprintk(CVP_DSP, "OpBw: Ddr %u, SysCache %u",
 				pwr_req->op_bw_ddr, pwr_req->op_bw_sys_cache);
 	}
 }
