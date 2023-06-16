@@ -35,7 +35,7 @@ bool msm_cvp_mmrm_enabled = !true;
 #endif
 bool msm_cvp_dcvs_disable = !true;
 int msm_cvp_minidump_enable = !1;
-bool cvp_kernel_fence_enabled = true;
+bool cvp_kernel_fence_enabled = false;
 
 #define MAX_DBG_BUF_SIZE 4096
 
