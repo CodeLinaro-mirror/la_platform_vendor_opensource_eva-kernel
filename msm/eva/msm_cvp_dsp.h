@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef MSM_CVP_DSP_H
@@ -84,14 +85,14 @@ enum eva_dsp_debug_bits {
 	EVA_KMD_SESS_ON = 5,
 	EVA_KMD_PORT_ON = 6,
 	EVA_KMD_CORE_ON = 7,
-	EVA_UMD_QDI_ON = 8,
+	EVA_UMD_WORKER_ON = 8,
 	EVA_UMD_PROF_ON = 9,
 	EVA_UMD_PKT_ON = 10,
 	EVA_UMD_MEM_ON = 11,
 	EVA_UMD_PWR_ON = 12,
 	EVA_UMD_SESS_ON = 13,
-	EVA_UMD_SYNX_ON = 14,
-	EVA_UMD_HFI_ON = 15,
+	EVA_UMD_API_ON = 14,
+	EVA_UMD_DBG_ON = 15,
 	EVA_UMD_MAX_DEBUG
 };
 
