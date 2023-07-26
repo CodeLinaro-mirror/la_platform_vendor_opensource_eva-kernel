@@ -1398,12 +1398,12 @@ static int __iface_cmdq_write(struct iris_hfi_device *device, void *pkt)
 		/* Consumer of cmdq prefers that we raise an interrupt */
 		rc = 0;
 		__write_register(device, CVP_CPU_CS_H2ASOFTINT, 1);
-		dprintk(CVP_PROF, "wr_intr at_time = 0x%llx for pkt_type = 0x%x,sess_id = 0x%x, tid = 0x%x\n",
-					 __read_aon_time(device), pkt_payload[1],pkt_payload[2],pkt_payload[3]);
+		dprintk(CVP_PROF, "wr_intr at_time = 0x%llx for pkt_type = 0x%x \n",
+					 __read_aon_time(device), pkt_payload[1]);
 
 	} else {
-		dprintk(CVP_PROF, "wr_no_intr at_time = 0x%llx for pkt_type = 0x%x,sess_id = 0x%x, tid = 0x%x\n",
-					 __read_aon_time(device), pkt_payload[1],pkt_payload[2],pkt_payload[3]);
+		dprintk(CVP_PROF, "wr_no_intr at_time = 0x%llx for pkt_type = 0x%x\n",
+					 __read_aon_time(device), pkt_payload[1]);
 	}
 	return rc;
 }
