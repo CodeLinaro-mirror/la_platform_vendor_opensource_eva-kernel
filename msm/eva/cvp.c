@@ -145,6 +145,7 @@ static int msm_cvp_initialize_core(struct platform_device *pdev,
 		i <= SYS_MSG_INDEX(SYS_MSG_END); i++) {
 		init_completion(&core->completions[i]);
 	}
+	init_completion(&core->ssr_completion);
 
 	INIT_DELAYED_WORK(&core->fw_unload_work, msm_cvp_fw_unload_handler);
 	INIT_WORK(&core->ssr_work, msm_cvp_ssr_handler);
@@ -324,6 +325,94 @@ static const struct of_device_id msm_cvp_plat_match[] = {
 	{.compatible = "qcom,msm-cvp,mem-cdsp"},
 	{}
 };
+
+static int finish_ssr(struct msm_cvp_core* core)
+{
+	/*
+		This function triggers the SSR and waits for it to get completed.
+	*/
+	int rc = 0;
+	struct iris_hfi_device *hfi_device_data = NULL;
+	if (!core) {
+		dprintk(CVP_ERR, "%s invalid core\n", __func__);
+		return -EINVAL;
+	} else if (!core->device) {
+		dprintk(CVP_ERR, "%s invalid cvp_hfi_device\n", __func__);
+		return -EINVAL;
+	}
+	hfi_device_data = (struct iris_hfi_device *) core->device->hfi_device_data;
+	if (!hfi_device_data) {
+		dprintk(CVP_ERR, "%s invalid hfi_device_data");
+		return -EINVAL;
+	} else if (!hfi_device_data->cvp_workq) {
+		dprintk(CVP_ERR, "%s cvp_workq not initialized");
+		return -EINVAL;
+	}
+
+	reinit_completion(&core->ssr_completion);
+	rc = msm_cvp_trigger_ssr(core, SSR_ERR_FATAL);
+	if(rc == 0) {
+		dprintk(CVP_WARN, "%s: SSR triggered\n", __func__);
+		rc = wait_for_completion_interruptible(&core->ssr_completion);
+		if(rc == -ERESTARTSYS) {
+			dprintk(CVP_ERR, "%s: Unable to complete SSR. Wait interrupted\n", __func__);
+		} else {
+		    dprintk(CVP_WARN, "%s: SSR completed successfully\n", __func__);
+		}
+	}
+	else {
+		dprintk(CVP_ERR, "%s: Failed to trigger SSR\n", __func__);
+	}
+
+	return rc;
+}
+
+static int pil_load()
+{
+	int rc = 0;
+	struct msm_cvp_inst *inst;
+	dprintk(CVP_INFO, "%s\n", __func__);
+
+	inst = msm_cvp_open(MSM_CORE_CVP, MSM_CVP_BOOT, current);
+	if (!inst) {
+		dprintk(CVP_ERR, "%s: Failed to create cvp instance\n", __func__);
+		return -ENOMEM;
+	}
+	rc = msm_cvp_close(inst);
+	if (rc) {
+		dprintk(CVP_ERR, "%s: Failed to close cvp instance\n", __func__);
+	} else {
+		dprintk(CVP_INFO, "%s: PIL loaded successfully\n", __func__);
+	}
+
+	return rc;
+}
+
+#ifdef CONFIG_HIBERNATION
+static int msm_cvp_pm_freeze(struct device *dev)
+{
+	struct msm_cvp_core *core;
+
+	dprintk(CVP_INFO, "%s: Start\n", __func__);
+
+	/*
+	 * Bail out if
+	 * - driver possibly not probed yet
+	 * - not the main device. We don't support power management on
+	 *   subdevices (e.g. context banks)
+	 */
+	if (!dev || !dev->driver || !of_device_is_compatible(dev->of_node, "qcom,msm-cvp"))
+		return 0;
+
+	core = dev_get_drvdata(dev);
+	return finish_ssr(core);
+}
+
+static int msm_cvp_pm_restore(struct device *dev)
+{
+	return pil_load();
+}
+#endif
 
 static int msm_probe_cvp_device(struct platform_device *pdev)
 {
@@ -585,6 +674,10 @@ static int msm_cvp_pm_resume(struct device *dev)
 
 static const struct dev_pm_ops msm_cvp_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(msm_cvp_pm_suspend, msm_cvp_pm_resume)
+#ifdef CONFIG_HIBERNATION /* part of Hibernation FR */
+    .freeze  = msm_cvp_pm_freeze,
+    .restore = msm_cvp_pm_restore,
+#endif
 };
 
 MODULE_DEVICE_TABLE(of, msm_cvp_plat_match);

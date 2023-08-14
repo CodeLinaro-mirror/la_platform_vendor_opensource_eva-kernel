@@ -366,6 +366,7 @@ struct msm_cvp_core {
 	struct dentry *debugfs_root;
 	enum cvp_core_state state;
 	struct completion completions[SYS_MSG_END - SYS_MSG_START + 1];
+	struct completion ssr_completion;
 	enum msm_cvp_hfi_type hfi_type;
 	struct msm_cvp_platform_resources resources;
 	struct msm_cvp_capability *capabilities;
