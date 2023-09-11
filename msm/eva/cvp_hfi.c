@@ -1332,10 +1332,6 @@ static void __set_queue_hdr_defaults(struct cvp_hfi_queue_header *q_hdr)
 	q_hdr->qhdr_write_idx = 0x0;
 }
 
-/*
- *Unused, keep for reference
- */
-/*
 static void __interface_dsp_queues_release(struct iris_hfi_device *device)
 {
 	int i;
@@ -1351,6 +1347,7 @@ static void __interface_dsp_queues_release(struct iris_hfi_device *device)
 		mem_data->size, DMA_BIDIRECTIONAL, 0);
 	dma_free_coherent(device->res->mem_cdsp.dev, mem_data->size,
 		mem_data->kvaddr, mem_data->dma_handle);
+	mem_data->kvaddr = NULL;
 
 	for (i = 0; i < CVP_IFACEQ_NUMQ; i++) {
 		device->dsp_iface_queues[i].q_hdr = NULL;
@@ -1360,7 +1357,6 @@ static void __interface_dsp_queues_release(struct iris_hfi_device *device)
 	device->dsp_iface_q_table.align_virtual_addr = NULL;
 	device->dsp_iface_q_table.align_device_addr = 0;
 }
-*/
 
 static int __interface_dsp_queues_init(struct iris_hfi_device *dev)
 {
@@ -1443,13 +1439,14 @@ fail_dma_alloc:
 
 static void __interface_queues_release(struct iris_hfi_device *device)
 {
-#ifdef CONFIG_EVA_TVM
 	int i;
 	struct cvp_hfi_mem_map_table *qdss;
 	struct cvp_hfi_mem_map *mem_map;
 	int num_entries = device->res->qdss_addr_set.count;
 	unsigned long mem_map_table_base_addr;
 	struct context_bank_info *cb;
+
+	__interface_dsp_queues_release(device);
 
 	if (device->qdss.align_virtual_addr) {
 		qdss = (struct cvp_hfi_mem_map_table *)
@@ -1499,7 +1496,6 @@ static void __interface_queues_release(struct iris_hfi_device *device)
 
 	device->mem_addr.align_virtual_addr = NULL;
 	device->mem_addr.align_device_addr = 0;
-#endif
 }
 
 static int __get_qdss_iommu_virtual_addr(struct iris_hfi_device *dev,
