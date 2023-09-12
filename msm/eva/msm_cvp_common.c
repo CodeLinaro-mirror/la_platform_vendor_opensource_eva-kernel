@@ -661,6 +661,7 @@ static void handle_sys_error(enum hal_command_response cmd, void *data)
 	mutex_unlock(&core->lock);
 
 	dprintk(CVP_WARN, "SYS_ERROR handled.\n");
+	complete(&core->ssr_completion);
 	BUG_ON(core->resources.fatal_ssr);
 }
 
@@ -1365,6 +1366,7 @@ send_again:
 	} else {
 		dprintk(CVP_WARN, "%s: cvp core %pK not initialized\n",
 			__func__, core);
+		complete(&core->ssr_completion);
 	}
 	mutex_unlock(&core->lock);
 }
