@@ -93,6 +93,7 @@ enum eva_dsp_debug_bits {
 	EVA_UMD_SESS_ON = 13,
 	EVA_UMD_API_ON = 14,
 	EVA_UMD_DBG_ON = 15,
+	EVA_UMD_MEMPROFILE_ON = 16,
 	EVA_UMD_MAX_DEBUG
 };
 
