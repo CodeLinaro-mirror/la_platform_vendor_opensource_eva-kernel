@@ -626,6 +626,10 @@ static int msm_cvp_remove(struct platform_device *pdev)
 	}
 
 	cvp_hfi_deinitialize(core->hfi_type, core->device);
+	cdev_del(&core->cdev);
+	device_destroy(core->class, core->dev_num);
+	class_destroy(core->class);
+	unregister_chrdev_region(core->dev_num, 1);
 	msm_cvp_free_platform_resources(&core->resources);
 	sysfs_remove_group(&pdev->dev.kobj, &msm_cvp_core_attr_group);
 	dev_set_drvdata(&pdev->dev, NULL);
@@ -692,6 +696,9 @@ static struct platform_driver msm_cvp_driver = {
 	},
 };
 
+static bool mp_load_pil = true;
+module_param(mp_load_pil, bool, 0);
+
 static int __init msm_cvp_init(void)
 {
 	int rc = 0;
@@ -720,11 +727,25 @@ static int __init msm_cvp_init(void)
 	cvp_driver->buf_cache.cache = KMEM_CACHE(cvp_internal_buf, 0);
 	cvp_driver->smem_cache.cache = KMEM_CACHE(msm_cvp_smem, 0);
 
+	/* Perform the PIL loading */
+	if(mp_load_pil) {
+		rc = pil_load();
+		if(rc != 0) {
+			dprintk(CVP_ERR, "%s: PIL loading failed\n", __func__);
+		}
+	}
+
 	return rc;
 }
 
 static void __exit msm_cvp_exit(void)
 {
+	struct msm_cvp_core* core;
+	core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
+	if(finish_ssr(core) != 0) {
+		dprintk(CVP_ERR, "%s: finish_ssr failed\n", __func__);
+	}
+
 	cvp_dsp_device_exit();
 	kmem_cache_destroy(cvp_driver->msg_cache.cache);
 	kmem_cache_destroy(cvp_driver->frame_cache.cache);

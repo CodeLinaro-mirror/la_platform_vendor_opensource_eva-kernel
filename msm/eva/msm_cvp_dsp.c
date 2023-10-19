@@ -2123,7 +2123,8 @@ int cvp_dsp_device_init(void)
 		goto register_bail;
 	}
 	snprintf(tname, sizeof(tname), "cvp-dsp-thread");
-	me->state = DSP_UNINIT;
+	if(me->state == DSP_INVALID)
+		me->state = DSP_UNINIT;
 	me->dsp_thread = kthread_run(cvp_dsp_thread, me, tname);
 	if (!me->dsp_thread) {
 		dprintk(CVP_ERR, "%s create %s fail", __func__, tname);
@@ -2144,6 +2145,8 @@ void cvp_dsp_device_exit(void)
 
 	mutex_lock(&me->tx_lock);
 	me->state = DSP_INVALID;
+	complete(&me->completions[CPU2DSP_MAX_CMD]);
+	kthread_stop(me->dsp_thread);
 	mutex_unlock(&me->tx_lock);
 
 	DEINIT_MSM_CVP_LIST(&me->fastrpc_driver_list);
