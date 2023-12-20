@@ -662,6 +662,9 @@ void handle_sys_error(enum hal_command_response cmd, void *data)
 	mutex_unlock(&core->lock);
 
 	dprintk(CVP_WARN, "SYS_ERROR handled %d \n", core->resources.fatal_ssr);
+#ifdef CONFIG_HIBERNATION /* part of Hibernation FR */
+	complete(&core->ssr_completion);
+#endif
 	BUG_ON(core->resources.fatal_ssr);
 }
 
@@ -1368,6 +1371,9 @@ send_again:
 	} else {
 		dprintk(CVP_WARN, "%s: cvp core %pK not initialized\n",
 			__func__, core);
+#ifdef CONFIG_HIBERNATION /* part of Hibernation FR */
+		complete(&core->ssr_completion);
+#endif
 	}
 	mutex_unlock(&core->lock);
 }
