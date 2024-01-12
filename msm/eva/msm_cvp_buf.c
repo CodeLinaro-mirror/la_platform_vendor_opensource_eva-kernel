@@ -74,12 +74,12 @@ int print_smem(u32 tag, const char *str, struct msm_cvp_inst *inst,
 
 		if (!atomic_read(&smem->refcount))
 			dprintk(tag,
-				" UNUSED mapping %s: 0x%llx size %d iova %#x idx %d pkt_type %s buf_idx %#x fd %d",
+				" UNUSED mapping %s: 0x%llx size %d iova %#x idx %d pkt_type %s buf_idx %#x fd %d\n",
 				str, smem->dma_buf,
 				smem->size, smem->device_addr, smem->bitmap_index, name, smem->buf_idx, smem->fd);
 		else
 			dprintk(tag,
-				"%s: %x : 0x%llx size %d flags %#x iova %#x idx %d ref %d pkt_type %s buf_idx %#x fd %d",
+				"%s: %x : 0x%llx size %d flags %#x iova %#x idx %d ref %d pkt_type %s buf_idx %#x fd %d\n",
 				str, hash32_ptr(inst->session), smem->dma_buf,
 				smem->size, smem->flags, smem->device_addr,
 				smem->bitmap_index, atomic_read(&smem->refcount),
@@ -96,13 +96,13 @@ static void print_internal_buffer(u32 tag, const char *str,
 
 	if (cbuf->smem->dma_buf) {
 		dprintk(tag,
-		"%s: %x : fd %d off %d 0x%llx %s size %d iova %#x",
+		"%s: %x : fd %d off %d 0x%llx %s size %d iova %#x\n",
 		str, hash32_ptr(inst->session), cbuf->fd,
 		cbuf->offset, cbuf->smem->dma_buf, cbuf->smem->dma_buf->name,
 		cbuf->size, cbuf->smem->device_addr);
 	} else {
 		dprintk(tag,
-		"%s: %x : idx %2d fd %d off %d size %d iova %#x",
+		"%s: %x : idx %2d fd %d off %d size %d iova %#x\n",
 		str, hash32_ptr(inst->session), cbuf->index, cbuf->fd,
 		cbuf->offset, cbuf->size, cbuf->smem->device_addr);
 	}
@@ -177,8 +177,7 @@ void print_client_buffer(u32 tag, const char *str,
 		return;
 
 	dprintk(tag,
-		"%s: %x : idx %2d fd %d off %d size %d type %d flags 0x%x"
-		" reserved[0] %u\n",
+		"%s: %x : idx %2d fd %d off %d size %d type %d flags 0x%x reserved[0] %u\n",
 		str, hash32_ptr(inst->session), cbuf->index, cbuf->fd,
 		cbuf->offset, cbuf->size, cbuf->type, cbuf->flags,
 		cbuf->reserved[0]);
@@ -902,6 +901,7 @@ static int _wncc_map_metadata_bufs(struct eva_kmd_hfi_packet* in_pkt,
 	struct dma_buf* dmabuf;
 	struct eva_buf_map map;
 	__u32 num_layers, metadata_bufs_offset;
+	_buf_map_set_vaddr(&map, (void *)0xdeadbeaf);
 
 	if (!in_pkt || !wncc_metadata || !wncc_oob) {
 		dprintk(CVP_ERR, "%s: invalid params", __func__);
@@ -915,7 +915,7 @@ static int _wncc_map_metadata_bufs(struct eva_kmd_hfi_packet* in_pkt,
 		return -EINVAL;
 	}
 	if (metadata_bufs_offset > ((sizeof(in_pkt->pkt_data)
-		- sizeof(struct cvp_buf_type)) / sizeof(__u32))) {
+		- num_layers * sizeof(struct cvp_buf_type)) / sizeof(__u32))) {
 		dprintk(CVP_ERR, "%s: invalid wncc metadata bufs offset",
 			__func__);
 		return -EINVAL;
@@ -1000,7 +1000,7 @@ static int _wncc_unmap_metadata_bufs(struct eva_kmd_hfi_packet* in_pkt,
 		return -EINVAL;
 	}
 	if (metadata_bufs_offset > ((sizeof(in_pkt->pkt_data)
-		- sizeof(struct cvp_buf_type)) / sizeof(__u32))) {
+		- num_layers * sizeof(struct cvp_buf_type)) / sizeof(__u32))) {
 		dprintk(CVP_ERR, "%s: invalid wncc metadata bufs offset",
 			__func__);
 		return -EINVAL;
@@ -2196,7 +2196,7 @@ struct cvp_internal_buf *cvp_allocate_arp_bufs(struct msm_cvp_inst *inst,
 	buf->smem = cvp_kmem_cache_zalloc(&cvp_driver->smem_cache, GFP_KERNEL);
 	if (!buf->smem) {
 		dprintk(CVP_ERR, "%s Out of memory\n", __func__);
-		goto fail_kzalloc;
+		goto err_no_smem;
 	}
 
 	buf->smem->flags = smem_flags;
@@ -2206,7 +2206,6 @@ struct cvp_internal_buf *cvp_allocate_arp_bufs(struct msm_cvp_inst *inst,
 		dprintk(CVP_ERR, "Failed to allocate ARP memory\n");
 		goto err_no_mem;
 	}
-	buf->smem->pkt_type = buf->smem->buf_idx = 0;
 
 	buf->smem->pkt_type = buf->smem->buf_idx = 0;
 	atomic_inc(&buf->smem->refcount);
@@ -2220,6 +2219,8 @@ struct cvp_internal_buf *cvp_allocate_arp_bufs(struct msm_cvp_inst *inst,
 	return buf;
 
 err_no_mem:
+	cvp_kmem_cache_free(&cvp_driver->smem_cache, buf->smem);
+err_no_smem:
 	cvp_kmem_cache_free(&cvp_driver->buf_cache, buf);
 fail_kzalloc:
 	return NULL;
@@ -2392,9 +2393,10 @@ int cvp_release_dsp_buffers(struct msm_cvp_inst *inst,
 			"%s: %x : fd %x %s size %d",
 			__func__, hash32_ptr(inst->session), buf->fd,
 			smem->dma_buf->name, buf->size);
-		atomic_dec(&smem->refcount);
-		msm_cvp_smem_free(smem);
-		cvp_kmem_cache_free(&cvp_driver->smem_cache, smem);
+		if (atomic_dec_and_test(&smem->refcount)) {
+			msm_cvp_smem_free(smem);
+			cvp_kmem_cache_free(&cvp_driver->smem_cache, smem);
+		}
 	} else {
 		dprintk(CVP_ERR,
 			"%s: wrong owner %d %x : fd %x %s size %d",

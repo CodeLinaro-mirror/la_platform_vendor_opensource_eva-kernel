@@ -272,7 +272,9 @@ static bool cvp_fence_wait(struct cvp_fence_queue *q,
 		return false;
 
 	*fence = NULL;
-	mutex_lock(&q->lock);
+
+	while (!mutex_trylock(&q->lock))
+		usleep_range(100, 200);
 	*state = q->state;
 	if (*state != QUEUE_START) {
 		mutex_unlock(&q->lock);
@@ -306,6 +308,7 @@ static int cvp_fence_proc(struct msm_cvp_inst *inst,
 	struct cvp_session_queue *sq;
 	u32 hfi_err = HFI_ERR_NONE;
 	struct cvp_hfi_msg_session_hdr_ext hdr;
+	struct iris_hfi_device *device;
 
 	dprintk(CVP_SYNX, "%s %s\n", current->comm, __func__);
 
@@ -352,6 +355,12 @@ static int cvp_fence_proc(struct msm_cvp_inst *inst,
 		dprintk(CVP_INFO, "%s %s: cvp_wait_process_msg non-fatal %d\n",
 		current->comm, __func__, hfi_err);
 		synx_state = SYNX_STATE_SIGNALED_SUCCESS;
+	} else if (hfi_err == HFI_ERR_SESSION_HW_HANG_DETECTED) {
+		dprintk(CVP_ERR, "%s %s: cvp_wait_process_message hfi HW hang err %d\n",
+			current->comm, __func__, hfi_err);
+		synx_state = SYNX_STATE_SIGNALED_CANCEL;
+		device = ops_tbl->hfi_device_data;
+		cvp_dump_csr(device);
 	} else if (hfi_err != HFI_ERR_NONE) {
 		dprintk(CVP_ERR, "%s %s: cvp_wait_process_message hfi err %d\n",
 			current->comm, __func__, hfi_err);
@@ -422,8 +431,10 @@ wait:
 	if (state != QUEUE_START)
 		goto exit;
 
-	if (!f)
+	if (!f) {
+		usleep_range(100, 200);
 		goto wait;
+	}
 
 	pkt = f->pkt;
 	synx = (u32 *)f->synx;
@@ -534,14 +545,14 @@ static int cvp_populate_fences( struct eva_kmd_hfi_packet *in_pkt,
 		{
 			dprintk(CVP_ERR, "%s: invalid params", __func__);
 			rc = -EINVAL;
-			goto exit;
+			goto free_exit;
 		}
 	}
 	else
 	{
 		dprintk(CVP_ERR, "%s: invalid params", __func__);
 		rc = -EINVAL;
-		goto exit;
+		goto free_exit;
 	}
 
 soc_fence:
@@ -1615,7 +1626,7 @@ int msm_cvp_session_deinit(struct msm_cvp_inst *inst)
 		inst, hash32_ptr(inst->session));
 
 	session = (struct cvp_hal_session *)inst->session;
-	if (!session)
+	if (!session || session == (void *)0xdeadbeef)
 		return rc;
 
 	rc = msm_cvp_comm_try_state(inst, MSM_CVP_CLOSE_DONE);
