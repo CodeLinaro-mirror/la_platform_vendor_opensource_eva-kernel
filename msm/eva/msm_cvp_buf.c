@@ -2,6 +2,7 @@
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
  * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/pid.h>
@@ -754,9 +755,10 @@ int msm_cvp_mark_user_persist(struct msm_cvp_inst *inst,
 		list_for_each_entry_safe(pbuf, dummy, &inst->persistbufs.list,
 				list) {
 			if (pbuf->ownership == CLIENT) {
-				if (pbuf->fd == buf->fd &&
-					pbuf->size == buf->size)
+				if (pbuf->fd == buf->fd && pbuf->size == buf->size) {					
 					buf->fd = pbuf->smem->device_addr;
+					pbuf->ktid = ktid;
+				}
 				rc = 1;
 				break;
 			}
@@ -768,7 +770,6 @@ int msm_cvp_mark_user_persist(struct msm_cvp_inst *inst,
 			rc = -EFAULT;
 			break;
 		}
-		pbuf->ktid = ktid;
 		rc = 0;
 	}
 	return rc;
