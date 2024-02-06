@@ -372,6 +372,9 @@ struct msm_cvp_core {
 	struct cvp_cycle_info dyn_clk;
 	atomic64_t kernel_trans_id;
 	struct cvp_debug_log log;
+#ifdef CONFIG_HIBERNATION /* part of Hibernation FR */
+	struct completion ssr_completion;
+#endif
 };
 
 struct msm_cvp_inst {
