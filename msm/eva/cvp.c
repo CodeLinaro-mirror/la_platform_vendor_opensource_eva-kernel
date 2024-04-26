@@ -589,7 +589,7 @@ static int finish_ssr(struct msm_cvp_core* core)
 	return rc;
 }
 
-static int pil_load()
+/*static int pil_load()
 {
 	int rc = 0;
 	struct msm_cvp_inst *inst;
@@ -608,7 +608,7 @@ static int pil_load()
 	}
 
 	return rc;
-}
+}*/
 
 static int msm_cvp_pm_freeze(struct device *dev)
 {
@@ -631,7 +631,8 @@ static int msm_cvp_pm_freeze(struct device *dev)
 
 static int msm_cvp_pm_restore(struct device *dev)
 {
-	return pil_load();
+	dprintk(CVP_INFO, "%s\n", __func__);
+	return 0;
 }
 #endif
 
