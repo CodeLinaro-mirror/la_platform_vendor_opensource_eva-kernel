@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/jiffies.h>
@@ -31,7 +31,7 @@ static void handle_session_error(enum hal_command_response cmd, void *data);
 
 static void msm_cvp_comm_generate_session_error(struct msm_cvp_inst *inst)
 {
-	dprintk(CVP_WARN, "%s function is deprecated\n");
+	dprintk(CVP_WARN, "%s function is deprecated\n", __func__);
 }
 
 static void dump_hfi_queue(struct iris_hfi_device *device)
@@ -1260,23 +1260,29 @@ int msm_cvp_comm_try_state(struct msm_cvp_inst *inst, int state)
 		rc = msm_comm_init_core(inst);
 		if (rc || state <= get_flipped_state(inst->state, state))
 			break;
+		/* defined in linux/compiler_attributes.h */
+		fallthrough;
 	case MSM_CVP_CORE_INIT_DONE:
 		rc = msm_comm_init_core_done(inst);
 		if (rc || state <= get_flipped_state(inst->state, state))
 			break;
+		fallthrough;
 	case MSM_CVP_OPEN:
 		rc = msm_comm_session_init(flipped_state, inst);
 		if (rc || state <= get_flipped_state(inst->state, state))
 			break;
+		fallthrough;
 	case MSM_CVP_OPEN_DONE:
 		rc = msm_comm_session_init_done(flipped_state, inst);
 		if (rc || state <= get_flipped_state(inst->state, state))
 			break;
+		fallthrough;
 	case MSM_CVP_CLOSE:
 		dprintk(CVP_INFO, "to CVP_CLOSE state\n");
 		rc = msm_comm_session_close(flipped_state, inst);
 		if (rc || state <= get_flipped_state(inst->state, state))
 			break;
+		fallthrough;
 	case MSM_CVP_CLOSE_DONE:
 		dprintk(CVP_INFO, "to CVP_CLOSE_DONE state\n");
 		rc = wait_for_state(inst, flipped_state, MSM_CVP_CLOSE_DONE,
@@ -1284,12 +1290,14 @@ int msm_cvp_comm_try_state(struct msm_cvp_inst *inst, int state)
 		if (rc || state <= get_flipped_state(inst->state, state))
 			break;
 		msm_cvp_comm_session_clean(inst);
+		fallthrough;
 	case MSM_CVP_CORE_UNINIT:
 	case MSM_CVP_CORE_INVALID:
 		dprintk(CVP_INFO, "Sending core uninit\n");
 		rc = msm_cvp_deinit_core(inst);
 		if (rc || state <= get_flipped_state(inst->state, state))
 			break;
+		fallthrough;
 	default:
 		dprintk(CVP_ERR, "State not recognized\n");
 		rc = -EINVAL;
