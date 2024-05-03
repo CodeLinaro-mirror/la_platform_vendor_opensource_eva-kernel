@@ -24,7 +24,9 @@
 #include <media/msm_eva_private.h>
 #include "cvp_hfi_api.h"
 #include "cvp_hfi_helper.h"
-#include <synx_api.h>
+#ifndef DISABLE_SYNX
+	#include <synx_api.h>
+#endif
 
 #define MAX_SUPPORTED_INSTANCES 16
 #define MAX_DEBUGFS_NAME 50
@@ -44,9 +46,7 @@
 #define SYS_MSG_INDEX(__msg) (__msg - SYS_MSG_START)
 #define SESSION_MSG_INDEX(__msg) (__msg - SESSION_MSG_START)
 
-
-// increased size for RGB display configuration.
-#define ARP_BUF_SIZE 0x8E0000
+#define ARP_BUF_SIZE 0x400000
 
 #define CVP_RT_PRIO_THRESHOLD 1
 
@@ -67,10 +67,7 @@ enum hw_block {
 	CVP_FDU = 0x0001,
 	CVP_ICA,
 	CVP_MPU,
-	CVP_OD,
-#ifdef LSR_SPLIT_VOTING
-	LSR
-#endif
+	CVP_OD
 };
 
 enum instance_state {
@@ -135,30 +132,6 @@ struct msm_cvp_qos_setting {
 	u32 dangerlut_low;
 	u32 safelut_low;
 };
-struct msm_lsr_csc_gcx_qos_setting {
-	u32 l_prioritylut_low;
-	u32 l_prioritylut_high;
-	u32 l_urgency_low;
-	u32 l_dangerlut_low;
-	u32 l_safelut_low;
-	u32 r_prioritylut_low;
-	u32 r_prioritylut_high;
-	u32 r_urgency_low;
-	u32 r_dangerlut_low;
-	u32 r_safelut_low;
-};
-struct msm_lsr_ddl_qos_setting {
-	u32 l_prioritylut_low;
-	u32 l_prioritylut_high;
-	u32 l_urgency_low;
-	u32 l_dangerlut_low;
-	u32 l_safelut_low;
-	u32 r_prioritylut_low;
-	u32 r_prioritylut_high;
-	u32 r_urgency_low;
-	u32 r_dangerlut_low;
-	u32 r_safelut_low;
-};
 
 struct msm_cvp_platform_data {
 	struct msm_cvp_common_data *common_data;
@@ -167,8 +140,6 @@ struct msm_cvp_platform_data {
 	uint32_t vpu_ver;
 	struct msm_cvp_ubwc_config_data *ubwc_config;
 	struct msm_cvp_qos_setting *noc_qos;
-	struct msm_lsr_csc_gcx_qos_setting *lsr_noc_csc_gcx_qos;
-	struct msm_lsr_ddl_qos_setting *lsr_noc_ddl_qos;
 };
 
 struct msm_cvp_drv {
@@ -280,27 +251,15 @@ struct cvp_session_prop {
 	u32 mpu_cycles;
 	u32 ica_cycles;
 	u32 fw_cycles;
-#ifdef LSR_SPLIT_VOTING
-	u32 lsr_cycles;
-#endif
 	u32 fdu_op_cycles;
 	u32 od_op_cycles;
 	u32 mpu_op_cycles;
 	u32 ica_op_cycles;
 	u32 fw_op_cycles;
-#ifdef LSR_SPLIT_VOTING
-	u32 lsr_op_cycles;
-#endif
 	u32 ddr_bw;
 	u32 ddr_op_bw;
 	u32 ddr_cache;
 	u32 ddr_op_cache;
-#ifdef LSR_SPLIT_VOTING
-	u32 nBwLsr_LLCC;
-	u32 nOpBwLsr_LLCC;
-	u32 nBwLsr_Ddr;
-	u32 nOpBwLsr_Ddr;
-#endif
 	u32 fps[HFI_MAX_HW_THREADS];
 	u32 dump_offset;
 	u32 dump_size;
@@ -396,6 +355,7 @@ struct msm_cvp_core {
 	struct device *dev;
 	struct cvp_hfi_device *device;
 	struct msm_cvp_platform_data *platform_data;
+	struct msm_cvp_synx_ops *synx_ftbl;
 	struct list_head instances;
 	struct dentry *debugfs_root;
 	enum cvp_core_state state;
@@ -412,6 +372,7 @@ struct msm_cvp_core {
 	bool trigger_ssr;
 	unsigned long curr_freq;
 	unsigned long orig_core_sum;
+	unsigned long bw_sum;
 	struct cvp_cycle_info dyn_clk;
 	atomic64_t kernel_trans_id;
 	struct cvp_debug_log log;
@@ -447,11 +408,7 @@ struct msm_cvp_inst {
 	u32 error_code;
 	/* prev_error_code saves value of error_code before it's cleared */
 	u32 prev_error_code;
-	#if IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX)
-	struct synx_session synx_session_id;
-	#elif IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX_V2)
 	struct synx_session *synx_session_id;
-	#endif
 	struct cvp_fence_queue fence_cmd_queue;
 };
 

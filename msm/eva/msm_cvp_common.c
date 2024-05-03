@@ -16,8 +16,8 @@
 #include "msm_cvp_clocks.h"
 #include "msm_cvp.h"
 #include "cvp_core_hfi.h"
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
 #include <linux/notifier.h>
+#ifndef HALLIDAY_DISABLE
 #include <linux/msm_kgsl.h>
 #include "msm_gpu_eva.h"
 #endif
@@ -63,22 +63,13 @@ static void dump_hfi_queue(struct iris_hfi_device *device)
 			read_idx = queue->qhdr_read_idx;
 			read_ptr = (u32 *)((qinfo->q_array.align_virtual_addr) +
 				(read_idx << 2));
-			dprintk(CVP_ERR, "queue payload: %x %x %x %x %x %x %x %x %x \n",
-				read_ptr[0], read_ptr[1],read_ptr[2],
-				read_ptr[3], read_ptr[4],read_ptr[5],
-				read_ptr[6], read_ptr[7],read_ptr[8]);
+			dprintk(CVP_ERR, "queue payload: %x %x %x %x\n",
+				read_ptr[0], read_ptr[1],
+				read_ptr[2], read_ptr[3]);
 		}
 
 	}
 	mutex_unlock(&device->lock);
-}
-
-void print_hfi_queue_info(struct cvp_hfi_device *hdev)
-{
-	if(hdev && hdev->hfi_device_data){
-		call_hfi_op(hdev, flush_debug_queue, hdev->hfi_device_data);
-		dump_hfi_queue(hdev->hfi_device_data);
-	}
 }
 
 struct msm_cvp_core *get_cvp_core(int core_id)
@@ -336,65 +327,43 @@ static void handle_sys_release_res_done(
 	complete(&core->completions[
 			SYS_MSG_INDEX(HAL_SYS_RELEASE_RESOURCE_DONE)]);
 }
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-static void handle_session_gmu_stop_done(enum hal_command_response cmd, void *data)
-{
-	struct msm_cvp_cb_cmd_done *response = data;
-	struct msm_cvp_inst *inst = NULL;
-	struct msm_cvp_core *core;
-	struct cvp_hal_session *session = NULL;
-		core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
-	if (core){
-		dprintk(CVP_INFO, "Valid Core Identified\n");
-		list_for_each_entry(inst, &core->instances, list) {
-		if( (inst->state != MSM_CVP_CORE_INVALID ) && (inst->prop.type == HFI_SESSION_LSR ) ) {
-				session = inst->session;
-				break;
-			}
-		}
-	}
 
-	if (response->status) {
-		dprintk(CVP_ERR,
-			"gmu_stop_doneerror from FW : %#x\n",
-			response->status);
-	}
-
-	if (IS_HAL_SESSION_CMD(cmd))
-		complete(&inst->completions[SESSION_MSG_INDEX(HAL_SESSION_GMU_STOP_DONE)]);
-	else
-		dprintk(CVP_ERR, "gmu_stop_done: invalid cmd: %d\n", cmd);
-}
-static void handle_session_gmu_start_done(enum hal_command_response cmd, void *data)
+static void handle_sys_gmu_stop_done(enum hal_command_response cmd, void *data)
 {
 	struct msm_cvp_cb_cmd_done *response = data;
 	struct msm_cvp_core *core;
-	struct msm_cvp_inst *inst = NULL;
-	struct cvp_hal_session *session = NULL;
-	core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
-	if (core){
-		dprintk(CVP_INFO, "Valid Core Identified\n");
-		list_for_each_entry(inst, &core->instances, list) {
-		if( (inst->state != MSM_CVP_CORE_INVALID ) && (inst->prop.type == HFI_SESSION_LSR ) ) {
-				session = inst->session;
-				break;
-			}
-		}
-	}
 
-	if (response->status) {
-		dprintk(CVP_ERR,
-			"gmu start done error from FW : %#x\n",
-			response->status);
+	if (!response) {
+	dprintk(CVP_ERR,
+		"Failed to get valid response for sys init\n");
+	return;
 	}
-	if (IS_HAL_SESSION_CMD(cmd)){
-		complete(&inst->completions[SESSION_MSG_INDEX(HAL_SESSION_GMU_START_DONE)]);
+	core = get_cvp_core(response->device_id);
+	if (!core) {
+		dprintk(CVP_ERR, "Wrong device_id received\n");
+		return;
 	}
-	else{
-		dprintk(CVP_ERR, "gmu start done : invalid cmd: %d\n", cmd);
-	}
+	complete(&core->completions[
+		SYS_MSG_INDEX(HAL_SYS_GMU_STOP_DONE)]);
 }
-#endif
+static void handle_sys_gmu_start_done(enum hal_command_response cmd, void *data)
+{
+	struct msm_cvp_cb_cmd_done *response = data;
+	struct msm_cvp_core *core;
+	if (!response) {
+		dprintk(CVP_ERR,
+			"Failed to get valid response for sys init\n");
+		return;
+	}
+	core = get_cvp_core(response->device_id);
+	if (!core) {
+		dprintk(CVP_ERR, "Wrong device_id received\n");
+		return;
+	}
+	complete(&core->completions[
+		SYS_MSG_INDEX(HAL_SYS_GMU_START_DONE)]);
+}
+
 void change_cvp_inst_state(struct msm_cvp_inst *inst, enum instance_state state)
 {
 	if (!inst) {
@@ -449,7 +418,8 @@ int wait_for_sess_signal_receipt(struct msm_cvp_inst *inst,
 	if (!rc) {
 		dprintk(CVP_WARN, "Wait interrupted or timed out: %d\n",
 				SESSION_MSG_INDEX(cmd));
-		print_hfi_queue_info(hdev);
+		call_hfi_op(hdev, flush_debug_queue, hdev->hfi_device_data);
+		dump_hfi_queue(hdev->hfi_device_data);
 		rc = -ETIMEDOUT;
 	} else if (inst->state == MSM_CVP_CORE_INVALID) {
 		rc = -ECONNRESET;
@@ -606,44 +576,12 @@ static void handle_session_error(enum hal_command_response cmd, void *data)
 	struct msm_cvp_cb_cmd_done *response = data;
 	struct cvp_hfi_device *hdev = NULL;
 	struct msm_cvp_inst *inst = NULL;
-	struct msm_cvp_core *core = NULL;
-	uint8_t *err_type = (uint8_t *)data;
-	unsigned long flags = 0;
 
 	if (!response) {
 		dprintk(CVP_ERR,
 			"Failed to get valid response for session error\n");
 		return;
 	}
-
-	if(*err_type == SSR_HW_FENCE_TIMEOUT){
-		core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
-		if (!core) {
-			dprintk(CVP_ERR,
-				"Got SYS_ERR but unable to identify core\n");
-			return;
-		}
-		mutex_lock(&core->lock);
-			dprintk(CVP_ERR,
-				"Detected HW fence timeout error \n");
-		list_for_each_entry(inst, &core->instances, list) {
-			if( (inst->state != MSM_CVP_CORE_INVALID )  && (inst->prop.type == HFI_SESSION_LSR )) {
-				dprintk(CVP_ERR,
-					"Detected detecte LSR SESSION \n");
-				spin_lock_irqsave(&inst->event_handler.lock, flags);
-				inst->event_handler.event = CVP_SSR_EVENT;
-				dprintk(CVP_ERR,
-					" session error Updated SSR event   \n");
-				spin_unlock_irqrestore(
-					&inst->event_handler.lock, flags);
-				wake_up_all(&inst->event_handler.wq);
-	                       break;
-			}
-		}
-		mutex_unlock(&core->lock);
-		return;
-	}
-
 
 	inst = cvp_get_inst(get_cvp_core(response->device_id),
 			response->session_id);
@@ -656,15 +594,7 @@ static void handle_session_error(enum hal_command_response cmd, void *data)
 	hdev = inst->core->device;
 	dprintk(CVP_ERR, "Sess error 0x%x received for inst %pK sess %x\n",
 		response->status, inst, hash32_ptr(inst->session));
-	if(inst->prop.type == HFI_SESSION_LSR){
-		spin_lock_irqsave(&inst->event_handler.lock, flags);
-		inst->event_handler.event = CVP_SSR_EVENT;
-		dprintk(CVP_ERR,
-			" session error Updated SSR event   \n");
-		spin_unlock_irqrestore(
-		&inst->event_handler.lock, flags);
-		wake_up_all(&inst->event_handler.wq);
-	}
+
 	cvp_put_inst(inst);
 }
 
@@ -730,7 +660,6 @@ void handle_sys_error(enum hal_command_response cmd, void *data)
 			core, cmd);
 	mutex_lock(&core->clk_lock);
 	hfi_device = hdev->hfi_device_data;
-        msm_eva_set_sw_pc(SW_PC_ENABLE);
 	if (hfi_device->error == CVP_ERR_NOC_ERROR) {
 		dprintk(CVP_WARN, "Got NOC error");
 		msm_cvp_noc_error_info(core);
@@ -763,7 +692,7 @@ void handle_sys_error(enum hal_command_response cmd, void *data)
 	/* handle the hw error before core released to get full debug info */
 	msm_cvp_handle_hw_error(core);
 
-	dprintk(CVP_WARN, "Calling core_release\n");
+	dprintk(CVP_CORE, "Calling core_release\n");
 	rc = call_hfi_op(hdev, core_release, hdev->hfi_device_data);
 	if (rc) {
 		dprintk(CVP_ERR, "core_release failed\n");
@@ -836,33 +765,7 @@ static void handle_session_close(enum hal_command_response cmd, void *data)
 	show_stats(inst);
 	cvp_put_inst(inst);
 }
-static void handle_session_ctrl(enum hal_command_response cmd, void *data)
-{
-	struct msm_cvp_cb_cmd_done *response = data;
-	struct msm_cvp_inst *inst;
 
-	if (!response) {
-		dprintk(CVP_ERR,
-			"Failed to get valid response for release resource\n");
-		return;
-	}
-
-	inst = cvp_get_inst(get_cvp_core(response->device_id),
-			response->session_id);
-	if (!inst) {
-		dprintk(CVP_WARN, "%s:Got a response for an inactive session\n",
-				__func__);
-		return;
-	}
-
-	if (response->status)
-		dprintk(CVP_WARN, "HFI sess ctrl err 0x%x HAL cmd %d\n",
-			response->status, cmd);
-
-	inst->error_code = response->status;
-	signal_session_msg_receipt(cmd, inst);
-	cvp_put_inst(inst);
-}
 void cvp_handle_cmd_response(enum hal_command_response cmd, void *data)
 {
 	dprintk(CVP_HFI, "Command response = %d\n", cmd);
@@ -905,16 +808,11 @@ void cvp_handle_cmd_response(enum hal_command_response cmd, void *data)
         case HAL_SESSION_DUMP_NOTIFY:
 		handle_session_dump_notify(cmd, data);
 		break;
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-	case HAL_SESSION_GMU_STOP_DONE:
-		handle_session_gmu_stop_done(cmd, data);
+	case HAL_SYS_GMU_STOP_DONE:
+		handle_sys_gmu_stop_done(cmd, data);
 		break;
-	case HAL_SESSION_GMU_START_DONE:
-		handle_session_gmu_start_done(cmd, data);
-		break;
-#endif
-	case HAL_SESSION_STOP_DONE:
-		handle_session_ctrl(cmd, data);
+	case HAL_SYS_GMU_START_DONE:
+		handle_sys_gmu_start_done(cmd, data);
 		break;
 	default:
 		dprintk(CVP_HFI, "response unhandled: %d\n", cmd);
@@ -997,13 +895,6 @@ static int msm_comm_session_abort(struct msm_cvp_inst *inst)
 
 	dprintk(CVP_WARN, "%s: inst %pK session %x\n", __func__,
 		inst, hash32_ptr(inst->session));
-
-	if (inst->session_type != MSM_CVP_BOOT) {
-		if (inst->prop.type == HFI_SESSION_LSR){
-			msm_cvp_session_stop_notify(inst);
-		}
-	}
-
 	rc = call_hfi_op(hdev, session_abort, (void *)inst->session);
 	if (rc) {
 		dprintk(CVP_ERR,
@@ -1017,7 +908,8 @@ static int msm_comm_session_abort(struct msm_cvp_inst *inst)
 	if (!rc) {
 		dprintk(CVP_ERR, "%s: inst %pK session %x abort timed out\n",
 				__func__, inst, hash32_ptr(inst->session));
-		print_hfi_queue_info(hdev);
+		call_hfi_op(hdev, flush_debug_queue, hdev->hfi_device_data);
+		dump_hfi_queue(hdev->hfi_device_data);
 		msm_cvp_comm_generate_sys_error(inst);
 		rc = -EBUSY;
 	} else {
@@ -1101,7 +993,8 @@ int msm_cvp_comm_check_core_init(struct msm_cvp_core *core)
 		dprintk(CVP_ERR, "%s: Wait interrupted or timed out: %d\n",
 				__func__, SYS_MSG_INDEX(HAL_SYS_INIT_DONE));
 		hdev = core->device;
-		print_hfi_queue_info(hdev);
+		call_hfi_op(hdev, flush_debug_queue, hdev->hfi_device_data);
+		dump_hfi_queue(hdev->hfi_device_data);
 		rc = -EIO;
 		goto exit;
 	} else {
@@ -1467,7 +1360,8 @@ void msm_cvp_ssr_handler(struct work_struct *work)
 		return;
 	}
 	hdev = core->device;
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
+
+    #ifndef HALLIDAY_DISABLE
 	/*
 	 * To validate GPU SSR Flow by triggering
 	 * GPU SSR from Debug node
@@ -1481,13 +1375,7 @@ void msm_cvp_ssr_handler(struct work_struct *work)
 		}
 		return;
 	}
-#endif
-
-	if( core->ssr_type == SSR_HW_FENCE_TIMEOUT){
-		dprintk(CVP_ERR, "%s: SSR_HW_FENCE_TIMEOUT \n", __func__);
-		handle_session_error(HAL_SESSION_ERROR, &core->ssr_type);
-		return;
-	}
+    #endif
 
 	if (core->ssr_type == SSR_SESSION_ABORT) {
 		struct msm_cvp_inst *inst = NULL, *s;
@@ -1504,7 +1392,10 @@ void msm_cvp_ssr_handler(struct work_struct *work)
 			s = cvp_get_inst_validate(inst->core, inst);
 			if (!s)
 				return;
-			print_hfi_queue_info(hdev);
+
+			call_hfi_op(hdev, flush_debug_queue,
+				hdev->hfi_device_data);
+			dump_hfi_queue(hdev->hfi_device_data);
 			msm_cvp_comm_kill_session(inst);
 			cvp_put_inst(s);
 		} else {
@@ -1526,7 +1417,6 @@ send_again:
 		 * user SSR as non-fatal.
 		 */
 		core->trigger_ssr = true;
-		msm_eva_set_sw_pc(SW_PC_ENABLE);
 		rc = call_hfi_op(hdev, core_trigger_ssr,
 				hdev->hfi_device_data, core->ssr_type);
 		if (rc) {
@@ -1580,6 +1470,7 @@ int msm_cvp_comm_kill_session(struct msm_cvp_inst *inst)
 	}
 	dprintk(CVP_WARN, "%s: inst %pK, session %x state %d\n", __func__,
 		inst, hash32_ptr(inst->session), inst->state);
+	msm_eva_set_sw_pc(SW_PC_ENABLE);
 	/*
 	 * We're internally forcibly killing the session, if fw is aware of
 	 * the session send session_abort to firmware to clean up and release
@@ -1588,7 +1479,7 @@ int msm_cvp_comm_kill_session(struct msm_cvp_inst *inst)
 	if (inst->state >= MSM_CVP_OPEN_DONE &&
 			inst->state < MSM_CVP_CLOSE_DONE) {
 		rc = msm_comm_session_abort(inst);
-	    if (rc) {
+		if (rc) {
 			dprintk(CVP_ERR,
 				"%s: inst %pK session %x abort failed\n",
 				__func__, inst, hash32_ptr(inst->session));

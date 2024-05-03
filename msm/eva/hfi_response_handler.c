@@ -15,9 +15,8 @@
 #include "msm_cvp_debug.h"
 #include "cvp_hfi.h"
 #include "msm_cvp_common.h"
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-#include "msm_gpu_eva.h"
-#endif
+#include "cvp_core_hfi.h"
+#include "msm_cvp_events.h"
 extern struct msm_cvp_drv *cvp_driver;
 
 static enum cvp_status hfi_map_err_status(u32 hfi_err)
@@ -64,19 +63,6 @@ static enum cvp_status hfi_map_err_status(u32 hfi_err)
 	case HFI_ERR_SESSION_INCORRECT_STATE_OPERATION:
 		cvp_err = CVP_ERR_BAD_STATE;
 		break;
-	case HFI_ERR_SESSION_LSR_STALL_DETECTED:
-		cvp_err = CVP_ERR_LSR_STALL_DETECTED;
-		break;
-	case HFI_ERR_SESSION_LSR_FENCE_FAILURE:
-		cvp_err = CVP_ERR_LSR_FENCE_FAILURE;
-		break;
-	case HFI_ERR_SESSION_CDM_BUFFER_NULL:
-		cvp_err = CVP_ERR_LSR_CDM_BUFFER_NULL;
-		break;
-	case HFI_ERR_SESSION_INPUT_TASKQ_FULL:
-		cvp_err = CVP_ERR_LSR_INPUT_TASKQ_FULL;
-		break;
-
 	default:
 		cvp_err = CVP_ERR_FAIL;
 		break;
@@ -110,32 +96,15 @@ static int hfi_process_session_error(u32 device_id,
 	cmd_done.session_id = (void *)(uintptr_t)pkt->session_id;
 	cmd_done.status = hfi_map_err_status(pkt->event_data1);
 	info->response.cmd = cmd_done;
-	dprintk(CVP_ERR, "Received: SESSION_ERROR with event id : %#x %#x\n",
+	dprintk(CVP_INFO, "Received: SESSION_ERROR with event id : %#x %#x\n",
 		pkt->event_data1, pkt->event_data2);
 	switch (pkt->event_data1) {
 	/* Ignore below errors */
 	case HFI_ERR_SESSION_INVALID_SCALE_FACTOR:
 	case HFI_ERR_SESSION_UPSCALE_NOT_SUPPORTED:
-		dprintk(CVP_ERR, "Non Fatal:HFI_ERR_SESSION_INVALID_SCALE_FACTOR\n");
+		dprintk(CVP_INFO, "Non Fatal: HFI_EVENT_SESSION_ERROR\n");
 		info->response_type = HAL_RESPONSE_UNUSED;
 		break;
-	case HFI_ERR_SESSION_LSR_STALL_DETECTED:
-		dprintk(CVP_ERR, "Fatal: HFI_ERR_SESSION_LSR_STALL_DETECTED:\n");
-                info->response_type =  HAL_SESSION_ERROR;
-		break;
-	case HFI_ERR_SESSION_LSR_FENCE_FAILURE:
-		dprintk(CVP_ERR, "Fatal: HFI_ERR_SESSION_LSR_FENCE_FAILURE\n");
-                info->response_type =  HAL_SESSION_ERROR;
-		break;
-	case  HFI_ERR_SESSION_CDM_BUFFER_NULL:
-		dprintk(CVP_ERR, "Fatal: HFI_ERR_SESSION_CDM_BUFFER_NULL\n");
-                info->response_type =  HAL_SESSION_ERROR;
-		break;
-	case HFI_ERR_SESSION_INPUT_TASKQ_FULL:
-		dprintk(CVP_ERR, "Fatal:HFI_ERR_SESSION_INPUT_TASKQ_FULL \n");
-                info->response_type =  HAL_SESSION_ERROR;
-		break;
-
 	default:
 		dprintk(CVP_ERR,
 			"%s: session %x data1 %#x, data2 %#x\n", __func__,
@@ -392,35 +361,7 @@ static int hfi_process_session_flush_done(u32 device_id,
 
 	return 0;
 }
- static int hfi_process_session_stop_done(u32 device_id,
-		void *hdr, struct msm_cvp_cb_info *info)
-{
-	struct cvp_session_stop_packet_done *pkt =
-			(struct cvp_session_stop_packet_done *)hdr;
-	struct msm_cvp_cb_cmd_done cmd_done = {0};
 
-	if (!pkt || pkt->size <
-		sizeof(struct cvp_session_stop_packet_done)) {
-			dprintk(CVP_ERR, "%s: bad packet/packet size: %d\n",
-				__func__, pkt ? pkt->size : 0);
-		return -E2BIG;
-	}
-	dprintk(CVP_SESS, "RECEIVED: SESSION_STOP_DONE[%#x]\n",
-			pkt->session_id);
-
-	cmd_done.device_id = device_id;
-	cmd_done.session_id = (void *)(uintptr_t)pkt->session_id;
-	cmd_done.status = hfi_map_err_status(pkt->error_type);
-	if (cmd_done.status)
-		dprintk(CVP_WARN, "%s: status %#x hfi type %#x err %#x\n",
-			__func__, cmd_done.status, pkt->packet_type, pkt->error_type);
-	cmd_done.size = 0;
-
-	info->response_type = HAL_SESSION_STOP_DONE;
-	info->response.cmd = cmd_done;
-
-	return 0;
- }
 static int hfi_process_session_rel_buf_done(u32 device_id,
 		void *hdr, struct msm_cvp_cb_info *info)
 {
@@ -570,6 +511,22 @@ static int hfi_process_session_cvp_msg(u32 device_id,
 		"%s: Received msg %x cmd_done.status=%d sessionid=%x\n",
 		__func__, pkt->packet_type,
 		hfi_map_err_status(get_msg_errorcode(pkt)), session_id);
+	if(( (msm_cvp_debug & CVP_TRACE) == CVP_TRACE ) &&
+		(pkt->packet_type > HFI_MSG_SESSION_CVP_START) &&
+		(pkt->size >= sizeof(struct cvp_hfi_msg_session_hdr)))
+	{
+		u64 aon_cycles = 0;
+		u32 pkt_id = 0;
+		u32 stream_id = 0;
+		u32 t_id =0;
+		aon_cycles  = get_aon_time();
+		session_id   = pkt->session_id;
+		pkt_id    = pkt->packet_type;
+		stream_id = pkt->stream_idx;
+		t_id      =  pkt->client_data.transaction_id;
+		trace_tracing_eva_frame_from_sw(aon_cycles,"EVA_KMD_REV_BEGIN",session_id,stream_id,pkt_id,t_id);
+	}
+
 
 	spin_lock(&sq->lock);
 	if (sq->msg_count >= MAX_NUM_MSGS_PER_SESSION) {
@@ -657,17 +614,17 @@ static int hfi_process_sys_property_info(u32 device_id,
 	}
 
 }
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-static int hfi_process_session_gmu_stop_done(u32 device_id,
+#ifndef HALLIDAY_DISABLE
+static int hfi_process_sys_gmu_stop_done(u32 device_id,
 	void *hdr, struct msm_cvp_cb_info *info)
 {
-	struct cvp_hfi_msg_session_gpu_packet *pkt =
-	(struct cvp_hfi_msg_session_gpu_packet *)hdr;
+	struct cvp_hfi_msg_sys_gpu_packet *pkt =
+	(struct cvp_hfi_msg_sys_gpu_packet *)hdr;
 	struct msm_cvp_cb_cmd_done cmd_done = {0};
-	dprintk(CVP_INFO, "RECEIVED: HFI_MSG_SESSION_EVA_LSR_GMU_STOP\n");
+	dprintk(CVP_INFO, "RECEIVED: HFI_MSG_SYS_STOP_GMU_CMD_DONE\n");
 
 	if (!pkt || pkt->size <
-		sizeof(struct cvp_hfi_msg_session_gpu_packet)) {
+		sizeof(struct cvp_hfi_msg_sys_gpu_packet)) {
 		dprintk(CVP_ERR, "%s: bad packet/packet size: %d\n",
 		__func__, pkt ? pkt->size : 0);
 		return -E2BIG;
@@ -675,21 +632,21 @@ static int hfi_process_session_gmu_stop_done(u32 device_id,
 	cmd_done.device_id = device_id;
 	cmd_done.status = hfi_map_err_status(pkt->error_type);
 	cmd_done.size = 0;
-	info->response_type = HAL_SESSION_GMU_STOP_DONE;
+	info->response_type = HAL_SYS_GMU_STOP_DONE;
 	info->response.cmd = cmd_done;
 	return 0;
 }
-static int hfi_process_session_gmu_start_done(u32 device_id,
+static int hfi_process_sys_gmu_start_done(u32 device_id,
 	void *hdr, struct msm_cvp_cb_info *info)
 {
-	struct cvp_hfi_msg_session_gpu_packet *pkt =
-	(struct cvp_hfi_msg_session_gpu_packet *)hdr;
+	struct cvp_hfi_msg_sys_gpu_packet *pkt =
+	(struct cvp_hfi_msg_sys_gpu_packet *)hdr;
 	struct msm_cvp_cb_cmd_done cmd_done = {0};
 
-	dprintk(CVP_INFO, "RECEIVED: HFI_MSG_SESSION_EVA_LSR_GMU_START \n");
+	dprintk(CVP_INFO, "RECEIVED: HFI_MSG_SYS_START_GMU_CMD_DONE \n");
 
 	if (!pkt || pkt->size <
-		sizeof(struct cvp_hfi_msg_session_gpu_packet)) {
+		sizeof(struct cvp_hfi_msg_sys_gpu_packet)) {
 		dprintk(CVP_ERR, "%s: bad packet/packet size: %d\n",
 		__func__, pkt ? pkt->size : 0);
 		return -E2BIG;
@@ -697,7 +654,7 @@ static int hfi_process_session_gmu_start_done(u32 device_id,
 	cmd_done.device_id = device_id;
 	cmd_done.status = hfi_map_err_status(pkt->error_type);
 	cmd_done.size = 0;
-	info->response_type = HAL_SESSION_GMU_START_DONE;
+	info->response_type = HAL_SYS_GMU_START_DONE;
 	info->response.cmd = cmd_done;
 	return 0;
 }
@@ -708,7 +665,6 @@ int cvp_hfi_process_msg_packet(u32 device_id, void *hdr,
 	typedef int (*pkt_func_def)(u32, void *, struct msm_cvp_cb_info *info);
 	pkt_func_def pkt_func = NULL;
 	struct cvp_hal_msg_pkt_hdr *msg_hdr = (struct cvp_hal_msg_pkt_hdr *)hdr;
-	struct cvp_session_stop_packet_done *pkt = NULL;
 
 	if (!info || !msg_hdr || msg_hdr->size < CVP_IFACEQ_MIN_PKT_SIZE) {
 		dprintk(CVP_ERR, "%s: bad packet/packet size\n",
@@ -748,22 +704,14 @@ int cvp_hfi_process_msg_packet(u32 device_id, void *hdr,
 	case HFI_MSG_EVENT_NOTIFY_SNAPSHOT_READY:
 		pkt_func = (pkt_func_def)hfi_process_session_dump_notify;
 		break;
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-	case HFI_MSG_SESSION_EVA_LSR_GMU_STOP:
-		pkt_func = (pkt_func_def)hfi_process_session_gmu_stop_done;
+#ifndef HALLIDAY_DISABLE
+	case HFI_MSG_SYS_STOP_GMU_CMD_DONE:
+		pkt_func = (pkt_func_def)hfi_process_sys_gmu_stop_done;
 		break;
-	case HFI_MSG_SESSION_EVA_LSR_GMU_START:
-		pkt_func = (pkt_func_def)hfi_process_session_gmu_start_done;
+	case HFI_MSG_SYS_START_GMU_CMD_DONE:
+		pkt_func = (pkt_func_def)hfi_process_sys_gmu_start_done;
 		break;
 #endif
-	case  HFI_MSG_SESSION_STOP_DONE:
-		pkt_func = (pkt_func_def)hfi_process_session_stop_done;
-		pkt = (struct cvp_session_stop_packet_done *)hdr;
-		if(pkt->client_data.data1)
-		{
-			hfi_process_session_cvp_msg(device_id, hdr, info);
-		}
-		break;
 	default:
 		dprintk(CVP_HFI, "Use default msg handler: %#x\n",
 				msg_hdr->packet);

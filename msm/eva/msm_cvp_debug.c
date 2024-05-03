@@ -13,7 +13,6 @@
 
 #define CREATE_TRACE_POINTS
 #define MAX_SSR_STRING_LEN 10
-#define MAX_CACHE_STRING_LEN 15
 int msm_cvp_debug = CVP_ERR | CVP_WARN | CVP_FW;
 EXPORT_SYMBOL(msm_cvp_debug);
 
@@ -22,12 +21,12 @@ EXPORT_SYMBOL(msm_cvp_debug_out);
 
 int msm_ftrace_cvp_debug = 0x0;
 EXPORT_SYMBOL(msm_ftrace_cvp_debug);
+
 int msm_cvp_fw_debug = 0x18;
 int msm_cvp_fw_debug_mode = 1;
 int msm_cvp_fw_low_power_mode = 1;
 bool msm_cvp_fw_coverage = !true;
 bool msm_cvp_cacheop_enabled = true;
-int msm_cvp_llcc_enable = 1;
 bool msm_cvp_thermal_mitigation_disabled = !true;
 bool msm_cvp_cacheop_disabled = !true;
 int msm_cvp_clock_voting = !1;
@@ -39,11 +38,10 @@ bool msm_cvp_mmrm_enabled = true;
 bool msm_cvp_mmrm_enabled = !true;
 #endif
 bool msm_cvp_dcvs_disable = !true;
-int msm_cvp_minidump_enable = 1;
-bool msm_cvp_noc_enable = true;
-bool lsr_session_enabled = false;
+int msm_cvp_minidump_enable = !1;
 int msm_cvp_hw_wd_recovery = 1;
-int msm_cvp_spad_reg_dump = 0;
+bool cvp_kernel_fence_enabled = false;
+
 #define MAX_DBG_BUF_SIZE 4096
 
 struct cvp_core_inst_pair {
@@ -139,50 +137,6 @@ static int trigger_ssr_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static int cache_resource_open(struct inode *inode, struct file *file)
-{
-	file->private_data = inode->i_private;
-	dprintk(CVP_INFO, "%s: Enter\n", __func__);
-	return 0;
-}
-static ssize_t cache_resource_write(struct file *filp, const char __user *buf,
-		size_t count, loff_t *ppos)
-{
-	int rc = 0;
-	unsigned long cache_resources_enable = 0;
-	struct msm_cvp_core *core = filp->private_data;
-	size_t size = MAX_CACHE_STRING_LEN;
-	char kbuf[MAX_CACHE_STRING_LEN + 1] = {0};
-
-        dprintk(CVP_WARN, "%s User memory fault\n", __func__);
-	if (!buf)
-		return -EINVAL;
-
-	if (!count)
-		goto exit;
-
-	if (count < size)
-		size = count;
-
-	if (copy_from_user(kbuf, buf, size)) {
-		dprintk(CVP_WARN, "%s User memory fault\n", __func__);
-		rc = -EFAULT;
-		goto exit;
-	}
-
-	rc = kstrtoul(kbuf, 0, &cache_resources_enable);
-	if (rc) {
-		dprintk(CVP_WARN, "returning error err %d\n", rc);
-		rc = -EINVAL;
-	} else {
-		dprintk(CVP_INFO, "returning rc %d : cache_resources_enable  %d\n", rc,cache_resources_enable);
-                set_subcache_resources(core, cache_resources_enable);
-		rc = count;
-	}
-exit:
-	return rc;
-
-}
 static ssize_t trigger_ssr_write(struct file *filp, const char __user *buf,
 		size_t count, loff_t *ppos)
 {
@@ -224,10 +178,6 @@ static const struct file_operations ssr_fops = {
 	.write = trigger_ssr_write,
 };
 
-static const struct file_operations cache_fops = {
-	.open = cache_resource_open,
-	.write = cache_resource_write,
-};
 static int cvp_power_get(void *data, u64 *val)
 {
 	struct cvp_hfi_device *hfi_ops;
@@ -309,23 +259,20 @@ struct dentry *msm_cvp_debugfs_init_drv(void)
 	debugfs_create_u32("fw_low_power_mode", 0644, dir,
 		&msm_cvp_fw_low_power_mode);
 	debugfs_create_u32("debug_output", 0644, dir, &msm_cvp_debug_out);
-	debugfs_create_u32("spad_reg_dump", 0644, dir, &msm_cvp_spad_reg_dump);
 	debugfs_create_u32("minidump_enable", 0644, dir,
 			&msm_cvp_minidump_enable);
 	debugfs_create_bool("fw_coverage", 0644, dir, &msm_cvp_fw_coverage);
+	debugfs_create_bool("kernel_fence", 0644, dir, &cvp_kernel_fence_enabled);
 	debugfs_create_bool("disable_thermal_mitigation", 0644, dir,
 			&msm_cvp_thermal_mitigation_disabled);
 	debugfs_create_bool("enable_cacheop", 0644, dir,
 			&msm_cvp_cacheop_enabled);
-	debugfs_create_x32("enable_llcc", 0644, dir,
-			&msm_cvp_llcc_enable);
 	debugfs_create_bool("disable_cvp_syscache", 0644, dir,
 			&msm_cvp_syscache_disable);
 	debugfs_create_bool("disable_dcvs", 0644, dir,
 			&msm_cvp_dcvs_disable);
 
 	debugfs_create_file("cvp_power", 0644, dir, NULL, &cvp_pwr_fops);
-	debugfs_create_bool("cvp_noc_enable", 0644, dir, &msm_cvp_noc_enable);
 
 	return dir;
 
@@ -395,7 +342,7 @@ DEFINE_DEBUGFS_ATTRIBUTE(clk_rate_fops, _clk_rate_get, _clk_rate_set, "%llu\n");
 static int _dsp_dbg_set(void *data, u64 val)
 {
 
-	if (val == 0 || val >= (1 << EVA_UMD_MAX_DEBUG)) {
+	if (val == 0 || val >= (1 << (EVA_UMD_MAX_DEBUG + 1))) {
 		dprintk(CVP_WARN, "DSP debug mask cannot be %llx\n", val);
 		return 0;
 	}
@@ -516,13 +463,8 @@ struct dentry *msm_cvp_debugfs_init_core(struct msm_cvp_core *core,
 		dprintk(CVP_ERR, "debugfs_create: ssr_stall fail\n");
 		goto failed_create_dir;
 	}
-	if (!debugfs_create_file("cache_enable", 0200,
-			dir, core, &cache_fops)) {
-		dprintk(CVP_ERR, "debugfs_create_file: fail\n");
-		goto failed_create_dir;
-	}
 	debugfs_create_u32("hw_wd_recovery", 0644, dir,
-			&msm_cvp_hw_wd_recovery);
+		&msm_cvp_hw_wd_recovery);
 failed_create_dir:
 	return dir;
 }

@@ -8,18 +8,25 @@
 #include "cvp_hfi.h"
 #include "cvp_core_hfi.h"
 #include "msm_cvp_buf.h"
-#include "msm_gpu_eva.h"
-#include "cvp_hfi_api.h"
+#include "cvp_comm_def.h"
+
+//static bool isHWFence =false;
+#define CREATE_TRACE_POINTS
+#include "msm_cvp_events.h"
 
 struct cvp_power_level {
 	unsigned long core_sum;
 	unsigned long op_core_sum;
 	unsigned long bw_sum;
-#ifdef LSR_SPLIT_VOTING
-	unsigned long lsr_llcc_bw_sum;
-	unsigned long lsr_ddr_bw_sum;
-#endif
 };
+
+static int cvp_enqueue_pkt(struct msm_cvp_inst* inst,
+	struct eva_kmd_hfi_packet *in_pkt,
+	unsigned int in_offset,
+	unsigned int in_buf_num);
+
+static int cvp_check_clock(struct msm_cvp_inst *inst,
+		struct cvp_hfi_msg_session_hdr_ext *hdr);
 
 int msm_cvp_get_session_info(struct msm_cvp_inst *inst, u32 *session)
 {
@@ -93,39 +100,10 @@ static int cvp_wait_process_message(struct msm_cvp_inst *inst,
 	struct cvp_session_msg *msg = NULL;
 	struct cvp_hfi_msg_session_hdr *hdr;
 	int rc = 0;
-	int32_t return_val = -1;
 
-	if( out && (out->pkt_data[1] ==  HFI_MSG_SESSION_EVA_LSR ))
-	{
-		while(1){
-			if((inst->state == MSM_CVP_CLOSE_DONE) || ( inst->state ==  MSM_CVP_CORE_INVALID ) ){
-				dprintk(CVP_WARN, "!!!!!!!!!!!!!Session closed due to some external interrupt " );
-				break;
-			}
-			return_val = wait_event_killable_timeout(sq->wq,cvp_msg_pending(sq, &msg, ktid), timeout);
-			if((return_val == 0) && (msg == NULL)){
-				dprintk(CVP_WARN, "session queue wait timeout for msg = 0x%x \
-					but not tearing down", out->pkt_data[1] );
-			}
-			else {
-				if (return_val == -ERESTARTSYS){
-					dprintk(CVP_WARN, "coming out of wait for interrupt due to extenral interrupt\n" );
-					dprintk(CVP_ERR, "signal = 0x%08x current->comm = %s current->pid = %d \n", current->pending.signal, current->comm, current->pid);
-				}
-				else{
-					dprintk(CVP_INFO, "LSR MSG packet received\n" );
-				}
-				break;
-			}
-		}//while
-	}
-
-	else if (wait_event_timeout(sq->wq,
+	if (wait_event_timeout(sq->wq,
 		cvp_msg_pending(sq, &msg, ktid), timeout) == 0) {
 		dprintk(CVP_WARN, "session queue wait timeout\n");
-		if(inst && inst->core && inst->core->device){
-			 print_hfi_queue_info(inst->core->device);
-		}
 		rc = -ETIMEDOUT;
 		goto exit;
 	}
@@ -160,6 +138,35 @@ exit:
 	return rc;
 }
 
+static bool check_clock_required(struct msm_cvp_inst *inst,
+				struct eva_kmd_hfi_packet *hdr)
+{
+	struct cvp_hfi_msg_session_hdr_ext *ehdr =
+		(struct cvp_hfi_msg_session_hdr_ext *)hdr;
+	bool clock_check = false;
+	if (!msm_cvp_dcvs_disable &&
+			ehdr->packet_type == HFI_MSG_SESSION_CVP_FD) {
+		if (ehdr->size == sizeof(struct cvp_hfi_msg_session_hdr_ext)
+				+ sizeof(struct cvp_hfi_buf_type)) {
+			struct msm_cvp_core *core = inst->core;
+
+			dprintk(CVP_PWR, "busy cycle %d, total %d\n",
+					ehdr->busy_cycles, ehdr->total_cycles);
+
+			if (core->dyn_clk.sum_fps[HFI_HW_FDU] ||
+					core->dyn_clk.sum_fps[HFI_HW_MPU] ||
+					core->dyn_clk.sum_fps[HFI_HW_OD] ||
+					core->dyn_clk.sum_fps[HFI_HW_ICA]) {
+				clock_check = true;
+			}
+		} else {
+			dprintk(CVP_WARN, "dcvs is disabled, %d != %d + %d\n",
+					ehdr->size, sizeof(struct cvp_hfi_msg_session_hdr_ext),
+					sizeof(struct cvp_hfi_buf_type));
+		}
+	}
+	return clock_check;
+}
 static int msm_cvp_session_receive_hfi(struct msm_cvp_inst *inst,
 			struct eva_kmd_hfi_packet *out_pkt)
 {
@@ -167,6 +174,8 @@ static int msm_cvp_session_receive_hfi(struct msm_cvp_inst *inst,
 	struct cvp_session_queue *sq;
 	struct msm_cvp_inst *s;
 	int rc = 0;
+	bool clock_check = false;
+	struct cvp_hfi_msg_session_hdr *msg_hdr = NULL;
 
 	if (!inst) {
 		dprintk(CVP_ERR, "%s invalid session\n", __func__);
@@ -182,7 +191,32 @@ static int msm_cvp_session_receive_hfi(struct msm_cvp_inst *inst,
 
 	rc = cvp_wait_process_message(inst, sq, NULL, wait_time, out_pkt);
 
+	clock_check = check_clock_required(inst, out_pkt);
+	if (clock_check){
+		cvp_check_clock(inst,
+			(struct cvp_hfi_msg_session_hdr_ext *)out_pkt);
+	}
+	msg_hdr = (struct cvp_hfi_msg_session_hdr *)out_pkt;
+	if(( (msm_cvp_debug & CVP_TRACE) == CVP_TRACE ) &&
+		(msg_hdr->packet_type > HFI_MSG_SESSION_CVP_START) &&
+		(msg_hdr->size >= sizeof(struct cvp_hfi_msg_session_hdr)))
+	{
+		u64 aon_cycles = 0;
+		u32 sess_id = 0;
+		u32 pkt_id = 0;
+		u32 stream_id = 0;
+		u32 t_id =0;
+		aon_cycles  = get_aon_time();
+		sess_id = msg_hdr->session_id;
+		pkt_id  = msg_hdr->packet_type;
+		stream_id = msg_hdr->stream_idx;
+		t_id    = msg_hdr->client_data.transaction_id;
+		trace_tracing_eva_frame_from_sw(aon_cycles,"EVA_KMD_REV_END",sess_id,stream_id,pkt_id,t_id);
+	}
+
+
 	cvp_put_inst(inst);
+
 	return rc;
 }
 
@@ -192,14 +226,13 @@ static int msm_cvp_session_process_hfi(
 	unsigned int in_offset,
 	unsigned int in_buf_num)
 {
-	int pkt_idx, pkt_type, rc = 0;
-	struct cvp_hfi_device *hdev;
+	int pkt_idx, rc = 0;
+
 	unsigned int offset = 0, buf_num = 0, signal;
 	struct cvp_session_queue *sq;
 	struct msm_cvp_inst *s;
 	bool is_config_pkt;
-	enum buf_map_type map_type;
-	struct cvp_hfi_cmd_session_hdr *cmd_hdr;
+	struct cvp_hfi_cmd_session_hdr *cmd_hdr = NULL;
 
 	if (!inst || !inst->core || !in_pkt) {
 		dprintk(CVP_ERR, "%s: invalid params\n", __func__);
@@ -210,7 +243,6 @@ static int msm_cvp_session_process_hfi(
 	if (!s)
 		return -ECONNRESET;
 
-	hdev = inst->core->device;
 
 	pkt_idx = get_pkt_index((struct cvp_hal_session_cmd_pkt *)in_pkt);
 	if (pkt_idx < 0) {
@@ -252,40 +284,25 @@ static int msm_cvp_session_process_hfi(
 		dprintk(CVP_ERR, "Incorrect buffer num and offset in cmd\n");
 		return -EINVAL;
 	}
-	pkt_type = in_pkt->pkt_data[1];
-	map_type = cvp_find_map_type(pkt_type);
-
-	if((pkt_type == HFI_CMD_SESSION_EVA_LSR_FRAME)|| (pkt_type == HFI_CMD_SESSION_EVA_LSR_SET_DISPLAY_BUFFER))
+	cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)in_pkt;
+	if(( (msm_cvp_debug & CVP_TRACE) == CVP_TRACE ) &&
+		(cmd_hdr->packet_type > HFI_CMD_SESSION_CVP_START) &&
+		(cmd_hdr->size >= sizeof(struct cvp_hfi_cmd_session_hdr)))
 	{
-	    rc = msm_cvp_map_frame_lsr(inst, in_pkt, offset, buf_num);
-	}
-	else
-	{
-	    cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)in_pkt;
-	    /* The kdata will be overriden by transaction ID if the cmd has buf */
-	    cmd_hdr->client_data.kdata = pkt_idx;
-
-	    if (map_type == MAP_PERSIST)
-	    	rc = msm_cvp_map_user_persist(inst, in_pkt, offset, buf_num);
-	    else if (map_type == UNMAP_PERSIST)
-	    	rc = msm_cvp_mark_user_persist(inst, in_pkt, offset, buf_num);
-	    else
-	    	rc = msm_cvp_map_frame(inst, in_pkt, offset, buf_num);
-	}
-	if (rc)
-		goto exit;
-
-	rc = call_hfi_op(hdev, session_send, (void *)inst->session, in_pkt);
-	if (rc) {
-		dprintk(CVP_ERR,
-			"%s: Failed in call_hfi_op %d, %x\n",
-			__func__, in_pkt->pkt_data[0], in_pkt->pkt_data[1]);
-		goto exit;
+		u64 aon_cycles = 0;
+		u32 sess_id = 0;
+		u32 pkt_id = 0;
+		u32 stream_id = 0;
+		u32 t_id =0;
+		aon_cycles  = get_aon_time();
+		sess_id = cmd_hdr->session_id;
+		pkt_id  = cmd_hdr->packet_type;
+		stream_id = cmd_hdr->stream_idx;
+		t_id    = cmd_hdr->client_data.transaction_id;
+		trace_tracing_eva_frame_from_sw(aon_cycles,"EVA_KMD_FWD_BEGIN",sess_id,stream_id,pkt_id,t_id);
 	}
 
-	if (signal != HAL_NO_RESP)
-		dprintk(CVP_ERR, "%s signal %d from UMD is not HAL_NO_RESP\n",
-			__func__, signal);
+	cvp_enqueue_pkt(inst, in_pkt, offset, buf_num);
 
 exit:
 	cvp_put_inst(inst);
@@ -504,11 +521,15 @@ static int cvp_fence_proc(struct msm_cvp_inst *inst,
 
 	dprintk(CVP_SYNX, "%s %s\n", current->comm, __func__);
 
+	if (!inst || !inst->core)
+		return -EINVAL;
+
 	hdev = inst->core->device;
 	sq = &inst->session_queue_fence;
 	ktid = pkt->client_data.kdata;
 
-	rc = cvp_synx_ops(inst, CVP_INPUT_SYNX, fc, &synx_state);
+	rc = inst->core->synx_ftbl->cvp_synx_ops(inst, CVP_INPUT_SYNX,
+			fc, &synx_state);
 	if (rc) {
 		msm_cvp_unmap_frame(inst, pkt->client_data.kdata);
 		goto exit;
@@ -519,11 +540,7 @@ static int cvp_fence_proc(struct msm_cvp_inst *inst,
 	if (rc) {
 		dprintk(CVP_ERR, "%s %s: Failed in call_hfi_op %d, %x\n",
 			current->comm, __func__, pkt->size, pkt->packet_type);
-		#if IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX)
-		synx_state = SYNX_STATE_SIGNALED_ERROR;
-		#elif IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX_V2)
 		synx_state = SYNX_STATE_SIGNALED_CANCEL;
-		#endif
 		goto exit;
 	}
 
@@ -532,38 +549,14 @@ static int cvp_fence_proc(struct msm_cvp_inst *inst,
 				(struct eva_kmd_hfi_packet *)&hdr);
 
 	/* Only FD support dcvs at certain FW */
-	if (!msm_cvp_dcvs_disable &&
-		hdr.packet_type == HFI_MSG_SESSION_CVP_FD) {
-		if (hdr.size == sizeof(struct cvp_hfi_msg_session_hdr_ext)
-			+ sizeof(struct cvp_hfi_buf_type)) {
-			struct cvp_hfi_msg_session_hdr_ext *fhdr =
-				(struct cvp_hfi_msg_session_hdr_ext *)&hdr;
-			struct msm_cvp_core *core = inst->core;
+	clock_check = check_clock_required(inst,
+					(struct eva_kmd_hfi_packet *)&hdr);
 
-			dprintk(CVP_PWR, "busy cycle %d, total %d\n",
-				fhdr->busy_cycles, fhdr->total_cycles);
-
-			if (core && (core->dyn_clk.sum_fps[HFI_HW_FDU] ||
-				core->dyn_clk.sum_fps[HFI_HW_MPU] ||
-				core->dyn_clk.sum_fps[HFI_HW_OD] ||
-				core->dyn_clk.sum_fps[HFI_HW_ICA])) {
-				clock_check = true;
-			}
-		} else {
-			dprintk(CVP_WARN, "dcvs is disabled, %d != %d + %d\n",
-				hdr.size, sizeof(struct cvp_hfi_msg_session_hdr_ext),
-				sizeof(struct cvp_hfi_buf_type));
-		}
-	}
 	hfi_err = hdr.error_type;
 	if (rc) {
 		dprintk(CVP_ERR, "%s %s: cvp_wait_process_message rc %d\n",
 			current->comm, __func__, rc);
-		#if IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX)
-		synx_state = SYNX_STATE_SIGNALED_ERROR;
-		#elif IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX_V2)
 		synx_state = SYNX_STATE_SIGNALED_CANCEL;
-		#endif
 		goto exit;
 	}
 	if (hfi_err == HFI_ERR_SESSION_FLUSHED) {
@@ -581,7 +574,8 @@ static int cvp_fence_proc(struct msm_cvp_inst *inst,
 	}
 
 exit:
-	rc = cvp_synx_ops(inst, CVP_OUTPUT_SYNX, fc, &synx_state);
+	rc = inst->core->synx_ftbl->cvp_synx_ops(inst, CVP_OUTPUT_SYNX,
+			fc, &synx_state);
 	if (clock_check)
 		cvp_check_clock(inst,
 			(struct cvp_hfi_msg_session_hdr_ext *)&hdr);
@@ -618,14 +612,14 @@ static void cvp_free_fence_data(struct cvp_fence_command *f)
 
 static int cvp_fence_thread(void *data)
 {
-	int rc = 0;
+	int rc = 0, num_fences;
 	struct msm_cvp_inst *inst;
 	struct cvp_fence_queue *q;
 	enum queue_state state;
 	struct cvp_fence_command *f;
 	struct cvp_hfi_cmd_session_hdr *pkt;
 	u32 *synx;
-	u64 ktid;
+	u64 ktid = 0U;
 
 	dprintk(CVP_SYNX, "Enter %s\n", current->comm);
 
@@ -652,14 +646,21 @@ wait:
 	pkt = f->pkt;
 	synx = (u32 *)f->synx;
 
-	ktid = pkt->client_data.kdata & (FENCE_BIT - 1);
+	num_fences = f->num_fences - f->output_index;
+	/*
+	 * If there is output fence, go through fence path
+	 * Otherwise, go through non-fenced path
+	 */
+	if (num_fences)
+		ktid = pkt->client_data.kdata & (FENCE_BIT - 1);
+
 	dprintk(CVP_SYNX, "%s pkt type %d on ktid %llu frameID %llu\n",
 		current->comm, pkt->packet_type, ktid, f->frame_id);
 
 	rc = cvp_fence_proc(inst, f, pkt);
 
 	mutex_lock(&q->lock);
-	cvp_release_synx(inst, f);
+	inst->core->synx_ftbl->cvp_release_synx(inst, f);
 	list_del_init(&f->list);
 	state = q->state;
 	mutex_unlock(&q->lock);
@@ -677,7 +678,6 @@ wait:
 exit:
 	dprintk(CVP_SYNX, "%s exit\n", current->comm);
 	cvp_put_inst(inst);
-	do_exit(rc);
 	return rc;
 }
 
@@ -776,9 +776,9 @@ static int msm_cvp_session_process_hfi_fence(struct msm_cvp_inst *inst,
 
 	f->pkt->client_data.kdata |= FENCE_BIT;
 
-	rc = cvp_import_synx(inst, f, fence);
+	rc = inst->core->synx_ftbl->cvp_import_synx(inst, f, fence);
 	if (rc) {
-		kfree(f);
+		cvp_free_fence_data(f);
 		goto exit;
 	}
 
@@ -790,6 +790,190 @@ static int msm_cvp_session_process_hfi_fence(struct msm_cvp_inst *inst,
 
 exit:
 	cvp_put_inst(s);
+	return rc;
+}
+
+
+static int cvp_populate_fences( struct eva_kmd_hfi_packet *in_pkt,
+	unsigned int offset, unsigned int num, struct msm_cvp_inst *inst)
+{
+#ifdef CVP_CONFIG_SYNX_V2
+	u32 i, buf_offset;
+	struct eva_kmd_fence fences[MAX_HFI_FENCE_SIZE];
+	struct cvp_fence_command *f;
+	struct cvp_hfi_cmd_session_hdr *cmd_hdr;
+	struct cvp_fence_queue *q;
+	enum op_mode mode;
+	struct cvp_buf_type *buf;
+
+	int rc = 0;
+	q = &inst->fence_cmd_queue;
+
+	mutex_lock(&q->lock);
+	mode = q->mode;
+	mutex_unlock(&q->lock);
+
+	if (mode == OP_DRAINING) {
+		dprintk(CVP_SYNX, "%s: flush in progress\n", __func__);
+		rc = -EBUSY;
+		goto exit;
+	}
+
+	cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)in_pkt;
+	rc = cvp_alloc_fence_data((&f), cmd_hdr->size);
+	if (rc)
+		goto exit;
+
+	f->type = cmd_hdr->packet_type;
+	f->mode = OP_NORMAL;
+	f->signature = 0xFEEDFACE;
+	f->num_fences = 0;
+	f->output_index = 0;
+	buf_offset = offset;
+
+	if (!cvp_kernel_fence_enabled) {
+		for (i = 0; i < num; i++) {
+			buf = (struct cvp_buf_type *)&in_pkt->pkt_data[buf_offset];
+			buf_offset += sizeof(*buf) >> 2;
+
+			if (buf->input_handle || buf->output_handle) {
+				f->num_fences++;
+				if (buf->input_handle)
+					f->output_index++;
+			}
+		}
+		f->signature = 0xB0BABABE;
+		if (f->num_fences)
+			goto fence_cmd_queue;
+
+		goto free_exit;
+	}
+
+	/* First pass to find INPUT synx handles */
+	for (i = 0; i < num; i++) {
+		buf = (struct cvp_buf_type *)&in_pkt->pkt_data[buf_offset];
+		buf_offset += sizeof(*buf) >> 2;
+
+		if (buf->input_handle) {
+			/* Check fence_type? */
+			fences[f->num_fences].h_synx = buf->input_handle;
+			f->num_fences++;
+			buf->fence_type &= ~INPUT_FENCE_BITMASK;
+			buf->input_handle = 0;
+		}
+	}
+	f->output_index = f->num_fences;
+
+	dprintk(CVP_SYNX, "%s:Input Fence passed - Number of Fences is %d\n",
+			__func__, f->num_fences);
+
+	/*
+	 * Second pass to find OUTPUT synx handle
+	 * If no of fences is 0 dont execute the below portion until line 911, return 0
+	 */
+	buf_offset = offset;
+	for (i = 0; i < num; i++) {
+			buf = (struct cvp_buf_type*)&in_pkt->pkt_data[buf_offset];
+			buf_offset += sizeof(*buf) >> 2;
+
+			if (buf->output_handle) {
+				/* Check fence_type? */
+				fences[f->num_fences].h_synx = buf->output_handle;
+				f->num_fences++;
+				buf->fence_type &= ~OUTPUT_FENCE_BITMASK;
+				buf->output_handle = 0;
+			}
+	}
+	dprintk(CVP_SYNX, "%s:Output Fence passed - Number of Fences is %d\n",
+			__func__, f->num_fences);
+//  if (!cvp_kernel_fence_enabled)
+//      {
+//          if (f->num_fences == 0)
+//              goto free_exit;
+//          else
+//          {
+//              isHWFence = true;
+//              goto free_exit;
+//          }
+//       }
+
+	if (f->num_fences == 0)
+			goto free_exit;
+
+	rc = inst->core->synx_ftbl->cvp_import_synx(inst, f,
+			(u32*)fences);
+
+	if (rc)
+			goto free_exit;
+
+fence_cmd_queue:
+	memcpy(f->pkt, cmd_hdr, cmd_hdr->size);
+	f->pkt->client_data.kdata |= FENCE_BIT;
+
+	mutex_lock(&q->lock);
+	list_add_tail(&f->list, &inst->fence_cmd_queue.wait_list);
+	mutex_unlock(&q->lock);
+
+	wake_up(&inst->fence_cmd_queue.wq);
+
+	return f->num_fences;
+
+free_exit:
+	cvp_free_fence_data(f);
+exit:
+#endif	/* CVP_CONFIG_SYNX_V2 */
+	return rc;
+}
+
+
+static int cvp_enqueue_pkt(struct msm_cvp_inst* inst,
+	struct eva_kmd_hfi_packet *in_pkt,
+	unsigned int in_offset,
+	unsigned int in_buf_num)
+{
+	struct cvp_hfi_device *hdev;
+	struct cvp_hfi_cmd_session_hdr *cmd_hdr;
+	int pkt_type, rc = 0;
+	enum buf_map_type map_type;
+	hdev = inst->core->device;
+
+	pkt_type = in_pkt->pkt_data[1];
+	map_type = cvp_find_map_type(pkt_type);
+
+	cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)in_pkt;
+	/* The kdata will be overriden by transaction ID if the cmd has buf */
+	cmd_hdr->client_data.kdata = 0;
+
+	if (map_type == MAP_PERSIST)
+		rc = msm_cvp_map_user_persist(inst, in_pkt, in_offset, in_buf_num);
+	else if (map_type == UNMAP_PERSIST)
+		rc = msm_cvp_mark_user_persist(inst, in_pkt, in_offset, in_buf_num);
+	else
+		rc = msm_cvp_map_frame(inst, in_pkt, in_offset, in_buf_num);
+
+	if (rc)
+		return rc;
+
+	rc = cvp_populate_fences(in_pkt, in_offset, in_buf_num, inst);
+	if (rc == 0) {
+		rc = call_hfi_op(hdev, session_send, (void*)inst->session,
+			in_pkt);
+		if (rc) {
+			dprintk(CVP_ERR,"%s: Failed in call_hfi_op %d, %x\n",
+					__func__, in_pkt->pkt_data[0],
+					in_pkt->pkt_data[1]);
+			if (map_type == MAP_FRAME)
+				msm_cvp_unmap_frame(inst,
+					cmd_hdr->client_data.kdata);
+		}
+		goto exit;
+	} else {
+		if (rc > 0)
+			dprintk(CVP_SYNX, "Going fenced path\n");
+		goto exit;
+	}
+
+exit:
 	return rc;
 }
 
@@ -810,66 +994,8 @@ static bool is_subblock_profile_existed(struct msm_cvp_inst *inst)
 	return (inst->prop.od_cycles ||
 			inst->prop.mpu_cycles ||
 			inst->prop.fdu_cycles ||
-#ifdef LSR_SPLIT_VOTING
-			inst->prop.lsr_cycles ||
-#endif
-			inst->prop.ica_cycles  );
+			inst->prop.ica_cycles);
 }
-static void aggregate_lsr_clk_update(struct msm_cvp_core *core,
-		struct cvp_power_level *nrt_pwr,
-	struct cvp_power_level *rt_pwr,
-	unsigned int max_clk_rate)
-{
-	struct msm_cvp_inst *inst = NULL;
-	int i = 0;
-	unsigned long lsr_sum[2] = {0};
-	unsigned long op_lsr_max[2] = {0};
-        uint8_t lsr_session_counter = 0;
-        if(core) {
-		core->dyn_clk.sum_fps[HFI_HW_LSR] = 0;
-		list_for_each_entry(inst, &core->instances, list) {
-
-			if (inst != NULL && inst->prop.type == HFI_SESSION_LSR){
-
-				lsr_session_counter++;
-				if (inst->state == MSM_CVP_CORE_INVALID ||
-					inst->state == MSM_CVP_CORE_UNINIT ||
-					!is_subblock_profile_existed(inst))
-					continue;
-				if (inst->prop.priority <= CVP_RT_PRIO_THRESHOLD) {
-					/* Non-realtime session use index 0 */
-					i = 0;
-				} else {
-					i = 1;
-				}
-				dprintk(CVP_PROF, "pwrUpdate lsr = %u\n",inst->prop.lsr_cycles);
-				dprintk(CVP_PROF, "pwrUpdate  lsr_o = %u\n",inst->prop.lsr_op_cycles);
-				lsr_sum[i] += inst->prop.lsr_cycles;
-				op_lsr_max[i] = (op_lsr_max[i] >= inst->prop.lsr_op_cycles) ?
-				op_lsr_max[i] : inst->prop.lsr_op_cycles;
-
-				core->dyn_clk.sum_fps[HFI_HW_LSR] += inst->prop.fps[HFI_HW_LSR];
-				dprintk(CVP_PROF, " i = %d lsr_sum[i] = %d, op_lsr_max[i] = %d \n",
-					i, lsr_sum[i], op_lsr_max[i] );
-			}
-		}
-
-		if( lsr_session_counter ){
-			nrt_pwr->core_sum += lsr_sum[0];
-			nrt_pwr->op_core_sum = op_lsr_max[0];
-
-			rt_pwr->core_sum += lsr_sum[1];
-			rt_pwr->op_core_sum = op_lsr_max[1];
-			dprintk(CVP_PROF, " nrt_pwr->core_sum   = %d, rt_pwr->core_sum = %d \n",
-				nrt_pwr->core_sum, rt_pwr->core_sum  );
-			dprintk(CVP_PROF, "nrt_pwr->op_core_sum  = %d, rt_pwr->op_core_sum = %d \n",
-				nrt_pwr->op_core_sum, rt_pwr->op_core_sum );
-
-		}
-	}
-}
-
-
 
 static void aggregate_power_update(struct msm_cvp_core *core,
 	struct cvp_power_level *nrt_pwr,
@@ -883,16 +1009,10 @@ static void aggregate_power_update(struct msm_cvp_core *core,
 	unsigned long op_fdu_max[2] = {0}, op_od_max[2] = {0};
 	unsigned long op_mpu_max[2] = {0}, op_ica_max[2] = {0};
 	unsigned long op_fw_max[2] = {0}, bw_sum[2] = {0}, op_bw_max[2] = {0};
-#ifdef LSR_SPLIT_VOTING
-
-	unsigned long lsr_llcc_bw_sum[2] = {0}, lsr_llcc_op_bw_max[2] = {0};
-	unsigned long lsr_ddr_bw_sum[2] = {0}, lsr_ddr_op_bw_max[2] = {0};
-#endif
 	core->dyn_clk.sum_fps[HFI_HW_FDU] = 0;
 	core->dyn_clk.sum_fps[HFI_HW_MPU] = 0;
 	core->dyn_clk.sum_fps[HFI_HW_OD]  = 0;
 	core->dyn_clk.sum_fps[HFI_HW_ICA] = 0;
-
 
 	list_for_each_entry(inst, &core->instances, list) {
 		if (inst->state == MSM_CVP_CORE_INVALID ||
@@ -910,30 +1030,19 @@ static void aggregate_power_update(struct msm_cvp_core *core,
 			inst->prop.od_cycles,
 			inst->prop.mpu_cycles,
 			inst->prop.ica_cycles);
+
 		dprintk(CVP_PROF, "pwrUpdate fw %u fdu_o %u od_o %u mpu_o %u\n",
 			inst->prop.fw_cycles,
 			inst->prop.fdu_op_cycles,
 			inst->prop.od_op_cycles,
 			inst->prop.mpu_op_cycles);
+
 		dprintk(CVP_PROF, "pwrUpdate ica_o %u fw_o %u bw %u bw_o %u\n",
 			inst->prop.ica_op_cycles,
 			inst->prop.fw_op_cycles,
 			inst->prop.ddr_bw,
 			inst->prop.ddr_op_bw);
-#ifdef LSR_SPLIT_VOTING
 
-		dprintk(CVP_PROF, "pwrUpdate ica_o %u fw_o %u bw %u bw_o %u lsr_llcc_bw = %u \
-			               lsr_llcc_op_bw = %u lsr_ddr_bw = %u lsr_ddr_op_bw = %u \n",
-			inst->prop.ica_op_cycles,
-			inst->prop.fw_op_cycles,
-			inst->prop.ddr_bw,
-			inst->prop.ddr_op_bw,
-			inst->prop.nBwLsr_LLCC,
-			inst->prop.nOpBwLsr_LLCC,
-			inst->prop.nBwLsr_Ddr,
-			inst->prop.nOpBwLsr_Ddr);
-
-#endif
 		fdu_sum[i] += inst->prop.fdu_cycles;
 		od_sum[i] += inst->prop.od_cycles;
 		mpu_sum[i] += inst->prop.mpu_cycles;
@@ -958,33 +1067,11 @@ static void aggregate_power_update(struct msm_cvp_core *core,
 		op_bw_max[i] =
 			(op_bw_max[i] >= inst->prop.ddr_op_bw) ?
 			op_bw_max[i] : inst->prop.ddr_op_bw;
-#ifdef LSR_SPLIT_VOTING
-		lsr_llcc_bw_sum[i] += inst->prop.nBwLsr_LLCC;
-		lsr_ddr_bw_sum[i] += inst->prop.nBwLsr_Ddr;
-		lsr_llcc_op_bw_max[i] =
-			(lsr_llcc_op_bw_max[i] >= inst->prop.nOpBwLsr_LLCC) ?
-			lsr_llcc_op_bw_max[i] : inst->prop.nOpBwLsr_LLCC;
-		lsr_ddr_op_bw_max[i] =
-			(lsr_ddr_op_bw_max[i] >= inst->prop.nOpBwLsr_Ddr) ?
-			lsr_ddr_op_bw_max[i] : inst->prop.nOpBwLsr_Ddr;
 
-		dprintk(CVP_PROF, " i = %d lsr_llcc_bw_sum[i] = %d, lsr_ddr_bw_sum[i] = %d \n",
-			i, lsr_llcc_bw_sum[i], lsr_ddr_bw_sum[i] );
-		dprintk(CVP_PROF, " i = %d lsr_llcc_op_bw_max[i] = %d, lsr_ddr_op_bw_max[i] = %d \n",
-			i, lsr_llcc_op_bw_max[i], lsr_ddr_op_bw_max[i] );
-#endif
 		dprintk(CVP_PWR, "%s:%d - fps fdu %d mpu %d od %d ica %d\n",
 			__func__, __LINE__,
 			inst->prop.fps[HFI_HW_FDU], inst->prop.fps[HFI_HW_MPU],
 			inst->prop.fps[HFI_HW_OD], inst->prop.fps[HFI_HW_ICA]);
-
-#ifdef LSR_SPLIT_VOTING
-		dprintk(CVP_PWR, "%s:%d - fps fdu %d mpu %d od %d ica %d lsr =%d\n",
-			__func__, __LINE__,
-			inst->prop.fps[HFI_HW_FDU], inst->prop.fps[HFI_HW_MPU],
-			inst->prop.fps[HFI_HW_OD], inst->prop.fps[HFI_HW_ICA],
-			inst->prop.fps[HFI_HW_LSR]);
-#endif
 		core->dyn_clk.sum_fps[HFI_HW_FDU] += inst->prop.fps[HFI_HW_FDU];
 		core->dyn_clk.sum_fps[HFI_HW_MPU] += inst->prop.fps[HFI_HW_MPU];
 		core->dyn_clk.sum_fps[HFI_HW_OD] += inst->prop.fps[HFI_HW_OD];
@@ -1010,42 +1097,16 @@ static void aggregate_power_update(struct msm_cvp_core *core,
 			max_clk_rate : op_fdu_max[i];
 		bw_sum[i] = (bw_sum[i] >= op_bw_max[i]) ?
 			bw_sum[i] : op_bw_max[i];
-#ifdef LSR_SPLIT_VOTING
-		lsr_llcc_bw_sum[i] = (lsr_llcc_bw_sum[i] >= lsr_llcc_op_bw_max[i]) ?
-			lsr_llcc_bw_sum[i] : lsr_llcc_op_bw_max[i];
-		lsr_ddr_bw_sum[i] = (lsr_ddr_bw_sum[i] >= lsr_ddr_op_bw_max[i]) ?
-			lsr_ddr_bw_sum[i] : lsr_ddr_op_bw_max[i];
-
-		dprintk(CVP_PROF, " i = %d lsr_llcc_bw_sum[i] = %d, lsr_ddr_bw_sum[i] = %d \n",
-			i, lsr_llcc_bw_sum[i], lsr_ddr_bw_sum[i] );
-
-#endif
-
 	}
 
-		nrt_pwr->core_sum += fdu_sum[0];
-		nrt_pwr->op_core_sum = (nrt_pwr->op_core_sum >= op_fdu_max[0]) ?
+	nrt_pwr->core_sum += fdu_sum[0];
+	nrt_pwr->op_core_sum = (nrt_pwr->op_core_sum >= op_fdu_max[0]) ?
 			nrt_pwr->op_core_sum : op_fdu_max[0];
-		nrt_pwr->bw_sum += bw_sum[0];
-#ifdef LSR_SPLIT_VOTING
-
-		nrt_pwr->lsr_llcc_bw_sum += lsr_llcc_bw_sum[0];
-		nrt_pwr->lsr_ddr_bw_sum += lsr_ddr_bw_sum[0];
-		dprintk(CVP_PROF, "nrt_pwr->lsr_llcc_bw_sum = %d,  nrt_pwr->lsr_ddr_bw_sum = %d ",
-			nrt_pwr->lsr_llcc_bw_sum,  nrt_pwr->lsr_ddr_bw_sum );
-#endif
-		rt_pwr->core_sum += fdu_sum[1];
-		rt_pwr->op_core_sum = (rt_pwr->op_core_sum >= op_fdu_max[1]) ?
+	nrt_pwr->bw_sum += bw_sum[0];
+	rt_pwr->core_sum += fdu_sum[1];
+	rt_pwr->op_core_sum = (rt_pwr->op_core_sum >= op_fdu_max[1]) ?
 			rt_pwr->op_core_sum : op_fdu_max[1];
-		rt_pwr->bw_sum += bw_sum[1];
-#ifdef LSR_SPLIT_VOTING
-		rt_pwr->lsr_llcc_bw_sum += lsr_llcc_bw_sum[1];
-		rt_pwr->lsr_ddr_bw_sum += lsr_ddr_bw_sum[1];
-		dprintk(CVP_PROF, " rt_pwr->lsr_llcc_bw_sum = %d,  rt_pwr->lsr_ddr_bw_sum  = %d ",
-			rt_pwr->lsr_llcc_bw_sum,  rt_pwr->lsr_ddr_bw_sum );
-		dprintk(CVP_PROF, "nrt_pwr->lsr_llcc_bw_sum = %d,  nrt_pwr->lsr_ddr_bw_sum = %d ",
-			nrt_pwr->lsr_llcc_bw_sum,  nrt_pwr->lsr_ddr_bw_sum );
-#endif
+	rt_pwr->bw_sum += bw_sum[1];
 }
 
 /**
@@ -1061,83 +1122,32 @@ static void aggregate_power_update(struct msm_cvp_core *core,
  *
  * Ensure caller acquires clk_lock!
  */
-static int adjust_bw_freqs(void)
+static int adjust_bw_freqs(unsigned int max_bw, unsigned int min_bw)
 {
 	struct msm_cvp_core *core;
 	struct iris_hfi_device *hdev;
-	struct bus_info *bus = NULL;
-#ifdef LSR_SPLIT_VOTING
-	struct bus_info *lsr_llcc_bus = NULL;
-	struct bus_info *lsr_ddr_bus = NULL;
-	unsigned int lsr_llcc_max_bw = 0, lsr_llcc_min_bw = 0;
-	unsigned int lsr_ddr_max_bw = 0, lsr_ddr_min_bw = 0;
-#endif
-
-	struct clock_set *clocks;
-	struct clock_info *cl;
 	struct allowed_clock_rates_table *tbl = NULL;
 	unsigned int tbl_size;
-	unsigned int cvp_min_rate, cvp_max_rate, max_bw, min_bw;
-
+	unsigned int cvp_min_rate, cvp_max_rate;
 	struct cvp_power_level rt_pwr = {0}, nrt_pwr = {0};
-	struct cvp_power_level lsr_rt_pwr = {0}, lsr_nrt_pwr = {0};
 	unsigned long tmp, core_sum, op_core_sum, bw_sum;
-	unsigned long lsr_core_sum = 0, lsr_op_core_sum = 0;
-
-#ifdef LSR_SPLIT_VOTING
-	unsigned long lsr_llcc_bw_sum = 0, lsr_ddr_bw_sum = 0;
-#endif
-	int i =0, rc = 0, bus_count = 0;
+	int i = 0;
 	unsigned long ctrl_freq;
 
 	core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
 
 	hdev = core->device->hfi_device_data;
-	clocks = &core->resources.clock_set;
-	cl = &clocks->clock_tbl[clocks->count - 1];
 	tbl = core->resources.allowed_clks_tbl;
 	tbl_size = core->resources.allowed_clks_tbl_size;
 	cvp_min_rate = tbl[0].clock_rate;
 	cvp_max_rate = tbl[tbl_size - 1].clock_rate;
 
-	for(bus_count = 0; bus_count < core->resources.bus_set.count; bus_count++)
-	{
-		if(!strcmp(core->resources.bus_set.bus_tbl[bus_count].name,"cvp-ddr")){
-			bus = &core->resources.bus_set.bus_tbl[bus_count];
-			max_bw = bus->range[1];
-			//	min_bw = max_bw/10;
-			/*As per TLM suggestion  minimum DDR BW required for
-			AR viewer is 250* 1024 KBPS*/
-			min_bw = 250*1024;
-		}
-		if(!strcmp(core->resources.bus_set.bus_tbl[bus_count].name,"lsr-llcc")){
-#ifdef LSR_SPLIT_VOTING
-			lsr_llcc_bus = &core->resources.bus_set.bus_tbl[bus_count];
-			lsr_llcc_max_bw = lsr_llcc_bus->range[1];
-			lsr_llcc_min_bw = lsr_llcc_bus->range[0];
-#endif
-		}
-		if(!strcmp(core->resources.bus_set.bus_tbl[bus_count].name,"lsr-ddr")){
-#ifdef LSR_SPLIT_VOTING
-			lsr_ddr_bus = &core->resources.bus_set.bus_tbl[bus_count];
-			lsr_ddr_max_bw = lsr_ddr_bus->range[1];
-			lsr_ddr_min_bw = lsr_ddr_bus->range[0];
-#endif
-		}
-	}
-	if( !bus || !lsr_ddr_bus || !lsr_llcc_bus ){
-		dprintk(CVP_ERR,"one of this bus node is NULL,  bus = 0x%x lsr_ddr_bus =0x%x lsr_llcc_bus=0x%x \n",
-			bus, lsr_ddr_bus, lsr_llcc_bus);
-		return -EINVAL;
-	}
-	aggregate_power_update(core, &nrt_pwr, &rt_pwr, cvp_max_rate);
 
+	aggregate_power_update(core, &nrt_pwr, &rt_pwr, cvp_max_rate);
 
 	dprintk(CVP_PROF, "PwrUpdate nrt %u %u rt %u %u\n",
 		nrt_pwr.core_sum, nrt_pwr.op_core_sum,
 		rt_pwr.core_sum, rt_pwr.op_core_sum);
-
-
 
 	if (rt_pwr.core_sum > cvp_max_rate) {
 		dprintk(CVP_WARN, "%s clk vote out of range %lld\n",
@@ -1151,27 +1161,6 @@ static int adjust_bw_freqs(void)
 
 	core_sum = (core_sum >= op_core_sum) ?
 		core_sum : op_core_sum;
-
-
-	aggregate_lsr_clk_update(core,&lsr_nrt_pwr, &lsr_rt_pwr, cvp_max_rate);
-	dprintk(CVP_PROF, "PwrUpdate LSR nrt %u %u LSR rt %u %u\n",
-		lsr_nrt_pwr.core_sum, lsr_nrt_pwr.op_core_sum,
-		lsr_rt_pwr.core_sum, lsr_rt_pwr.op_core_sum);
-	if (lsr_nrt_pwr.core_sum > cvp_max_rate) {
-		dprintk(CVP_WARN, "%s clk vote out of range %lld\n",
-				__func__, lsr_nrt_pwr.core_sum);
-			return -ENOTSUPP;
-	}
-
-	lsr_core_sum = lsr_rt_pwr.core_sum + lsr_nrt_pwr.core_sum;
-			lsr_op_core_sum = (lsr_rt_pwr.op_core_sum >= lsr_nrt_pwr.op_core_sum) ?
-			lsr_rt_pwr.op_core_sum : lsr_nrt_pwr.op_core_sum;
-
-	lsr_core_sum = (lsr_core_sum >= lsr_op_core_sum) ?
-				lsr_core_sum : lsr_op_core_sum;
-
-	core_sum = (core_sum >= lsr_core_sum) ?
-		core_sum : lsr_core_sum;
 
 	if (core_sum > cvp_max_rate) {
 		core_sum = cvp_max_rate;
@@ -1187,42 +1176,26 @@ static int adjust_bw_freqs(void)
 	bw_sum = rt_pwr.bw_sum + nrt_pwr.bw_sum;
 	bw_sum = bw_sum >> 10;
 	bw_sum = (bw_sum > max_bw) ? max_bw : bw_sum;
-        if(bw_sum) {
-		bw_sum = (bw_sum < min_bw) ? min_bw : bw_sum;
-	} else {
-		//if bw_sum is 0 then vote for 1KB
-                /* minimum BW need to be vote for DDR
-		at the time of stop session. other wise
-		FW will hang forever*/
-		bw_sum = 1;
-	}
-#ifdef LSR_SPLIT_VOTING
-	lsr_llcc_bw_sum = rt_pwr.lsr_llcc_bw_sum + nrt_pwr.lsr_llcc_bw_sum;
-	lsr_ddr_bw_sum = rt_pwr.lsr_ddr_bw_sum + nrt_pwr.lsr_ddr_bw_sum;
-#endif
+
+    if(bw_sum) {
+        bw_sum = (bw_sum < min_bw) ? min_bw : bw_sum;
+    }
+    else {
+        /*
+        If bw_sum is 0 then vote for 1KB.
+        Need to vote for minimum DDR BW
+        at the time of stop session, otherwise
+        FW will hang indefinitely.
+        */
+        bw_sum = 1;
+    }
 
 	dprintk(CVP_PROF, "%s %lld %lld\n", __func__,
 		core_sum, bw_sum);
-#ifdef LSR_SPLIT_VOTING
-	dprintk(CVP_PROF, "%s %lld %lld %lld %lld \n", __func__,
-		core_sum, bw_sum, lsr_llcc_bw_sum, lsr_ddr_bw_sum );
-#endif
-	if (!cl->has_scaling) {
-		dprintk(CVP_ERR, "Cannot scale CVP clock\n");
-		return -EINVAL;
-	}
 
 	tmp = core->curr_freq;
 	core->curr_freq = core_sum;
-	core->orig_core_sum = core_sum;
-	rc = msm_cvp_set_clocks(core);
-	if (rc) {
-		dprintk(CVP_ERR,
-			"Failed to set clock rate %u %s: %d %s\n",
-			core_sum, cl->name, rc, __func__);
-		core->curr_freq = tmp;
-		return rc;
-	}
+	core->orig_core_sum = tmp;
 
 	ctrl_freq = (core->curr_freq*3)>>1;
 	core->dyn_clk.conf_freq = core->curr_freq;
@@ -1234,14 +1207,9 @@ static int adjust_bw_freqs(void)
 	}
 
 	hdev->clk_freq = core->curr_freq;
-	rc = msm_cvp_set_bw(bus, bw_sum);
-#ifdef LSR_SPLIT_VOTING
-	dprintk(CVP_PROF, "lsr_llcc_bw_sum = %d\n",lsr_llcc_bw_sum);
-	dprintk(CVP_PROF, "lsr_ddr_bw_sum = %d\n",lsr_ddr_bw_sum);
-	rc = msm_cvp_set_bw(lsr_llcc_bus,lsr_llcc_bw_sum);
-	rc = msm_cvp_set_bw(lsr_ddr_bus,lsr_ddr_bw_sum);
-#endif
-	return rc;
+	core->bw_sum = bw_sum;
+
+	return 0;
 }
 
 int msm_cvp_update_power(struct msm_cvp_inst *inst)
@@ -1249,6 +1217,11 @@ int msm_cvp_update_power(struct msm_cvp_inst *inst)
 	int rc = 0;
 	struct msm_cvp_core *core;
 	struct msm_cvp_inst *s;
+	struct bus_info *bus = NULL;
+	struct clock_set *clocks;
+	struct clock_info *cl;
+	int bus_count = 0;
+	unsigned int max_bw = 0, min_bw = 0;
 
 	if (!inst) {
 		dprintk(CVP_ERR, "%s: invalid params\n", __func__);
@@ -1260,10 +1233,51 @@ int msm_cvp_update_power(struct msm_cvp_inst *inst)
 		return -ECONNRESET;
 
 	core = inst->core;
+	if (!core || core->state == CVP_CORE_UNINIT) {
+		rc = -ECONNRESET;
+		goto adjust_exit;
+	}
+
+	clocks = &core->resources.clock_set;
+	cl = &clocks->clock_tbl[clocks->count - 1];
+	if (!cl->has_scaling) {
+		dprintk(CVP_ERR, "Cannot scale CVP clock\n");
+		rc = -EINVAL;
+		goto adjust_exit;
+	}
+
+	for (bus_count = 0; bus_count < core->resources.bus_set.count; bus_count++) {
+		if(!strcmp(core->resources.bus_set.bus_tbl[bus_count].name,"cvp-ddr")) {
+			bus = &core->resources.bus_set.bus_tbl[bus_count];
+			max_bw = bus->range[1];
+			min_bw = max_bw/10;
+		}
+	}
+
+	if(!bus) {
+		dprintk(CVP_ERR, "The bus node for cvp-ddr is NULL\n");
+		rc = -EINVAL;
+		goto adjust_exit;
+	}
+
 
 	mutex_lock(&core->clk_lock);
-	rc = adjust_bw_freqs();
+	rc = adjust_bw_freqs(max_bw, min_bw);
 	mutex_unlock(&core->clk_lock);
+	if (rc)
+		goto adjust_exit;
+
+	rc = msm_cvp_set_clocks(core);
+	if (rc) {
+		dprintk(CVP_ERR,
+			"Failed to set clock rate %u %s: %d %s\n",
+			core->curr_freq, cl->name, rc, __func__);
+		core->curr_freq = core->orig_core_sum;
+		goto adjust_exit;
+	}
+	rc = msm_cvp_set_bw(bus, core->bw_sum);
+
+adjust_exit:
 	cvp_put_inst(s);
 
 	return rc;
@@ -1307,24 +1321,11 @@ int msm_cvp_session_create(struct msm_cvp_inst *inst)
 		goto fail_init;
 	}
 
-	cvp_sess_init_synx(inst);
+	inst->core->synx_ftbl->cvp_sess_init_synx(inst);
 	sq = &inst->session_queue;
 	spin_lock(&sq->lock);
 	sq->state = QUEUE_ACTIVE;
 	spin_unlock(&sq->lock);
-
-        if (inst->prop.type == HFI_SESSION_LSR)
-	{
-
-		if(!lsr_session_enabled){
-			rc = __interface_gpu_init();
-			if(rc){
-				dprintk(CVP_ERR, "(kgsl/gpu)_eva_interface failed\n");
-				return -EINVAL;
-			}
-		lsr_session_enabled = true;
-		}
-	}
 
 fail_init:
 	return rc;
@@ -1395,10 +1396,10 @@ static int cvp_fence_thread_stop(struct msm_cvp_inst *inst)
 	struct cvp_fence_queue *q;
 	struct cvp_session_queue *sq;
 
-        if(!inst){
-               dprintk(CVP_ERR, "%s: invalid params\n", __func__);
-               return -EINVAL;
-        }
+	if(!inst){
+		dprintk(CVP_ERR, "%s: invalid params\n", __func__);
+		return -EINVAL;
+	}
 	if (!inst->prop.fthread_nr)
 		return 0;
 
@@ -1449,15 +1450,6 @@ static int msm_cvp_session_start(struct msm_cvp_inst *inst,
 		hdev = inst->core->device;
 		call_hfi_op(hdev, pm_qos_update, hdev->hfi_device_data);
 	}
-#ifdef SPAD_UC_BOUNDRY
-    if (inst->prop.type == HFI_SESSION_LSR)
-    {
-       dprintk(CVP_INFO, "msm_cvp_session_start : Calling spad activate ..\n");
-       hdev = inst->core->device;
-       call_hfi_op(hdev, spad_activate, hdev->hfi_device_data);
-    }
-	dprintk(CVP_CORE, "spad_activate enabled\n");
-#endif
 	return cvp_fence_thread_start(inst);
 }
 
@@ -1466,9 +1458,7 @@ static int msm_cvp_session_stop(struct msm_cvp_inst *inst,
 {
 	struct cvp_session_queue *sq;
 	struct eva_kmd_session_control *sc = &arg->data.session_ctrl;
-#ifdef SPAD_UC_BOUNDRY
-    struct cvp_hfi_device *hdev;
-#endif
+
 	sq = &inst->session_queue;
 
 	spin_lock(&sq->lock);
@@ -1481,20 +1471,12 @@ static int msm_cvp_session_stop(struct msm_cvp_inst *inst,
 	}
 	sq->state = QUEUE_STOP;
 
-	pr_info(CVP_DBG_TAG "Stop session: %pK session_id = %d\n",
-		"sess", inst, hash32_ptr(inst->session));
+	dprintk(CVP_SESS, "Stop session: %pK session_id = %d\n",
+			inst, hash32_ptr(inst->session));
 	spin_unlock(&sq->lock);
 
 	wake_up_all(&inst->session_queue.wq);
-#ifdef SPAD_UC_BOUNDRY
-    if (inst->prop.type == HFI_SESSION_LSR)
-    {
-        dprintk(CVP_INFO, "msm_cvp_session_stop : Calling spad deactivate ..\n");
-        hdev = inst->core->device;
-        call_hfi_op(hdev, spad_deactivate, hdev->hfi_device_data);
-    }
-	dprintk(CVP_CORE, "spad_deactivate enabled \n");
-#endif
+
 	return cvp_fence_thread_stop(inst);
 }
 
@@ -1598,13 +1580,6 @@ static unsigned int msm_cvp_get_hw_aggregate_cycles(enum hw_block hwblk)
 			cycles_sum += inst->prop.od_cycles;
 			break;
 		}
-#ifdef LSR_SPLIT_VOTING
-		case LSR:
-		{
-			cycles_sum += inst->prop.lsr_cycles;
-			break;
-		}
-#endif
 		default:
 			dprintk(CVP_ERR, "unrecognized hw block %d\n",
 				hwblk);
@@ -1684,16 +1659,6 @@ static int msm_cvp_get_sysprop(struct msm_cvp_inst *inst,
 				msm_cvp_get_hw_aggregate_cycles(CVP_MPU);
 			break;
 		}
-#ifdef LSR_SPLIT_VOTING
-
-		case EVA_KMD_PROP_PWR_LSR:
-		{
-			props->prop_data[i].data =
-				msm_cvp_get_hw_aggregate_cycles(LSR);
-			break;
-		}
-
-#endif
 		default:
 			dprintk(CVP_ERR, "unrecognized sys property %d\n",
 				props->prop_data[i].prop_type);
@@ -1789,20 +1754,6 @@ static int msm_cvp_set_sysprop(struct msm_cvp_inst *inst,
 		case EVA_KMD_PROP_PWR_SYSCACHE:
 			session_prop->ddr_cache = prop_array[i].data;
 			break;
-#ifdef LSR_SPLIT_VOTING
-		case EVA_KMD_PROP_PWR_LSR:
-			session_prop->lsr_cycles = prop_array[i].data;
-			dprintk(CVP_PWR,"session_prop->lsr_cycles= %d", session_prop->lsr_cycles);
-			break;
-		case EVA_KMD_PROP_PWR_LSR_LLCC:
-			session_prop->nBwLsr_LLCC = prop_array[i].data;
-			dprintk(CVP_PWR,"session_prop->nBwLsr_LLCC = %d", session_prop->nBwLsr_LLCC);
-			break;
-		case EVA_KMD_PROP_PWR_LSR_DDR:
-			session_prop->nBwLsr_Ddr = prop_array[i].data;
-			dprintk(CVP_PWR,"session_prop->nBwLsr_Ddr = %d", session_prop->nBwLsr_Ddr);
-			break;
-#endif
 		case EVA_KMD_PROP_PWR_FDU_OP:
 			session_prop->fdu_op_cycles = prop_array[i].data;
 			break;
@@ -1826,20 +1777,6 @@ static int msm_cvp_set_sysprop(struct msm_cvp_inst *inst,
 		case EVA_KMD_PROP_PWR_SYSCACHE_OP:
 			session_prop->ddr_op_cache = prop_array[i].data;
 			break;
-#ifdef LSR_SPLIT_VOTING
-		case EVA_KMD_PROP_PWR_LSR_OP:
-			session_prop->lsr_op_cycles = prop_array[i].data;
-			dprintk(CVP_DBG," lsr_op_cycles = %d", session_prop->lsr_op_cycles);
-			break;
-		case EVA_KMD_PROP_PWR_LSR_LLCC_OP:
-			session_prop->nOpBwLsr_LLCC = prop_array[i].data;
-			dprintk(CVP_DBG,"nOpBwLsr_LLCC = %d", session_prop->nOpBwLsr_LLCC);
-			break;
-		case EVA_KMD_PROP_PWR_LSR_DDR_OP:
-			session_prop->nOpBwLsr_Ddr = prop_array[i].data;
-			dprintk(CVP_DBG,"nOpBwLsr_Ddr= %d", session_prop->nOpBwLsr_Ddr);
-			break;
-#endif
 		case EVA_KMD_PROP_PWR_FPS_FDU:
 			session_prop->fps[HFI_HW_FDU] = prop_array[i].data;
 			break;
@@ -1852,12 +1789,6 @@ static int msm_cvp_set_sysprop(struct msm_cvp_inst *inst,
 		case EVA_KMD_PROP_PWR_FPS_ICA:
 			session_prop->fps[HFI_HW_ICA] = prop_array[i].data;
 			break;
-#ifdef 	LSR_SPLIT_VOTING
-		case EVA_KMD_PROP_PWR_FPS_LSR:
-			session_prop->fps[HFI_HW_LSR] = prop_array[i].data;
-			dprintk(CVP_DBG,"session_prop->fps[HFI_HW_LSR] = %d", session_prop->fps[HFI_HW_LSR]);
-			break;
-#endif
 		case EVA_KMD_PROP_SESSION_DUMPOFFSET:
 			session_prop->dump_offset = prop_array[i].data;
 			break;
@@ -1944,8 +1875,9 @@ static void cvp_clean_fence_queue(struct msm_cvp_inst *inst, int synx_state)
 
 		list_del_init(&f->list);
 		msm_cvp_unmap_frame(inst, f->pkt->client_data.kdata);
-		cvp_cancel_synx(inst, CVP_OUTPUT_SYNX, f, synx_state);
-		cvp_release_synx(inst, f);
+		inst->core->synx_ftbl->cvp_cancel_synx(inst, CVP_OUTPUT_SYNX,
+			f, synx_state);
+		inst->core->synx_ftbl->cvp_release_synx(inst, f);
 		cvp_free_fence_data(f);
 	}
 
@@ -1954,7 +1886,8 @@ static void cvp_clean_fence_queue(struct msm_cvp_inst *inst, int synx_state)
 
 		dprintk(CVP_SYNX, "%s: (%#x)flush frame %llu %llu sched_list\n",
 			__func__, hash32_ptr(inst->session), ktid, f->frame_id);
-		cvp_cancel_synx(inst, CVP_INPUT_SYNX, f, synx_state);
+		inst->core->synx_ftbl->cvp_cancel_synx(inst, CVP_INPUT_SYNX,
+			f, synx_state);
 	}
 
 	mutex_unlock(&q->lock);
@@ -1970,11 +1903,7 @@ int cvp_clean_session_queues(struct msm_cvp_inst *inst)
 	mutex_lock(&q->lock);
 	if (q->state == QUEUE_START) {
 		mutex_unlock(&q->lock);
-	#if IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX)
-	cvp_clean_fence_queue(inst, SYNX_STATE_SIGNALED_ERROR);
-	#elif IS_REACHABLE(CONFIG_MSM_GLOBAL_SYNX_V2)
-	cvp_clean_fence_queue(inst, SYNX_STATE_SIGNALED_CANCEL);
-	#endif
+		cvp_clean_fence_queue(inst, SYNX_STATE_SIGNALED_CANCEL);
 	} else {
 		dprintk(CVP_WARN, "Incorrect fence cmd queue state %d\n",
 			q->state);
@@ -2001,6 +1930,8 @@ retry:
 	spin_lock(&sq->lock);
 	sq->state = QUEUE_INVALID;
 	spin_unlock(&sq->lock);
+
+	return 0;
 }
 
 static int cvp_flush_all(struct msm_cvp_inst *inst)

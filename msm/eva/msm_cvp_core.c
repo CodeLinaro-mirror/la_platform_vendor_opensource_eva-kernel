@@ -26,9 +26,6 @@
 #define NUM_DMM_MAX_FEATURE_POINTS 500
 #define CYCLES_MARGIN_IN_POWEROF2 3
 
-
-bool auto_boot_time = true;
-
 int msm_cvp_poll(void *instance, struct file *filp,
 		struct poll_table_struct *wait)
 {
@@ -88,6 +85,7 @@ static int __init_session_queue(struct msm_cvp_inst *inst)
 	return 0;
 }
 
+#ifndef DISABLE_SYNX
 static void __init_fence_queue(struct msm_cvp_inst *inst)
 {
 	mutex_init(&inst->fence_cmd_queue.lock);
@@ -110,6 +108,7 @@ static void __deinit_fence_queue(struct msm_cvp_inst *inst)
 	inst->fence_cmd_queue.state = QUEUE_INVALID;
 	inst->fence_cmd_queue.mode = OP_INVALID;
 }
+#endif
 
 static void __deinit_session_queue(struct msm_cvp_inst *inst)
 {
@@ -152,11 +151,6 @@ void *msm_cvp_open(int core_id, int session_type)
 		dprintk(CVP_SESS, "Auto PIL disabled, bypass CVP init at boot");
 		goto err_invalid_core;
 	}
-
-	if(session_type == MSM_CVP_BOOT)
-		auto_boot_time = true;
-	else
-		auto_boot_time = false;
 
 	core->resources.max_inst_count = MAX_SUPPORTED_INSTANCES;
 	if (msm_cvp_check_for_inst_overload(core)) {
@@ -214,7 +208,9 @@ void *msm_cvp_open(int core_id, int session_type)
 	mutex_unlock(&core->clk_lock);
 	mutex_unlock(&core->lock);
 
+	#ifndef DISABLE_SYNX
 	__init_fence_queue(inst);
+	#endif
 
 	rc = __init_session_queue(inst);
 	if (rc)
@@ -233,7 +229,11 @@ void *msm_cvp_open(int core_id, int session_type)
 	return inst;
 fail_init:
 	__deinit_session_queue(inst);
+
+	#ifndef DISABLE_SYNX
 	__deinit_fence_queue(inst);
+	#endif
+
 	mutex_lock(&core->lock);
 	list_del(&inst->list);
 	mutex_unlock(&core->lock);
@@ -274,59 +274,23 @@ check_again:
 
 	if (ktid) {
 		msm_cvp_unmap_frame(inst, ktid);
-                kmem_cache_free(cvp_driver->msg_cache, mptr);
+		kmem_cache_free(cvp_driver->msg_cache, mptr);
 		mptr = NULL;
 		ktid = 0LL;
 		goto check_again;
 	}
 }
 
-int msm_cvp_session_stop_notify(struct msm_cvp_inst *inst)
-{
-	int rc = 0;
-	struct msm_cvp_core *core;
-	struct cvp_hfi_device *hdev;
-	if (!inst) {
-		dprintk(CVP_ERR, "Invalid instance pointer = %pK\n", inst);
-		return -EINVAL;
-	}
 
-	core = inst->core;
-	if (!core) {
-		dprintk(CVP_ERR, "Invalid core pointer = %pK\n", core);
-		return -EINVAL;
-	}
-	hdev = core->device;
-	if (!hdev) {
-		dprintk(CVP_ERR, "Invalid device pointer = %pK\n", hdev);
-		return -EINVAL;
-	}
-
-	if (inst->state <= MSM_CVP_CLOSE_DONE) {
-		rc = call_hfi_op(hdev, session_stop,
-				(void *)inst->session);
-		if(rc){
-			dprintk(CVP_ERR, "Failed to send stop session cmd\n");
-		}
-		else{/* Wait for FW response */
-			rc = wait_for_sess_signal_receipt(inst, HAL_SESSION_STOP_DONE);
-			if (rc) {
-				dprintk(CVP_ERR, "%s: wait for signal failed for stop done, rc %d\n",
-					__func__, rc);
-			}
-		}
-
-	}
-
-
-	return rc;
-}
 static void msm_cvp_cleanup_instance(struct msm_cvp_inst *inst)
 {
 	bool empty;
 	int max_retries;
 	struct msm_cvp_frame *frame;
-	struct cvp_session_queue *sq, *sqf;
+	struct cvp_session_queue *sq;
+	#ifndef DISABLE_SYNX
+	struct cvp_session_queue *sqf;
+	#endif
 	struct cvp_hfi_device *hdev;
 
 	if (!inst) {
@@ -334,7 +298,9 @@ static void msm_cvp_cleanup_instance(struct msm_cvp_inst *inst)
 		return;
 	}
 
+	#ifndef DISABLE_SYNX
 	sqf = &inst->session_queue_fence;
+	#endif
 	sq = &inst->session_queue;
 
 	max_retries =  inst->core->resources.msm_cvp_hw_rsp_timeout >> 5;
@@ -362,7 +328,9 @@ wait:
 	if (!empty && max_retries > 0) {
 		mutex_unlock(&inst->frames.lock);
 		usleep_range(1000, 2000);
+		#ifndef DISABLE_SYNX
 		msm_cvp_clean_sess_queue(inst, sqf);
+		#endif
 		msm_cvp_clean_sess_queue(inst, sq);
 		max_retries--;
 		goto wait;
@@ -373,13 +341,13 @@ wait:
 		dprintk(CVP_WARN,
 			"Failed to process frames before session close\n");
 		mutex_lock(&inst->frames.lock);
-		list_for_each_entry(frame, &inst->frames.list, list){
-		    if(frame->pkt_type != HFI_CMD_SESSION_EVA_LSR_FRAME){
-		        dprintk(CVP_WARN, "Unprocessed frame %d\n",frame->pkt_type);
-			}
-		}
+		list_for_each_entry(frame, &inst->frames.list, list)
+			dprintk(CVP_WARN, "Unprocessed frame %d\n",
+				frame->pkt_type);
 		mutex_unlock(&inst->frames.lock);
-		cvp_dump_fence_queue(inst);
+		#ifndef DISABLE_SYNX
+		inst->core->synx_ftbl->cvp_dump_fence_queue(inst);
+		#endif
 	}
 
 	if (cvp_release_arp_buffers(inst))
@@ -431,8 +399,10 @@ int msm_cvp_destroy(struct msm_cvp_inst *inst)
 	msm_cvp_debugfs_deinit_inst(inst);
 
 	__deinit_session_queue(inst);
+	#ifndef DISABLE_SYNX
 	__deinit_fence_queue(inst);
-	cvp_sess_deinit_synx(inst);
+	inst->core->synx_ftbl->cvp_sess_deinit_synx(inst);
+	#endif
 
 	pr_info(CVP_DBG_TAG "Closed cvp instance: %pK session_id = %d\n",
 		"sess", inst, hash32_ptr(inst->session));
@@ -461,10 +431,6 @@ int msm_cvp_close(void *instance)
 	}
 
 	if (inst->session_type != MSM_CVP_BOOT) {
-		if (inst->prop.type == HFI_SESSION_LSR){
-			msm_cvp_session_stop_notify(inst);
-			dprintk(CVP_WARN, "%s: LSR session sending stop\n", __func__);
-		}
 		msm_cvp_cleanup_instance(inst);
 		msm_cvp_session_deinit(inst);
 	}

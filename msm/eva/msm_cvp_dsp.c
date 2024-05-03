@@ -1339,7 +1339,7 @@ void cvp_dsp_send_hfi_queue(void)
         dprintk(CVP_DSP, "%s: Either DSP is not probed or is not in proper state. me->state = %d\n", __func__, me->state);
         goto exit;
     }
-    dprintk(CVP_DSP, "%s: DSP probe Successful, going ahed with hyp_assign, me->state = %d\n", __func__, me->state);
+    dprintk(CVP_DSP, "%s: DSP probe Successful, going ahead with hyp_assign, me->state = %d\n", __func__, me->state);
 
 	rc = cvp_hyp_assign_to_dsp(addr, size);
 	if (rc) {
@@ -1423,9 +1423,9 @@ static void print_power(const struct eva_power_req *pwr_req)
 				pwr_req->op_clock_fdu, pwr_req->op_clock_ica,
 				pwr_req->op_clock_od, pwr_req->op_clock_mpu,
 				pwr_req->op_clock_fw);
-		dprintk(CVP_DSP, "Actual Bw: Ddr %d, SysCache %d",
+		dprintk(CVP_DSP, "Actual Bw: Ddr %u, SysCache %u",
 				pwr_req->bw_ddr, pwr_req->bw_sys_cache);
-		dprintk(CVP_DSP, "OpBw: Ddr %d, SysCache %d",
+		dprintk(CVP_DSP, "OpBw: Ddr %u, SysCache %u",
 				pwr_req->op_bw_ddr, pwr_req->op_bw_sys_cache);
 	}
 }
@@ -1630,7 +1630,7 @@ static void __dsp_cvp_power_req(struct cvp_dsp_cmd_msg *cmd)
 			dsp2cpu_cmd->session_cpu_high,
 			dsp2cpu_cmd->session_cpu_low);
 
-	if (!inst) {
+	if (!inst || !is_cvp_inst_valid(inst)) {
 		cmd->ret = -1;
 		goto dsp_fail_power_req;
 	}
@@ -1696,6 +1696,12 @@ static void __dsp_cvp_buf_register(struct cvp_dsp_cmd_msg *cmd)
 	inst = (struct msm_cvp_inst *)ptr_dsp2cpu(
 			dsp2cpu_cmd->session_cpu_high,
 			dsp2cpu_cmd->session_cpu_low);
+	if (!inst || !is_cvp_inst_valid(inst)) {
+		dprintk(CVP_ERR, "%s Failed to get inst\n",
+			__func__);
+		cmd->ret = -1;
+		goto dsp_fail_buf_reg;
+	}
 
 	kmd->type = EVA_KMD_REGISTER_BUFFER;
 	kmd_buf = (struct eva_kmd_buffer *)&(kmd->data.regbuf);
@@ -1754,6 +1760,12 @@ static void __dsp_cvp_buf_deregister(struct cvp_dsp_cmd_msg *cmd)
 	inst = (struct msm_cvp_inst *)ptr_dsp2cpu(
 			dsp2cpu_cmd->session_cpu_high,
 			dsp2cpu_cmd->session_cpu_low);
+	if (!inst || !is_cvp_inst_valid(inst)) {
+		dprintk(CVP_ERR, "%s Failed to get inst\n",
+			__func__);
+		cmd->ret = -1;
+		goto fail_dsp_buf_dereg;
+	}
 
 	kmd->type = EVA_KMD_UNREGISTER_BUFFER;
 	kmd_buf = (struct eva_kmd_buffer *)&(kmd->data.regbuf);
@@ -1811,6 +1823,11 @@ static void __dsp_cvp_mem_alloc(struct cvp_dsp_cmd_msg *cmd)
 	inst = (struct msm_cvp_inst *)ptr_dsp2cpu(
 			dsp2cpu_cmd->session_cpu_high,
 			dsp2cpu_cmd->session_cpu_low);
+	if (!inst || !is_cvp_inst_valid(inst)) {
+		dprintk(CVP_ERR, "%s Failed to get inst\n",
+			__func__);
+		goto fail_fastrpc_node;
+	}
 
 	buf = kmem_cache_zalloc(cvp_driver->buf_cache, GFP_KERNEL);
 	if (!buf)
@@ -1887,7 +1904,7 @@ static void __dsp_cvp_mem_free(struct cvp_dsp_cmd_msg *cmd)
 	inst = (struct msm_cvp_inst *)ptr_dsp2cpu(
 			dsp2cpu_cmd->session_cpu_high,
 			dsp2cpu_cmd->session_cpu_low);
-	if (!inst) {
+	if (!inst || !is_cvp_inst_valid(inst)) {
 		dprintk(CVP_ERR, "%s Failed to get inst\n",
 			__func__);
 		cmd->ret = -1;
@@ -1905,6 +1922,10 @@ static void __dsp_cvp_mem_free(struct cvp_dsp_cmd_msg *cmd)
 
 	buf_list = &inst->cvpdspbufs;
 	mutex_lock(&buf_list->lock);
+	if (!buf_list) {
+        dprintk(CVP_ERR, "DSP bufferlist is empty in the inst");
+        return;
+    }
 	list_for_each_safe(ptr, next, &buf_list->list) {
 		buf = list_entry(ptr, struct cvp_internal_buf, list);
 

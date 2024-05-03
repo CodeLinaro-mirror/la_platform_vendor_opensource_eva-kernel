@@ -15,8 +15,6 @@
 #include "cvp_core_hfi.h"
 #include "soc/qcom/secure_buffer.h"
 
-void lsr_smmu_fault_handler_notifier(struct iris_hfi_device *device);
-
 enum clock_properties {
 	CLOCK_PROP_HAS_SCALING = 1 << 0,
 	CLOCK_PROP_HAS_MEM_RETENTION    = 1 << 1,
@@ -137,139 +135,79 @@ static int msm_cvp_load_ipcc_regs(struct msm_cvp_platform_resources *res)
 
 	return ret;
 }
+
 static int msm_cvp_load_regspace_mapping(struct msm_cvp_platform_resources *res)
 {
 	int ret = 0;
-	unsigned int uncached_mapping_config[2];
-    unsigned int device_mapping_config[2];
-    unsigned int ipclite_mapping_config[3];
-    unsigned int hwmutex_mapping_config[3];
-    unsigned int llccevaleft_config[3];
-    unsigned int llccevaright_config[3];
-    unsigned int llccevagain_config[3];
-    unsigned int display_config[3];
-    unsigned int aontimers_config[3];
+
+	unsigned int ipclite_mapping_config[3];
+	unsigned int hwmutex_mapping_config[3];
+	unsigned int aontimers_config[3];
 
 	struct platform_device *pdev = res->pdev;
 
-    //Uncached Memory Mappings
-	ret = of_property_read_u32_array(pdev->dev.of_node, "uncached_mapping",
-				uncached_mapping_config, 2);
-	if (ret) {
-		dprintk(CVP_ERR, "Failed to read uncached Memory mapping: %d\n", ret);
-//		return ret;
-	}
+	// IPCLite Register Mappings
 
-	res->uncached_iova = uncached_mapping_config[0];
-	res->uncached_size = uncached_mapping_config[1];
+	dprintk(CVP_INFO, "Reading ipclite reg: %d\n", ret);
 
-    //Device Memory Mappings
-    ret = of_property_read_u32_array(pdev->dev.of_node, "device_mapping",
-                device_mapping_config, 2);
-    if (ret) {
-        dprintk(CVP_ERR, "Failed to read device memory mapping: %d\n", ret);
-//        return ret;
-    }
-
-    res->device_iova = device_mapping_config[0];
-    res->device_size = device_mapping_config[1];
-
-    //IPC Lite Register Mappings
 	ret = of_property_read_u32_array(pdev->dev.of_node, "ipclite_mappings",
 				ipclite_mapping_config, 3);
 	if (ret) {
 		dprintk(CVP_ERR, "Failed to read ipclite reg: %d\n", ret);
-//		return ret;
+		return ret;
 	}
-    else
-    {
-      dprintk(CVP_INFO, "DT Parsing of ipclite reg SUCCESS : 0x%x 0x%x 0x%x \n", ipclite_mapping_config[0],ipclite_mapping_config[1],ipclite_mapping_config[2]);
-    }
-	res->ipclite_iova    = 0xFE500000;//ipclite_mapping_config[0];
-	res->ipclite_size    = 0x100000;//ipclite_mapping_config[1];
-    res->ipclite_phyaddr = 0xa6f00000;//ipclite_mapping_config[2];
+	else
+	{
+	  dprintk(CVP_INFO, "DT Parsing of ipclite reg SUCCESS : 0x%x 0x%x 0x%x \n", ipclite_mapping_config[0], ipclite_mapping_config[1], ipclite_mapping_config[2]);
+	}
+
+	res->ipclite_iova    = ipclite_mapping_config[0];
+	res->ipclite_size    = ipclite_mapping_config[1];
+	res->ipclite_phyaddr = ipclite_mapping_config[2];
 
 
-    //HWMutex register Mappings
+	// HWMutex register Mappings
+
+	dprintk(CVP_INFO, "reading hwmutex reg: %d\n", ret);
+
 	ret = of_property_read_u32_array(pdev->dev.of_node, "hwmutex_mappings",
 				hwmutex_mapping_config, 3);
 	if (ret) {
 		dprintk(CVP_ERR, "Failed to read hwmutex reg: %d\n", ret);
-//		return ret;
+		return ret;
 	}
-    else
-    {
-      dprintk(CVP_INFO, "DT Parsing of HWMutex reg SUCCESS : 0x%x 0x%x 0x%x \n", hwmutex_mapping_config[0],hwmutex_mapping_config[1],hwmutex_mapping_config[2]);
-    }
-	res->hwmutex_iova    = 0xFFB00000;//hwmutex_mapping_config[0];
-	res->hwmutex_size    = 0x2000;//hwmutex_mapping_config[1];
-        res->hwmutex_phyaddr = 0x1f4a000;//hwmutex_mapping_config[2];
+	else
+	{
+		dprintk(CVP_INFO, "DT Parsing of HWMutex reg SUCCESS : 0x%x 0x%x 0x%x \n", hwmutex_mapping_config[0], hwmutex_mapping_config[1], hwmutex_mapping_config[2]);
+	}
 
-    //llcc eva left register Mappings
-	ret = of_property_read_u32_array(pdev->dev.of_node, "llcc_evaleft",
-				llccevaleft_config, 3);
+	res->hwmutex_iova    = hwmutex_mapping_config[0];
+	res->hwmutex_size    = hwmutex_mapping_config[1];
+	res->hwmutex_phyaddr = hwmutex_mapping_config[2];
+
+
+	// AON timers register Mappings
+
+	dprintk(CVP_INFO, "reading AON timers reg: %d\n", ret);
+
+	ret = of_property_read_u32_array(pdev->dev.of_node, "always_on_timers",
+			   aontimers_config, 3);
 	if (ret) {
-		dprintk(CVP_ERR, "Failed to read llccevaleft_config reg: %d\n", ret);
-//		return ret;
+	   dprintk(CVP_ERR, "Failed to read aontimers_config reg: %d\n", ret);
+	   return ret;
+	}
+	else
+	{
+		dprintk(CVP_INFO, "DT Parsing of AON timers reg SUCCESS : 0x%x 0x%x 0x%x \n", aontimers_config[0], aontimers_config[1], aontimers_config[2]);
 	}
 
-	res->llccevaleft_iova    = llccevaleft_config[0];
-	res->llccevaleft_size    = llccevaleft_config[1];
-    res->llccevaleft_phyaddr = llccevaleft_config[2];
-
-    //llcc eva right register Mappings
-	ret = of_property_read_u32_array(pdev->dev.of_node, "llcc_evaright",
-				llccevaright_config, 3);
-	if (ret) {
-		dprintk(CVP_ERR, "Failed to read llccevaright_config reg: %d\n", ret);
-//		return ret;
-	}
-    else
-    {
-      dprintk(CVP_INFO, "DT Parsing of LLCC EVALEFT reg SUCCESS : 0x%x 0x%x 0x%x \n", llccevaright_config[0],llccevaright_config[1],llccevaright_config[2]);
-    }
-	res->llccevaright_iova    = llccevaright_config[0];
-	res->llccevaright_size    = llccevaright_config[1];
-    res->llccevaright_phyaddr = llccevaright_config[2];
-
-    //llcc eva gain register Mappings
-    ret = of_property_read_u32_array(pdev->dev.of_node, "llcc_evagain",
-                llccevagain_config, 3);
-    if (ret) {
-        dprintk(CVP_ERR, "Failed to read llccevagain_config reg: %d\n", ret);
-//        return ret;
-    }
-
-    res->llccevagain_iova    = llccevagain_config[0];
-    res->llccevagain_size    = llccevagain_config[1];
-    res->llccevagain_phyaddr = llccevagain_config[2];//0x19a00000;//
-
-    //display register Mappings
-    ret = of_property_read_u32_array(pdev->dev.of_node, "display",
-                display_config, 3);
-    if (ret) {
-        dprintk(CVP_ERR, "Failed to read display_config reg: %d\n", ret);
-//        return ret;
-    }
-
-    res->display_iova    = display_config[0];
-    res->display_size    = display_config[1];
-    res->display_phyaddr = display_config[2];
-
-    //aon timers register Mappings
-    ret = of_property_read_u32_array(pdev->dev.of_node, "always_on_timers",
-                aontimers_config, 3);
-    if (ret) {
-        dprintk(CVP_ERR, "Failed to read aontimers_config reg: %d\n", ret);
-//        return ret;
-    }
-
-    res->aontimers_iova    = aontimers_config[0];
-    res->aontimers_size    = aontimers_config[1];
-    res->aontimers_phyaddr = aontimers_config[2];
+	res->aontimers_iova    = aontimers_config[0];
+	res->aontimers_size    = aontimers_config[1];
+	res->aontimers_phyaddr = aontimers_config[2];
 
 	return ret;
 }
+
 static int msm_cvp_load_gcc_regs(struct msm_cvp_platform_resources *res)
 {
 	int ret = 0;
@@ -285,56 +223,6 @@ static int msm_cvp_load_gcc_regs(struct msm_cvp_platform_resources *res)
 
 	res->gcc_reg_base = reg_config[0];
 	res->gcc_reg_size = reg_config[1];
-
-	return ret;
-}
-
-static int msm_cvp_load_spad_regs(struct msm_cvp_platform_resources *res)
-{
-	int ret = 0;
-	unsigned int reg_config[2];
-	struct platform_device *pdev = res->pdev;
-
-	ret = of_property_read_u32_array(pdev->dev.of_node, "qcom,spad0-lpi-lb-reg",
-				reg_config, 2);
-	if (ret) {
-		dprintk(CVP_WARN, "No spad0 reg configured: %d\n", ret);
-		return ret;
-	}
-
-	res->spad0_lpi_lb_reg_base = reg_config[0];
-	res->spad0_lpi_lb_reg_size = reg_config[1];
-
-	ret = of_property_read_u32_array(pdev->dev.of_node, "qcom,spad1-lpi-lb-reg",
-				reg_config, 2);
-	if (ret) {
-		dprintk(CVP_WARN, "No spad1 reg configured: %d\n", ret);
-		return ret;
-	}
-
-	res->spad1_lpi_lb_reg_base = reg_config[0];
-	res->spad1_lpi_lb_reg_size = reg_config[1];
-
-
-	ret = of_property_read_u32_array(pdev->dev.of_node, "qcom,spad-broadcast-orlpi-lb-reg",
-				reg_config, 2);
-	if (ret) {
-		dprintk(CVP_WARN, "No spad-broadcast-lb-reg_base reg configured: %d\n", ret);
-		return ret;
-	}
-
-	res->spad_broadcast_orlpi_lb_reg_base = reg_config[0];
-	res->spad_broadcast_orlpi_lb_reg_size = reg_config[1];
-
-	ret = of_property_read_u32_array(pdev->dev.of_node, "qcom,spad-broadcast-andlpi-lb-reg",
-				reg_config, 2);
-	if (ret) {
-		dprintk(CVP_WARN, "No spad-broadcast-andlpi-lb reg configured: %d\n", ret);
-		return ret;
-	}
-
-	res->spad_broadcast_andlpi_lb_reg_base = reg_config[0];
-	res->spad_broadcast_andlpi_lb_reg_size = reg_config[1];
 
 	return ret;
 }
@@ -388,6 +276,7 @@ static int msm_cvp_load_reg_table(struct msm_cvp_platform_resources *res)
 	}
 	return rc;
 }
+
 static int msm_cvp_load_qdss_table(struct msm_cvp_platform_resources *res)
 {
 	struct addr_set *qdss_addr_set;
@@ -471,6 +360,7 @@ static int msm_cvp_load_subcache_info(struct msm_cvp_platform_resources *res)
 		rc = -ENOMEM;
 		goto err_load_subcache_table_fail;
 	}
+
 	subcaches->count = num_subcaches;
 	dprintk(CVP_CORE, "Found %d subcaches\n", num_subcaches);
 
@@ -479,7 +369,6 @@ static int msm_cvp_load_subcache_info(struct msm_cvp_platform_resources *res)
 
 		of_property_read_string_index(pdev->dev.of_node,
 			"cache-slice-names", c, &vsc->name);
-        dprintk(CVP_CORE, "vsc->name %d %s\n", c,vsc->name);
 	}
 
 	res->sys_cache_present = true;
@@ -868,8 +757,8 @@ static int msm_cvp_load_clock_table(
 		else
 			vc->has_mem_retention = false;
 
-		dprintk(CVP_CORE, "Found clock %s id %d: scale-able = %s %s\n",
-			vc->name, vc->clk_id, vc->count ? "yes" : "no",vc->has_scaling ? "yes" : "no");
+		dprintk(CVP_CORE, "Found clock %s id %d: scale-able = %s\n",
+			vc->name, vc->clk_id, vc->count ? "yes" : "no");
 	}
 
 	return 0;
@@ -879,7 +768,7 @@ err_load_clk_table_fail:
 	return rc;
 }
 
-#define MAX_CLK_RESETS 7
+#define MAX_CLK_RESETS 5
 
 static int msm_cvp_load_reset_table(
 		struct msm_cvp_platform_resources *res)
@@ -1025,9 +914,12 @@ int cvp_read_platform_resources_from_dt(
 
 	kres = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
 	res->irq = kres ? kres->start : -1;
+
 	//Parsing for WD interrupt
 	kres = platform_get_resource(pdev, IORESOURCE_IRQ, 1);
 	res->irq_wd = kres ? kres->start : -1;
+	dprintk(CVP_CORE, "%s: res->irq_wd:%d \n",
+		__func__, res->irq_wd);
 
 	rc = msm_cvp_load_fw_name(res);
 	dprintk(CVP_CORE, "EVA fw: %s found.\n", res->fw_name);
@@ -1052,16 +944,11 @@ int cvp_read_platform_resources_from_dt(
 	if (rc)
 		dprintk(CVP_ERR, "Failed to load IPCC regs: %d\n", rc);
 
-    rc = msm_cvp_load_regspace_mapping(res);
-    if (rc)
-        dprintk(CVP_ERR, "Failed to do Register Space Mapping: %d\n", rc);
+	rc = msm_cvp_load_regspace_mapping(res);
+	if (rc)
+		dprintk(CVP_ERR, "Failed to do Register Space Mapping: %d\n", rc);
 
 	rc = msm_cvp_load_gcc_regs(res);
-
-        rc = msm_cvp_load_spad_regs(res);
-	if (rc) {
-		dprintk(CVP_ERR, "Failed to load spad registers %d\n", rc);
-	}
 
 	rc = msm_cvp_load_regulator_table(res);
 	if (rc) {
@@ -1187,25 +1074,6 @@ int msm_cvp_smmu_fault_handler(struct iommu_domain *domain,
 	if (hdev)
 		hdev->error = CVP_ERR_NOC_ERROR;
 	mutex_unlock(&core->lock);
-
-	core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
-	if(core){
-		dprintk(CVP_INFO, "Valid Core Identified\n");
-
-		list_for_each_entry(inst, &core->instances, list) {
-		if(inst){
-				dprintk(CVP_INFO, "inst->prop.type = %d inst->state = %d\n",
-				inst->prop.type, inst->state );
-				if( (inst->state != MSM_CVP_CORE_INVALID ) &&
-					(inst->prop.type == HFI_SESSION_LSR ) ) {
-				        lsr_smmu_fault_handler_notifier(core->device->hfi_device_data);
-					break;
-				}
-
-			}
-		}
-
-	}
 	/*
 	 * Return -EINVAL to elicit the default behaviour of smmu driver.
 	 * If we return -ENOSYS, then smmu driver assumes page fault handler
@@ -1234,9 +1102,6 @@ static int msm_cvp_populate_context_bank(struct device *dev,
 		return -ENOMEM;
 	}
 
-	INIT_LIST_HEAD(&cb->list);
-	list_add_tail(&cb->list, &core->resources.context_banks);
-
 	rc = of_property_read_string(np, "label", &cb->name);
 	if (rc) {
 		dprintk(CVP_CORE,
@@ -1244,14 +1109,16 @@ static int msm_cvp_populate_context_bank(struct device *dev,
 		rc = 0;
 	}
 
+	INIT_LIST_HEAD(&cb->list);
+	list_add_tail(&cb->list, &core->resources.context_banks);
+
 	dprintk(CVP_CORE, "%s: context bank has name %s\n", __func__, cb->name);
 	rc = of_property_read_u32_array(np, "qcom,iommu-dma-addr-pool",
 			(u32 *)&cb->addr_range, 2);
 	if (rc) {
-		dprintk(CVP_ERR,
+		dprintk(CVP_CORE,
 			"Could not read addr pool for context bank : %s %d\n",
 			cb->name, rc);
-		goto err_setup_cb;
 	}
 
 	cb->is_secure = of_property_read_bool(np, "qcom,iommu-vmid");

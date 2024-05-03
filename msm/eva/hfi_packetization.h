@@ -11,9 +11,6 @@
 #include "cvp_hfi.h"
 #include "cvp_hfi_api.h"
 
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-#include "msm_gpu_eva.h"
-#endif
 #define call_hfi_pkt_op(q, op, ...)			\
 	(((q) && (q)->pkt_ops && (q)->pkt_ops->op) ?	\
 	((q)->pkt_ops->op(__VA_ARGS__)) : 0)
@@ -47,6 +44,11 @@ struct cvp_hfi_packetization_ops {
 			struct cvp_hfi_cmd_sys_get_property_packet *pkt);
 	int (*sys_ubwc_config)(struct cvp_hfi_cmd_sys_set_property_packet *pkt,
 		struct msm_cvp_ubwc_config_data *ubwc_config);
+#ifndef HALLIDAY_DISABLE
+	int (*sys_gpu_cmd_prep)(
+		struct cvp_hfi_cmd_sys_gpu_packet *pkt,
+		u32 packet_type);
+#endif
 	int (*ssr_cmd)(enum hal_ssr_trigger_type type,
 		struct cvp_hfi_cmd_sys_test_ssr_packet *pkt);
 	int (*session_init)(
@@ -62,9 +64,6 @@ struct cvp_hfi_packetization_ops {
 	int (*session_release_buffers)(
 		void *pkt,
 		struct cvp_hal_session *session);
-	int (*session_stop)(
-		void *pkt,
-		struct cvp_hal_session *session);
 	int (*session_get_buf_req)(
 		struct cvp_hfi_cmd_session_get_property_packet *pkt,
 		struct cvp_hal_session *session);
@@ -75,12 +74,6 @@ struct cvp_hfi_packetization_ops {
 			struct eva_kmd_hfi_packet *out_pkt,
 			struct cvp_hal_session *session,
 			struct eva_kmd_hfi_packet *in_pkt);
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-	int (*session_gpu_cmd_prep)(
-		struct cvp_hfi_cmd_session_gpu_packet *pkt,
-		u32 packet_type,
-		struct cvp_hal_session *session);
-#endif
 };
 
 struct cvp_hfi_packetization_ops *cvp_hfi_get_pkt_ops_handle(

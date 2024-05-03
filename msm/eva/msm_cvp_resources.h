@@ -125,8 +125,6 @@ struct subcache_info {
 	bool isactive;
 	bool isset;
 	struct llcc_slice_desc *subcache;
-    u32 sc_clentid;//eEVA_LSR_SUBCACHE_IDX
-    u32 sc_ioaddr;
 };
 
 struct subcache_set {
@@ -157,13 +155,6 @@ struct msm_cvp_platform_resources {
 	phys_addr_t register_base;
 	phys_addr_t ipcc_reg_base;
 	phys_addr_t gcc_reg_base;
-
-	phys_addr_t spad0_lpi_lb_reg_base;
-	phys_addr_t spad1_lpi_lb_reg_base;
-	phys_addr_t spad_broadcast_orlpi_lb_reg_base;
-	phys_addr_t spad_broadcast_andlpi_lb_reg_base;
-
-
     /*Aurora iova and phyaddr*/
     phys_addr_t uncached_iova;
     phys_addr_t device_iova;
@@ -203,10 +194,6 @@ struct msm_cvp_platform_resources {
 	uint32_t register_size;
 	uint32_t ipcc_reg_size;
 	uint32_t gcc_reg_size;
-       uint32_t spad0_lpi_lb_reg_size;
-       uint32_t spad1_lpi_lb_reg_size;
-       uint32_t spad_broadcast_orlpi_lb_reg_size;
-       uint32_t spad_broadcast_andlpi_lb_reg_size;
 	uint32_t irq;
 	uint32_t irq_wd;
 	uint32_t sku_version;

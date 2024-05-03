@@ -12,6 +12,7 @@
 #include <linux/dma-heap.h>
 #include <linux/refcount.h>
 #include <media/msm_eva_private.h>
+#include "cvp_comm_def.h"
 
 #define MAX_FRAME_BUFFER_NUMS 30
 #define MAX_DMABUF_NUMS 64
@@ -30,7 +31,7 @@ enum smem_prop {
 	SMEM_UNCACHED = 0x1,
 	SMEM_CACHED = 0x2,
 	SMEM_SECURE = 0x4,
-	SMEM_ADSP = 0x8,
+	SMEM_CDSP = 0x8,
 	SMEM_NON_PIXEL = 0x10,
 	SMEM_PIXEL = 0x20,
 	SMEM_CAMERA = 0x40,
@@ -94,6 +95,23 @@ static inline void DEINIT_DMAMAP_CACHE(struct cvp_dmamap_cache *cache)
 	mutex_destroy(&cache->lock);
 }
 
+
+#define INPUT_FENCE_BITMASK 0x1
+#define OUTPUT_FENCE_BITMASK 0x2
+
+#ifdef CVP_CONFIG_SYNX_V2
+struct cvp_buf_type {
+	s32 fd;
+	u32 size;
+	u32 offset;
+	u32 flags;
+	u32 reserved1;
+	u32 reserved2;
+	u32 fence_type;
+	u32 input_handle;
+	u32 output_handle;
+};
+#else	
 struct cvp_buf_type {
 	s32 fd;
 	u32 size;
@@ -106,7 +124,8 @@ struct cvp_buf_type {
 			u32 reserved2;
 		};
 	};
-};
+};	
+#endif
 
 struct cvp_fence_buf_type {
 	s32 fd;
@@ -217,9 +236,11 @@ int msm_cvp_unmap_user_persist(struct msm_cvp_inst *inst,
 int msm_cvp_map_frame(struct msm_cvp_inst *inst,
 		struct eva_kmd_hfi_packet *in_pkt,
 		unsigned int offset, unsigned int buf_num);
+#ifndef HALLIDAY_DISABLE
 int msm_cvp_map_frame_lsr(struct msm_cvp_inst *inst,
 		struct eva_kmd_hfi_packet *in_pkt,
 		unsigned int offset, unsigned int buf_num);
+#endif
 void msm_cvp_unmap_frame(struct msm_cvp_inst *inst, u64 ktid);
 int msm_cvp_register_buffer(struct msm_cvp_inst *inst,
 		struct eva_kmd_buffer *buf);

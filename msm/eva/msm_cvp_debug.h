@@ -38,12 +38,12 @@ enum cvp_msg_prio {
 	CVP_FW   = 0x001000,
 	CVP_SESS = 0x002000,
 	CVP_HFI  = 0x004000,
+	CVP_TRACE = 0x0010000,
 	CVP_DBG  = CVP_MEM | CVP_SYNX | CVP_CORE | CVP_REG |
 		CVP_PWR | CVP_DSP | CVP_SESS | CVP_HFI | CVP_PKT,
 };
 
-
-enum frace_cvp_msg_prio {
+enum ftrace_cvp_msg_prio {
 	FTRACE_CVP_ERR  = 0x00010000,
 	FTRACE_CVP_WARN = 0x00020000,
 	FTRACE_CVP_INFO = 0x00040000,
@@ -61,9 +61,6 @@ enum frace_cvp_msg_prio {
 	FTRACE_CVP_DBG  = FTRACE_CVP_MEM | FTRACE_CVP_SYNX | FTRACE_CVP_CORE | FTRACE_CVP_REG |
 		FTRACE_CVP_PWR | FTRACE_CVP_DSP | FTRACE_CVP_SESS | FTRACE_CVP_HFI | FTRACE_CVP_PKT,
 };
-
-
-
 
 enum cvp_msg_out {
 	CVP_OUT_PRINTK = 0,
@@ -85,17 +82,14 @@ extern int msm_cvp_fw_low_power_mode;
 extern bool msm_cvp_fw_coverage;
 extern bool msm_cvp_thermal_mitigation_disabled;
 extern bool msm_cvp_cacheop_disabled;
-extern int msm_cvp_llcc_enable;
 extern int msm_cvp_clock_voting;
 extern bool msm_cvp_syscache_disable;
 extern bool msm_cvp_dsp_disable;
 extern bool msm_cvp_mmrm_enabled;
 extern bool msm_cvp_dcvs_disable;
 extern int msm_cvp_minidump_enable;
-extern bool msm_cvp_noc_enable;
-extern bool  lsr_session_enabled;
+extern bool cvp_kernel_fence_enabled;
 extern int msm_cvp_hw_wd_recovery;
-extern int msm_cvp_spad_reg_dump;
 
 #define dprintk(__level, __fmt, arg...)	\
 	do { \
@@ -106,13 +100,13 @@ extern int msm_cvp_spad_reg_dump;
 					## arg); \
 			} \
 		} \
-                if (msm_ftrace_cvp_debug & ( __level << 16)) { \
-                        if (msm_cvp_debug_out == CVP_OUT_PRINTK) { \
-                                trace_printk(CVP_DBG_TAG __fmt, \
-                                        get_debug_level_str(__level),   \
-                                        ## arg); \
-                        } \
-                } \
+		if (msm_ftrace_cvp_debug & ( __level << 16)) { \
+			if (msm_cvp_debug_out == CVP_OUT_PRINTK) { \
+				trace_printk(CVP_DBG_TAG __fmt, \
+					get_debug_level_str(__level),   \
+					## arg); \
+			} \
+		} \
 	} while (0)
 
 #define MSM_CVP_ERROR(value)					\
@@ -128,8 +122,6 @@ struct dentry *msm_cvp_debugfs_init_core(struct msm_cvp_core *core,
 struct dentry *msm_cvp_debugfs_init_inst(struct msm_cvp_inst *inst,
 		struct dentry *parent);
 void msm_cvp_debugfs_deinit_inst(struct msm_cvp_inst *inst);
-int set_subcache_resources( struct msm_cvp_core *core, uint8_t cache_enable);
-
 
 static inline char *get_debug_level_str(int level)
 {
@@ -148,8 +140,10 @@ static inline char *get_debug_level_str(int level)
 		return "pkt";
 	case CVP_MEM:
 		return "mem";
+	#ifndef DISABLE_SYNX
 	case CVP_SYNX:
 		return "synx";
+	#endif
 	case CVP_CORE:
 		return "core";
 	case CVP_REG:

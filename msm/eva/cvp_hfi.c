@@ -16,7 +16,6 @@
 #include <linux/of.h>
 #include <linux/pm_qos.h>
 #include <linux/regulator/consumer.h>
-#include <dt-bindings/regulator/qcom,rpmh-regulator-levels.h>
 #include <linux/slab.h>
 #include <linux/workqueue.h>
 #include <linux/platform_device.h>
@@ -35,20 +34,15 @@
 #include "msm_cvp_clocks.h"
 #include "cvp_dump.h"
 #include "msm_cvp_common.h"
-
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
+#ifndef HALLIDAY_DISABLE
 #include "msm_gpu_eva.h"
 #endif
 
+#include "msm_cvp_events.h"
 #define FIRMWARE_SIZE			0X00A00000
 #define REG_ADDR_OFFSET_BITMASK	0x000FFFFF
 #define QDSS_IOVA_START 0x80001000
 #define MIN_PAYLOAD_SIZE 3
-#define EVA_RESET_PULSE_RESPONSE_TIMEOUT 10000
-#define SPAD0_DUMP 0x1
-#define SPAD1_DUMP 0x2
-#define SPAD_ORLPI_DUMP 0x4
-#define SPAD_ANDLPI_DUMP 0x8
 
 struct cvp_tzbsp_memprot {
 	u32 cp_start;
@@ -63,41 +57,18 @@ struct cvp_tzbsp_memprot {
 /* Poll interval in uS */
 #define POLL_INTERVAL_US 50
 
-/* MMCX related */
-#define MMCX_CB_RESET_ENABLE
-
 enum tzbsp_subsys_state {
 	TZ_SUBSYS_STATE_SUSPEND = 0,
 	TZ_SUBSYS_STATE_RESUME = 1,
 	TZ_SUBSYS_STATE_RESTORE_THRESHOLD = 2,
 };
 
-enum regspace_bit{
-	IPCLITE_REG_MAP_FLG = 1,
-	DISPLAY_REG_MAP_FLG = 2,
-	AONTIMERS_REG_MAP_FLG = 4,
-	HWMUTEX_REG_MAP_FLG = 8,
-	SPAD0_LPI_LB_REG_MAP_FLG = 16,
-	SPAD1_LPI_LB_REG_MAP_FLG = 32,
-	SPAD_BROADCAST_ORLPI_LB_REG_MAP_FLG = 64,
-	SPAD_BROADCAST_ANDLPI_LB_REG_MAP_FLG = 128,
-	LLCCEVALEFT_REG_MAP_FLG = 256,
-	LLCCEVARIGHT_REG_MAP_FLG = 512,
-	LLCCEVAGAIN_REG_MAP_FLG = 1024
-};
 const struct msm_cvp_gov_data CVP_DEFAULT_BUS_VOTE = {
 	.data = NULL,
 	.data_count = 0,
 };
 
-extern bool auto_boot_time;
-
 const int cvp_max_packets = 32;
-static bool from_callback = false;
-static bool reset_pulse_applied = false;
-static bool poweron_inprogress = false;
-static bool sreg_prepared = false;
-static bool sreg_inited = false;
 static uint64_t rd_intr_time = 0;
 
 static void iris_hfi_pm_handler(struct work_struct *work);
@@ -119,7 +90,6 @@ static int __iface_cmdq_write(struct iris_hfi_device *device,
 static int __load_fw(struct iris_hfi_device *device);
 static int __dev_regspace_mapping(struct iris_hfi_device *device);
 static int __dev_regspace_unmap(struct iris_hfi_device *device);
-static int __llcc_regspace_unmap(struct iris_hfi_device *device);
 static void __unload_fw(struct iris_hfi_device *device);
 static int __tzbsp_set_cvp_state(enum tzbsp_subsys_state state);
 static int __enable_subcaches(struct iris_hfi_device *device);
@@ -128,7 +98,7 @@ static int __release_subcaches(struct iris_hfi_device *device);
 static int __disable_subcaches(struct iris_hfi_device *device);
 static int __power_collapse(struct iris_hfi_device *device, bool force);
 static int iris_hfi_noc_error_info(void *dev);
-static int iris_disable_spad_subcache(void *dev);
+
 static void interrupt_init_iris2(struct iris_hfi_device *device);
 static void setup_dsp_uc_memmap_vpu5(struct iris_hfi_device *device);
 static void clock_config_on_enable_vpu5(struct iris_hfi_device *device);
@@ -140,11 +110,7 @@ static void __noc_error_info_iris2(struct iris_hfi_device *device);
 static int __enable_hw_power_collapse(struct iris_hfi_device *device);
 
 static int __power_off_controller(struct iris_hfi_device *device);
-static int __register_for_MMCX(struct iris_hfi_device *device);
 
-static int __vote_spad_clks(struct iris_hfi_device *device);
-static int __unvote_spad(struct iris_hfi_device *device);
-static int map_llcc_iommu_addr(struct iris_hfi_device *device,struct subcache_info *sinfo);
 static struct iris_hfi_vpu_ops iris2_ops = {
 	.interrupt_init = interrupt_init_iris2,
 	.setup_dsp_uc_memmap = setup_dsp_uc_memmap_vpu5,
@@ -154,12 +120,6 @@ static struct iris_hfi_vpu_ops iris2_ops = {
 	.noc_error_info = __noc_error_info_iris2,
 };
 
-
-static void  __print_spad0_regs(struct iris_hfi_device *device);
-static void  __print_spad1_regs(struct iris_hfi_device *device);
-static void __print_spad_broadcast_orlpi_lb_regs(struct iris_hfi_device *device);
-static void __print_spad_broadcast_andlpi_lb_regs(struct iris_hfi_device *device);
-static void __print_spad_reg_dump(struct iris_hfi_device *device);
 /**
  * Utility function to enforce some of our assumptions.  Spam calls to this
  * in hotspots in code to double check some of the assumptions that we hold.
@@ -188,6 +148,12 @@ static inline bool is_sys_cache_present(struct iris_hfi_device *device)
 
 #define ROW_SIZE 32
 
+unsigned long long get_aon_time(void)
+{
+	unsigned long long val;
+	asm volatile("mrs %0, cntvct_el0" : "=r" (val));
+	return val;
+}
 int get_hfi_version(void)
 {
 	struct msm_cvp_core *core;
@@ -256,36 +222,6 @@ int get_msg_opconfigs(void *msg, unsigned int *session_id,
 	*config_id = cfg->op_conf_id;
 	return 0;
 }
-
-int set_subcache_resources( struct msm_cvp_core *core, uint8_t cache_enable)
-{
-	struct iris_hfi_device *device = NULL;
-        int rc = 0;
-	if(( core ) && ( core->device ) && ( core->device->hfi_device_data ) )
-	{
-		device = (struct iris_hfi_device *)core->device->hfi_device_data;
-		if( cache_enable ) {
-			 msm_cvp_llcc_enable = 1;
-			 rc = __release_subcaches(device);
-			 rc = __set_subcaches(device);
-		         dprintk(CVP_INFO, "released and set subcaches\n");
-			}
-                else{
-			msm_cvp_llcc_enable = 0;
-			rc = __release_subcaches(device);
-		        dprintk(CVP_INFO, "release subcaches\n");
-		}
-
-	} else {
-		dprintk(CVP_ERR, "%s: null core/core->device/core->device->hfi_device_data\n",
-                                      __func__);
-		rc = -EINVAL;
-	}
-
-
-       return rc;
-}
-
 
 static void __dump_packet(u8 *packet, enum cvp_msg_prio log_level)
 {
@@ -754,7 +690,7 @@ static void __write_register(struct iris_hfi_device *device,
 	wmb();
 }
 
-static uint64_t __read_aon_time(struct iris_hfi_device *device)
+uint64_t __read_aon_time(struct iris_hfi_device *device)
 {
 	u8 *base_addr;
 	u32 lower_word = 0;
@@ -785,6 +721,7 @@ static uint64_t __read_aon_time(struct iris_hfi_device *device)
 		base_addr, aon_time);
 	return aon_time;
 }
+
 static int __read_gcc_register(struct iris_hfi_device *device, u32 reg)
 {
 	int rc = 0;
@@ -878,99 +815,78 @@ static void __set_registers(struct iris_hfi_device *device)
 					reg_set->reg_tbl[i].reg,
 					reg_set->reg_tbl[i].value);
 	}
-	if(msm_cvp_noc_enable) {
-		__write_register(device, CVP_CPU_CS_AXI4_QOS,
+
+	__write_register(device, CVP_CPU_CS_AXI4_QOS,
 				pdata->noc_qos->axi_qos);
-		__write_register(device, CVP_NOC_PRIORITYLUT_LOW,
+	__write_register(device, CVP_NOC_PRIORITYLUT_LOW,
 				pdata->noc_qos->prioritylut_low);
-		__write_register(device, CVP_NOC_PRIORITYLUT_HIGH,
+	__write_register(device, CVP_NOC_PRIORITYLUT_HIGH,
 				pdata->noc_qos->prioritylut_high);
-		__write_register(device, CVP_NOC_URGENCY_LOW,
+	__write_register(device, CVP_NOC_URGENCY_LOW,
 				pdata->noc_qos->urgency_low);
-		__write_register(device, CVP_NOC_DANGERLUT_LOW,
+	__write_register(device, CVP_NOC_DANGERLUT_LOW,
 				pdata->noc_qos->dangerlut_low);
-		__write_register(device, CVP_NOC_SAFELUT_LOW,
+	__write_register(device, CVP_NOC_SAFELUT_LOW,
 				pdata->noc_qos->safelut_low);
-		dprintk(CVP_INFO,
+#ifndef HALLIDAY_DISABLE
+	dprintk(CVP_INFO,
 			"Setting EVA NOC QOS settings ..\n");
-	}
 #ifdef EVA_LSR//LSR regs
 	//LSR QOS Settings from Video NOC HSR
 	dprintk(CVP_INFO,
 			"Setting LSR NOC QOS settings .. E\n");
-
+  // __write_register(device, LSR_NOC_CSC_GCX_L_PRIORITYLUT_LOW,
+  //                  pdata->lsr_noc_csc_gcx_qos->l_prioritylut_low);
+  // __write_register(device, LSR_NOC_CSC_GCX_L_PRIORITYLUT_HIGH,
+  // 			pdata->lsr_noc_csc_gcx_qos->l_prioritylut_high);
+  // __write_register(device, LSR_NOC_CSC_GCX_L_URGENCY_LOW,
+  // 			pdata->lsr_noc_csc_gcx_qos->l_urgency_low);
+  // __write_register(device, LSR_NOC_CSC_GCX_L_DANGERLUT_LOW,
+  // 			pdata->lsr_noc_csc_gcx_qos->l_dangerlut_low);
+  // __write_register(device, LSR_NOC_CSC_GCX_L_SAFELUT_LOW,
+  // 			pdata->lsr_noc_csc_gcx_qos->l_safelut_low);
+  // dprintk(CVP_INFO,
+  // 		"Setting LSR NOC QOS settings cp1 ..\n");
+  // __write_register(device, LSR_NOC_CSC_GCX_R_PRIORITYLUT_LOW,
+  //                  pdata->lsr_noc_csc_gcx_qos->r_prioritylut_low);
+  // __write_register(device, LSR_NOC_CSC_GCX_R_PRIORITYLUT_HIGH,
+  // 			pdata->lsr_noc_csc_gcx_qos->r_prioritylut_high);
+  // __write_register(device, LSR_NOC_CSC_GCX_R_URGENCY_LOW,
+  // 			pdata->lsr_noc_csc_gcx_qos->r_urgency_low);
+  // __write_register(device, LSR_NOC_CSC_GCX_R_DANGERLUT_LOW,
+  // 			pdata->lsr_noc_csc_gcx_qos->r_dangerlut_low);
+  // __write_register(device, LSR_NOC_CSC_GCX_R_SAFELUT_LOW,
+  // 			pdata->lsr_noc_csc_gcx_qos->r_safelut_low);
+  // dprintk(CVP_INFO,
+  // 		"Setting LSR NOC QOS settings cp2 ..\n");
+  // __write_register(device, LSR_NOC_DDL_L_PRIORITYLUT_LOW,
+  //                  pdata->lsr_noc_ddl_qos->l_prioritylut_low);
+  // __write_register(device, LSR_NOC_DDL_L_PRIORITYLUT_HIGH,
+  // 			pdata->lsr_noc_ddl_qos->l_prioritylut_high);
+  // __write_register(device, LSR_NOC_DDL_L_URGENCY_LOW,
+  // 			pdata->lsr_noc_ddl_qos->l_urgency_low);
+  // __write_register(device, LSR_NOC_DDL_L_DANGERLUT_LOW,
+  // 			pdata->lsr_noc_ddl_qos->l_dangerlut_low);
+  // __write_register(device, LSR_NOC_DDL_L_SAFELUT_LOW,
+  // 			pdata->lsr_noc_ddl_qos->l_safelut_low);
+  // dprintk(CVP_INFO,
+  // 		"Setting LSR NOC QOS settings cp3 ..\n");
+  // __write_register(device, LSR_NOC_DDL_R_PRIORITYLUT_LOW,
+  //                  pdata->lsr_noc_ddl_qos->r_prioritylut_low);
+  // __write_register(device, LSR_NOC_DDL_R_PRIORITYLUT_HIGH,
+  // 			pdata->lsr_noc_ddl_qos->r_prioritylut_high);
+  // __write_register(device, LSR_NOC_DDL_R_URGENCY_LOW,
+  // 			pdata->lsr_noc_ddl_qos->r_urgency_low);
+  // __write_register(device, LSR_NOC_DDL_R_DANGERLUT_LOW,
+  // 			pdata->lsr_noc_ddl_qos->r_dangerlut_low);
+  // __write_register(device, LSR_NOC_DDL_R_SAFELUT_LOW,
+  // 			pdata->lsr_noc_ddl_qos->r_safelut_low);
 	dprintk(CVP_INFO,
 			"Setting LSR NOC QOS settings.NOT YET .. X\n");
 #endif //EVA_LSR regs
+#endif // HALLIDAY_DISABLE
 }
-/*static void __set_lsr_noc_registers(struct iris_hfi_device *device)
-{
-	struct msm_cvp_core *core;
-	struct msm_cvp_platform_data *pdata;;
 
-	if (!device->res) {
-		dprintk(CVP_ERR,
-			"device resources null, cannot set registers\n");
-		return;
-	}
-
-	core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
-	pdata = core->platform_data;
-
-#ifdef EVA_LSR//LSR regs
-	//LSR QOS Settings from Video NOC HSR
-	dprintk(CVP_INFO,
-			"Setting LSR NOC QOS settings .. E\n");
-  __write_register(device, LSR_NOC_CSC_GCX_L_PRIORITYLUT_LOW,
-				   pdata->lsr_noc_csc_gcx_qos->l_prioritylut_low);
-  __write_register(device, LSR_NOC_CSC_GCX_L_PRIORITYLUT_HIGH,
-			pdata->lsr_noc_csc_gcx_qos->l_prioritylut_high);
-  __write_register(device, LSR_NOC_CSC_GCX_L_URGENCY_LOW,
-			pdata->lsr_noc_csc_gcx_qos->l_urgency_low);
-  __write_register(device, LSR_NOC_CSC_GCX_L_DANGERLUT_LOW,
-			pdata->lsr_noc_csc_gcx_qos->l_dangerlut_low);
-  __write_register(device, LSR_NOC_CSC_GCX_L_SAFELUT_LOW,
-			pdata->lsr_noc_csc_gcx_qos->l_safelut_low);
-  dprintk(CVP_INFO,
-		"Setting LSR NOC QOS settings cp1 ..\n");
-  __write_register(device, LSR_NOC_CSC_GCX_R_PRIORITYLUT_LOW,
-				   pdata->lsr_noc_csc_gcx_qos->r_prioritylut_low);
-  __write_register(device, LSR_NOC_CSC_GCX_R_PRIORITYLUT_HIGH,
-			pdata->lsr_noc_csc_gcx_qos->r_prioritylut_high);
-  __write_register(device, LSR_NOC_CSC_GCX_R_URGENCY_LOW,
-			pdata->lsr_noc_csc_gcx_qos->r_urgency_low);
-  __write_register(device, LSR_NOC_CSC_GCX_R_DANGERLUT_LOW,
-			pdata->lsr_noc_csc_gcx_qos->r_dangerlut_low);
-  __write_register(device, LSR_NOC_CSC_GCX_R_SAFELUT_LOW,
-			pdata->lsr_noc_csc_gcx_qos->r_safelut_low);
-  dprintk(CVP_INFO,
-		"Setting LSR NOC QOS settings cp2 ..\n");
-  __write_register(device, LSR_NOC_DDL_L_PRIORITYLUT_LOW,
-				   pdata->lsr_noc_ddl_qos->l_prioritylut_low);
-  __write_register(device, LSR_NOC_DDL_L_PRIORITYLUT_HIGH,
-			pdata->lsr_noc_ddl_qos->l_prioritylut_high);
-  __write_register(device, LSR_NOC_DDL_L_URGENCY_LOW,
-			pdata->lsr_noc_ddl_qos->l_urgency_low);
-  __write_register(device, LSR_NOC_DDL_L_DANGERLUT_LOW,
-			pdata->lsr_noc_ddl_qos->l_dangerlut_low);
-  __write_register(device, LSR_NOC_DDL_L_SAFELUT_LOW,
-			pdata->lsr_noc_ddl_qos->l_safelut_low);
-  dprintk(CVP_INFO,
-		"Setting LSR NOC QOS settings cp3 ..\n");
-  __write_register(device, LSR_NOC_DDL_R_PRIORITYLUT_LOW,
-				   pdata->lsr_noc_ddl_qos->r_prioritylut_low);
-  __write_register(device, LSR_NOC_DDL_R_PRIORITYLUT_HIGH,
-			pdata->lsr_noc_ddl_qos->r_prioritylut_high);
-  __write_register(device, LSR_NOC_DDL_R_URGENCY_LOW,
-			pdata->lsr_noc_ddl_qos->r_urgency_low);
-  __write_register(device, LSR_NOC_DDL_R_DANGERLUT_LOW,
-			pdata->lsr_noc_ddl_qos->r_dangerlut_low);
-  __write_register(device, LSR_NOC_DDL_R_SAFELUT_LOW,
-			pdata->lsr_noc_ddl_qos->r_safelut_low);
-	dprintk(CVP_INFO,
-			"Setting LSR NOC QOS settings.DONE .. X\n");
-#endif //EVA_LSR regs
-}*/
 /*
  * The existence of this function is a hack for 8996 (or certain Iris versions)
  * to overcome a hardware bug.  Whenever the GDSCs momentarily power collapse
@@ -1173,9 +1089,9 @@ static inline int __boot_firmware(struct iris_hfi_device *device)
 	else
 		dprintk(CVP_CORE, "Power off CORE GDSCR Success: %x, loop count %d \n", reg_gdsc, loop);
 
-	ctrl_init_val = BIT(0);
+	ctrl_init_val = BIT(0) + BIT(2);
 	__write_register(device, CVP_CTRL_INIT, ctrl_init_val);
-	while (!(ctrl_status&1) && count < max_tries) {
+	while (!ctrl_status && count < max_tries) {
 		ctrl_status = __read_register(device, CVP_CTRL_STATUS);
 		if ((ctrl_status & CVP_CTRL_ERROR_STATUS__M) == 0x4) {
 			dprintk(CVP_ERR, "invalid setting for UC_REGION\n");
@@ -1260,6 +1176,10 @@ static void cvp_dump_csr(struct iris_hfi_device *dev)
 	dprintk(CVP_ERR, "CVP_WRAPPER_CPU_STATUS: %x\n", reg);
 	reg = __read_register(dev, CVP_CPU_CS_SCIACMDARG0);
 	dprintk(CVP_ERR, "CVP_CPU_CS_SCIACMDARG0: %x\n", reg);
+	reg = __read_register(dev, CVP_WRAPPER_CPU_CLOCK_CONFIG);
+	dprintk(CVP_ERR, "CVP_WRAPPER_CPU_CLOCK_CONFIG: %x\n", reg);
+	reg = __read_register(dev, CVP_WRAPPER_CORE_CLOCK_CONFIG);
+	dprintk(CVP_ERR, "CVP_WRAPPER_CORE_CLOCK_CONFIG: %x\n", reg);
 	reg = __read_register(dev, CVP_WRAPPER_INTR_STATUS);
 	dprintk(CVP_ERR, "CVP_WRAPPER_INTR_STATUS: %x\n", reg);
 	reg = __read_register(dev, CVP_CPU_CS_H2ASOFTINT);
@@ -1270,10 +1190,6 @@ static void cvp_dump_csr(struct iris_hfi_device *dev)
 	dprintk(CVP_ERR, "CVP_CC_MVS1C_GDSCR: %x\n", reg);
 	reg = __read_register(dev, CVP_CC_MVS1C_CBCR);
 	dprintk(CVP_ERR, "CVP_CC_MVS1C_CBCR: %x\n", reg);
-	reg = __read_register(dev, CVP_WRAPPER_CPU_CLOCK_CONFIG);
-	dprintk(CVP_ERR, "CVP_WRAPPER_CPU_CLOCK_CONFIG: %x\n", reg);
-	reg = __read_register(dev, CVP_WRAPPER_CORE_CLOCK_CONFIG);
-	dprintk(CVP_ERR, "CVP_WRAPPER_CORE_CLOCK_CONFIG: %x\n", reg);
 	dev->reg_dumped = true;
 }
 
@@ -1333,6 +1249,7 @@ static int __iface_cmdq_write_relaxed(struct iris_hfi_device *device,
 	struct cvp_iface_q_info *q_info;
 	struct cvp_hal_cmd_pkt_hdr *cmd_packet;
 	int result = -E2BIG;
+
 	if (!device || !pkt) {
 		dprintk(CVP_ERR, "Invalid Params\n");
 		return -EINVAL;
@@ -1391,19 +1308,36 @@ err_q_null:
 static int __iface_cmdq_write(struct iris_hfi_device *device, void *pkt)
 {
 	bool needs_interrupt = false;
-	uint32_t *pkt_payload = NULL;
+	struct cvp_hfi_cmd_session_hdr *cmd_hdr = NULL;
 	int rc = __iface_cmdq_write_relaxed(device, pkt, &needs_interrupt);
-	pkt_payload = (uint32_t *)pkt;
+
 	if (!rc && needs_interrupt) {
 		/* Consumer of cmdq prefers that we raise an interrupt */
 		rc = 0;
 		__write_register(device, CVP_CPU_CS_H2ASOFTINT, 1);
-		dprintk(CVP_PROF, "wr_intr at_time = 0x%llx for pkt_type = 0x%x \n",
-					 __read_aon_time(device), pkt_payload[1]);
-
-	} else {
-		dprintk(CVP_PROF, "wr_no_intr at_time = 0x%llx for pkt_type = 0x%x\n",
-					 __read_aon_time(device), pkt_payload[1]);
+		dprintk(CVP_PROF, "wr_intr at_time = 0x%llx \n",
+					 __read_aon_time(device));
+	}
+	else{
+		dprintk(CVP_PROF, "wr_no_intr at_time = 0x%llx \n",
+					 __read_aon_time(device));
+	}
+        cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)pkt;
+	if(( (msm_cvp_debug & CVP_TRACE) == CVP_TRACE ) &&
+			cmd_hdr->packet_type > HFI_CMD_SESSION_CVP_START &&
+			cmd_hdr->size >= sizeof(struct cvp_hfi_cmd_session_hdr))
+	{
+		u64 aon_cycles = 0;
+		u32 sess_id = 0;
+		u32 pkt_id = 0;
+		u32 stream_id = 0;
+		u32 t_id =0;
+		sess_id = cmd_hdr->session_id;
+		pkt_id  = cmd_hdr->packet_type;
+		stream_id = cmd_hdr->stream_idx;
+		t_id    = cmd_hdr->client_data.transaction_id;
+		aon_cycles  = get_aon_time();
+		trace_tracing_eva_frame_from_sw(aon_cycles, "EVA_KMD_FWD_END", sess_id, stream_id, pkt_id, t_id);
 	}
 	return rc;
 }
@@ -1541,10 +1475,10 @@ static int __interface_dsp_queues_init(struct iris_hfi_device *dev)
 		dprintk(CVP_ERR, "%s: failed dma allocation\n", __func__);
 		goto fail_dma_alloc;
 	}
-	cb = msm_cvp_smem_get_context_bank(dev->res, 0);
+	cb = msm_cvp_smem_get_context_bank(dev->res, SMEM_CDSP);
 	if (!cb) {
 		dprintk(CVP_ERR,
-			"%s: failed to get context bank\n", __func__);
+			"%s: failed to get DSP context bank\n", __func__);
 		goto fail_dma_map;
 	}
 	iova = dma_map_single_attrs(cb->dev, phys_to_virt(dma_handle),
@@ -1867,18 +1801,16 @@ static int __interface_queues_init(struct iris_hfi_device *dev)
 		dprintk(CVP_ERR, "dsp_queues_init failed\n");
 		goto fail_alloc_queue;
 	}
-//#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-        if(lsr_session_enabled){
-		rc = __interface_gpu_init();
-		if(rc){
-			dprintk(CVP_ERR, "(kgsl/gpu)_eva_interface failed\n");
-			return -EINVAL;
-		}
-	}
 
-//#endif
+	#ifndef HALLIDAY_DISABLE
+	rc = __interface_gpu_init();
+	if(rc){
+		dprintk(CVP_ERR, "(kgsl/gpu)_eva_interface failed\n");
+		return -EINVAL;
+	}
+	#endif
+
 	__setup_ucregion_memory_map(dev);
-	__write_register(dev, CVP_CPU_CS_SCIBARG3,0 );
 	return 0;
 fail_alloc_queue:
 	return -ENOMEM;
@@ -2035,8 +1967,6 @@ static int iris_hfi_core_init(void *device)
 	pm_stay_awake(dev->res->pdev->dev.parent);
 	mutex_lock(&dev->lock);
 
-	dev->reg_map_status_flg = 0x0;
-	dprintk(CVP_INFO, "dev->reg_map_status_flg set to 0\n");
 	dev->bus_vote.data =
 		kzalloc(sizeof(struct cvp_bus_vote_data), GFP_KERNEL);
 	if (!dev->bus_vote.data) {
@@ -2047,6 +1977,7 @@ static int iris_hfi_core_init(void *device)
 
 	dev->bus_vote.data_count = 1;
 	dev->bus_vote.data->power_mode = CVP_POWER_TURBO;
+
 	rc = __dev_regspace_mapping(dev);
 	if (rc) {
 		dprintk(CVP_ERR, "Failed to do Devices RegisterSpace Mapping FW\n");
@@ -2081,6 +2012,7 @@ static int iris_hfi_core_init(void *device)
 		rc = -ENOMEM;
 		goto err_core_init;
 	}
+
 	// Add node for dev struct
 	add_va_node_to_list(CVP_QUEUE_DUMP, dev,
 			sizeof(struct iris_hfi_device),
@@ -2177,7 +2109,6 @@ err_core_init:
 err_load_fw:
 err_no_mem:
 	dprintk(CVP_ERR, "Core init failed\n");
-	__dev_regspace_unmap(device);
 	mutex_unlock(&dev->lock);
 	pm_relax(dev->res->pdev->dev.parent);
 	return rc;
@@ -2210,15 +2141,13 @@ static int iris_hfi_core_release(void *dev)
 
 	__resume(device);
 	__set_state(device, IRIS_STATE_DEINIT);
-//#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-	if(lsr_session_enabled){
-		__interface_gpu_deinit();
-		lsr_session_enabled = false;
-	}
-//#endif
+
+	#ifndef HALLIDAY_DISABLE
+	__interface_gpu_deinit();
+	#endif
+
 	__dsp_shutdown(device, 0);
 
-	__release_subcaches(device);
 	__disable_subcaches(device);
 	__unload_fw(device);
 		__dev_regspace_unmap(device);
@@ -2237,7 +2166,7 @@ static int iris_hfi_core_release(void *dev)
 		session->device = NULL;
 	}
 
-	dprintk(CVP_WARN, "Core released successfully\n");
+	dprintk(CVP_CORE, "Core released successfully\n");
 	mutex_unlock(&device->lock);
 
 	return rc;
@@ -2555,40 +2484,6 @@ static int iris_hfi_session_release_buffers(void *sess)
 	rc = call_hfi_pkt_op(device, session_release_buffers, &pkt, session);
 	if (rc) {
 		dprintk(CVP_ERR, "release buffers: failed to create packet\n");
-		goto err_create_pkt;
-	}
-
-	if (__iface_cmdq_write(session->device, &pkt))
-		rc = -ENOTEMPTY;
-
-err_create_pkt:
-	mutex_unlock(&device->lock);
-	return rc;
-}
-static int iris_hfi_session_stop(void *sess)
-{
-	//struct cvp_session_release_buffers_packet pkt;
-	struct cvp_session_stop_packet pkt;
-	int rc = 0;
-	struct cvp_hal_session *session = sess;
-	struct iris_hfi_device *device;
-
-	if (!session || !session->device) {
-		dprintk(CVP_ERR, "Invalid Params\n");
-		return -EINVAL;
-	}
-
-	device = session->device;
-	mutex_lock(&device->lock);
-
-	if (!__is_session_valid(device, session, __func__)) {
-		rc = -ECONNRESET;
-		goto err_create_pkt;
-	}
-
-	rc = call_hfi_pkt_op(device, session_stop, &pkt, session);
-	if (rc) {
-		dprintk(CVP_ERR, "session_stop: failed to create pkt\n");
 		goto err_create_pkt;
 	}
 
@@ -2985,6 +2880,8 @@ static void __flush_debug_queue(struct iris_hfi_device *device, u8 *packet)
 			 */
 			pkt->rg_msg_data[pkt->msg_size-1] = '\0';
 			dprintk(log_level, "%s", &pkt->rg_msg_data[1]);
+                        if((log_level & CVP_FW) && (pkt->msg_type == HFI_DEBUG_MSG_TIME))
+				trace_tracing_eva_frame_from_fw(&pkt->rg_msg_data[1]);
 		}
 	}
 #undef SKIP_INVALID_PKT
@@ -3110,9 +3007,10 @@ static int __response_handler(struct iris_hfi_device *device)
 	int packet_count = 0;
 	u8 *raw_packet = NULL;
 	bool requeue_pm_work = true;
-	//u32 reg_val = 0;
+
 	if (!device || device->state != IRIS_STATE_INIT)
 		return 0;
+
 	packets = device->response_pkt;
 
 	raw_packet = device->raw_packet;
@@ -3124,13 +3022,6 @@ static int __response_handler(struct iris_hfi_device *device)
 		return 0;
 	}
 
-	//reg_val = __read_register(device, CVP_CPU_CS_SCIACMD);
-	//dprintk(CVP_INFO, "reg: %x, reg value %x\n",
-	//	CVP_CPU_CS_SCIACMD, reg_val);
-	//reg_val = __read_register(device, CVP_CPU_CS_SCIACMDARG0);
-	//dprintk(CVP_INFO, "reg: %x, reg value %x\n",
-	//	CVP_CPU_CS_SCIACMDARG0, reg_val);
-	//
 	if (device->intr_status & CVP_WRAPPER_INTR_MASK_A2HWD_BMSK) {
 		struct cvp_hfi_sfr_struct *vsfr = (struct cvp_hfi_sfr_struct *)
 			device->sfr.align_virtual_addr;
@@ -3166,7 +3057,6 @@ static int __response_handler(struct iris_hfi_device *device)
 		int rc = 0;
 
 		dprintk(CVP_PROF,"rd_intr at_time = 0x%llx  for MSG 0x%x  at_time  =0x%llx, sess_id = 0x%x, t_id = 0x%x \n",
-
 					rd_intr_time,hdr->packet_type, __read_aon_time(device), hdr->session_id,hdr->client_data.transaction_id);
 		print_msg_hdr(hdr);
 		rc = cvp_hfi_process_msg_packet(device->device_id,
@@ -3239,7 +3129,7 @@ exit:
 	return packet_count;
 }
 
-static void iris_hfi_core_work_handler(struct work_struct *work)
+irqreturn_t iris_hfi_core_work_handler(int irq, void *data)
 {
 	struct msm_cvp_core *core;
 	struct iris_hfi_device *device;
@@ -3251,7 +3141,7 @@ static void iris_hfi_core_work_handler(struct work_struct *work)
 	if (core)
 		device = core->device->hfi_device_data;
 	else
-		return;
+		return IRQ_HANDLED;
 	if(msm_cvp_debug & CVP_PROF)
 	rd_intr_time = __read_aon_time(device);
 
@@ -3315,23 +3205,17 @@ err_no_work:
 	if (!(intr_status & CVP_WRAPPER_INTR_STATUS_A2HWD_BMSK))
 		enable_irq(device->cvp_hal_data->irq);
 
-	/*
-	 * XXX: Don't add any code beyond here.  Reacquiring locks after release
-	 * it above doesn't guarantee the atomicity that we're aiming for.
-	 */
-}
-
-static DECLARE_WORK(iris_hfi_work, iris_hfi_core_work_handler);
-
-static irqreturn_t iris_hfi_isr(int irq, void *dev)
-{
-	struct iris_hfi_device *device = dev;
-
-	disable_irq_nosync(irq);
-	queue_work(device->cvp_workq, &iris_hfi_work);
 	return IRQ_HANDLED;
 }
-
+irqreturn_t iris_hfi_isr(int irq, void *dev)
+{
+	disable_irq_nosync(irq);
+	return IRQ_WAKE_THREAD;
+}
+/*
+ * When the watchdog timer expires, the device is crashed and a dump is collected.
+ * This dump provides the current state of the device, which can be used for debugging.
+ */
 static void iris_hfi_wd_work_handler(struct work_struct *work)
 {
 	struct msm_cvp_core *core;
@@ -3341,9 +3225,13 @@ static void iris_hfi_wd_work_handler(struct work_struct *work)
 
 	core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
 	if (core)
+	{
 		device = core->device->hfi_device_data;
+	}
 	else
+	{
 		return;
+	}
 
 	if (msm_cvp_hw_wd_recovery) {
 		dprintk(CVP_ERR, "Cleaning up as HW WD recovery is enable %d\n", msm_cvp_hw_wd_recovery);
@@ -3412,61 +3300,20 @@ static int __init_regs_and_interrupts(struct iris_hfi_device *device,
 				"could not map gcc reg addr %pa of size %d\n",
 				&res->gcc_reg_base, res->gcc_reg_size);
 	}
-       if (res->aontimers_phyaddr) {
-               hal->aon_reg_base = devm_ioremap(&res->pdev->dev,
-                               res->aontimers_phyaddr, res->aontimers_size);
-               hal->aon_reg_size = res->aontimers_size;
-               if (!hal->aon_reg_base)
-                       dprintk(CVP_ERR,
-                               "could not map Aon reg addr %pa of size %d\n",
-                               &res->aontimers_phyaddr, res->aontimers_size);
-       }
-	if (res->spad0_lpi_lb_reg_base) {
-		hal->spad0_lpi_lb_reg_base = devm_ioremap(&res->pdev->dev,
-				res->spad0_lpi_lb_reg_base, res->spad0_lpi_lb_reg_size);
-		hal->spad0_lpi_lb_reg_size = res->spad0_lpi_lb_reg_size;
-		if (!hal->spad0_lpi_lb_reg_size)
+
+	if (res->aontimers_phyaddr) {
+		hal->aon_reg_base = devm_ioremap(&res->pdev->dev,
+						res->aontimers_phyaddr, res->aontimers_size);
+		hal->aon_reg_size = res->aontimers_size;
+		if (!hal->aon_reg_base)
 			dprintk(CVP_ERR,
-				"could not map spad0 reg addr %pa of size %d\n",
-				&res->spad0_lpi_lb_reg_base, res->spad0_lpi_lb_reg_size);
-	}
-
-
-
-	if (res->spad1_lpi_lb_reg_base) {
-		hal->spad1_lpi_lb_reg_base = devm_ioremap(&res->pdev->dev,
-				res->spad1_lpi_lb_reg_base, res->spad1_lpi_lb_reg_size);
-		hal->spad1_lpi_lb_reg_size = res->spad1_lpi_lb_reg_size;
-		if (!hal->spad1_lpi_lb_reg_base)
-			dprintk(CVP_ERR,
-				"could not map spad1 reg addr %pa of size %d\n",
-				&res->spad1_lpi_lb_reg_base, res->spad1_lpi_lb_reg_size);
-	}
-
-	if (res->spad_broadcast_orlpi_lb_reg_base) {
-		hal->spad_broadcast_orlpi_lb_reg_base = devm_ioremap(&res->pdev->dev,
-				res->spad_broadcast_orlpi_lb_reg_base, res->spad_broadcast_orlpi_lb_reg_size);
-		hal->spad_broadcast_orlpi_lb_reg_size = res->spad_broadcast_orlpi_lb_reg_size;
-		if (!hal->spad_broadcast_orlpi_lb_reg_base)
-			dprintk(CVP_ERR,
-				"could not map spad broadcast lb  reg addr %pa of size %d\n",
-				&res->spad_broadcast_orlpi_lb_reg_base, res->spad_broadcast_orlpi_lb_reg_size);
-	}
-
-
-	if (res->spad_broadcast_andlpi_lb_reg_base) {
-		hal->spad_broadcast_andlpi_lb_reg_base = devm_ioremap(&res->pdev->dev,
-				res->spad_broadcast_andlpi_lb_reg_base, res->spad_broadcast_andlpi_lb_reg_size);
-		hal->spad_broadcast_andlpi_lb_reg_size = res->spad_broadcast_andlpi_lb_reg_size;
-		if (!hal->spad_broadcast_andlpi_lb_reg_base)
-			dprintk(CVP_ERR,
-				"could not map spad broadcast andlpi lbreg addr %pa of size %d\n",
-				&res->spad_broadcast_andlpi_lb_reg_base, res->spad_broadcast_andlpi_lb_reg_size);
-	}
-
+				"could not map Aon reg addr %pa of size %d\n",
+				&res->aontimers_phyaddr, res->aontimers_size);
+    }
+	
 	device->cvp_hal_data = hal;
-	rc = request_irq(res->irq, iris_hfi_isr, IRQF_TRIGGER_HIGH,
-			"msm_cvp", device);
+	rc = request_threaded_irq(res->irq, iris_hfi_isr, iris_hfi_core_work_handler,
+					IRQF_TRIGGER_HIGH, "msm_cvp", device);
 	if (unlikely(rc)) {
 		dprintk(CVP_ERR, "() :request_irq failed\n");
 		goto error_irq_fail;
@@ -3478,6 +3325,7 @@ static int __init_regs_and_interrupts(struct iris_hfi_device *device,
 		dprintk(CVP_ERR, "() :request_irq for WD failed\n");
 		goto error_irq_fail;
 	}
+
 	disable_irq_nosync(res->irq);
 	dprintk(CVP_INFO,
 		"firmware_base = %pa, register_base = %pa, register_size = %d\n",
@@ -3509,12 +3357,6 @@ static int __handle_reset_clk(struct msm_cvp_platform_resources *res,
 	dprintk(CVP_PWR, "reset_clk: name %s reset_state %d rst %pK ps=%d\n",
 		rst_set->reset_tbl[reset_index].name, state, rst, pwr_state);
 
-	if (!(strcmp(rst_set->reset_tbl[reset_index].name, "cvp_core_reset")) && 
-		(pwr_state == CVP_POWER_IGNORED)) {
-		dprintk(CVP_PWR, "Skipping reset pulse for %s\n", rst_set->reset_tbl[reset_index].name);
-		return 0;
-	}
-
 	switch (state) {
 	case INIT:
 		if (rst)
@@ -3536,8 +3378,7 @@ static int __handle_reset_clk(struct msm_cvp_platform_resources *res,
 		if (pwr_state != CVP_POWER_IGNORED &&
 			pwr_state != rst_info.required_state)
 			break;
-		dprintk(CVP_WARN, "ASSERT: reset_clk: name %s reset_state %d rst %pK ps=%d\n",
-			rst_set->reset_tbl[reset_index].name, state, rst, pwr_state);
+
 		rc = reset_control_assert(rst);
 		break;
 	case DEASSERT:
@@ -3549,8 +3390,7 @@ static int __handle_reset_clk(struct msm_cvp_platform_resources *res,
 		if (pwr_state != CVP_POWER_IGNORED &&
 			pwr_state != rst_info.required_state)
 			break;
-		dprintk(CVP_WARN, "DEASSERT: reset_clk: name %s reset_state %d rst %pK ps=%d\n",
-			rst_set->reset_tbl[reset_index].name, state, rst, pwr_state);
+
 		rc = reset_control_deassert(rst);
 		break;
 	default:
@@ -3563,109 +3403,6 @@ static int __handle_reset_clk(struct msm_cvp_platform_resources *res,
 
 skip_reset_init:
 failed_to_reset:
-	return rc;
-}
-
-static int __handle_sw_ctrl_disable(struct iris_hfi_device *device,
-			int reset_index)
-{
-	int rc = 0;
-	struct reset_control *rst;
-	struct reset_info rst_info;
-	struct msm_cvp_platform_resources *res = device->res;
-	struct reset_set *rst_set = &res->reset_set;
-
-	if (!rst_set->reset_tbl)
-		return 0;
-
-	rst_info = rst_set->reset_tbl[reset_index];
-	rst = rst_info.rst;
-	dprintk(CVP_PWR, "SW_CTRL_CLK_DISABLE: reset name %s \n", rst_set->reset_tbl[reset_index].name);
-
-	if (!(strcmp(rst_set->reset_tbl[reset_index].name, "cvp_axi0_reset"))) {
-		rc = msm_cvp_disable_sw_ctrl(device, "gcc_video_axi0_sreg");
-		if (rc)
-			goto failed_to_sw_ctrl;
-	}
-	else if (!(strcmp(rst_set->reset_tbl[reset_index].name, "cvp_axi1_reset"))) {
-		rc = msm_cvp_disable_sw_ctrl(device, "gcc_video_axi1_sreg");
-		if (rc)
-			goto failed_to_sw_ctrl;
-	}
-	else if (!(strcmp(rst_set->reset_tbl[reset_index].name, "iris_ss_hf_axi1_reset"))) {
-		rc = msm_cvp_disable_sw_ctrl(device, "gcc_iris_ss_hf_axi1_sreg");
-		if (rc)
-			goto failed_to_sw_ctrl;
-	}
-	else if (!(strcmp(rst_set->reset_tbl[reset_index].name, "iris_ss_spd_axi1_reset"))) {
-		rc = msm_cvp_disable_sw_ctrl(device, "gcc_iris_ss_spd_axi1_sreg");
-		if (rc)
-			goto failed_to_sw_ctrl;
-	}
-	else {
-		dprintk(CVP_PWR, "SW_CTRL_CLK_DISABLE: SW_CTRL not required for %s\n", rst_set->reset_tbl[reset_index].name);
-		goto skip_sw_ctrl;
-	}
-
-	return 0;
-
-failed_to_sw_ctrl:
-	dprintk(CVP_ERR, "SW_CTRL_CLK_DISABLE: Failed to disable SW_CTRL for %s, rc = %d \n", rst_set->reset_tbl[reset_index].name, rc);
-skip_sw_ctrl:
-	return rc;
-}
-
-static int __handle_sw_ctrl_enable(struct iris_hfi_device *device,
-			int reset_index)
-{
-	int rc = 0;
-	struct reset_control *rst;
-	struct reset_info rst_info;
-	struct msm_cvp_platform_resources *res = device->res;
-	struct reset_set *rst_set = &res->reset_set;
-	char *sreg_name = NULL;
-
-	if (!rst_set->reset_tbl)
-		return 0;
-
-	rst_info = rst_set->reset_tbl[reset_index];
-	rst = rst_info.rst;
-	dprintk(CVP_PWR, "SW_CTRL_CLK_ENABLE: reset name %s \n", rst_set->reset_tbl[reset_index].name);
-
-	if (!(strcmp(rst_set->reset_tbl[reset_index].name, "cvp_axi0_reset"))) {
-		sreg_name = "gcc_video_axi0_sreg";
-		rc = msm_cvp_enable_sw_ctrl(device, "gcc_video_axi0_sreg");
-		if (rc)
-			goto failed_to_sw_ctrl;
-	}
-	else if (!(strcmp(rst_set->reset_tbl[reset_index].name, "cvp_axi1_reset"))) {
-		sreg_name = "gcc_video_axi1_sreg";
-		rc = msm_cvp_enable_sw_ctrl(device, "gcc_video_axi1_sreg");
-		if (rc)
-			goto failed_to_sw_ctrl;
-	}
-	else if (!(strcmp(rst_set->reset_tbl[reset_index].name, "iris_ss_hf_axi1_reset"))) {
-		sreg_name = "gcc_iris_ss_hf_axi1_sreg";
-		rc = msm_cvp_enable_sw_ctrl(device, "gcc_iris_ss_hf_axi1_sreg");
-		if (rc)
-			goto failed_to_sw_ctrl;
-	}
-	else if (!(strcmp(rst_set->reset_tbl[reset_index].name, "iris_ss_spd_axi1_reset"))) {
-		sreg_name = "gcc_iris_ss_spd_axi1_sreg";
-		rc = msm_cvp_enable_sw_ctrl(device, "gcc_iris_ss_spd_axi1_sreg");
-		if (rc)
-			goto failed_to_sw_ctrl;
-	}
-	else {
-		dprintk(CVP_PWR, "SW_CTRL_CLK_ENABLE: SW_CTRL not required for %s\n", rst_set->reset_tbl[reset_index].name);
-		goto skip_sw_ctrl;
-	}
-
-	return 0;
-
-failed_to_sw_ctrl:
-	dprintk(CVP_ERR, "SW_CTRL_CLK_ENABLE: Failed to enable SW_CTRL for %s, rc = %d \n", sreg_name, rc);
-skip_sw_ctrl:
 	return rc;
 }
 
@@ -3685,18 +3422,11 @@ static int reset_ahb2axi_bridge(struct iris_hfi_device *device)
 	else
 		s = CVP_POWER_OFF;
 
-	if(from_callback)
-		s = CVP_POWER_IGNORED;
+//#ifdef CONFIG_EVA_WAIPIO
+	s = CVP_POWER_IGNORED;
+//#endif
 
 	for (i = 0; i < device->res->reset_set.count; i++) {
-		if (s == CVP_POWER_IGNORED) {
-			rc = __handle_sw_ctrl_enable(device, i);
-			if (rc) {
-				dprintk(CVP_ERR,
-					"SW_CTRL_CLK_ENABLE: failed to assert SW_CTRL clocks\n");
-				// goto failed_to_reset;
-			}
-		}
 		rc = __handle_reset_clk(device->res, i, ASSERT, s);
 		if (rc) {
 			dprintk(CVP_ERR,
@@ -3714,14 +3444,6 @@ static int reset_ahb2axi_bridge(struct iris_hfi_device *device)
 			dprintk(CVP_ERR,
 				"failed to deassert reset clocks\n");
 			goto failed_to_reset;
-		}
-		if (s == CVP_POWER_IGNORED) {
-			rc = __handle_sw_ctrl_disable(device, i);
-			if (rc) {
-				dprintk(CVP_ERR,
-				"SW_CTRL_CLK_DISABLE: failed to deassert SW_CTRL clocks\n");
-				// goto failed_to_reset;
-			}
 		}
 	}
 
@@ -3809,9 +3531,6 @@ static int __init_regulators(struct iris_hfi_device *device)
 			rinfo->regulator = NULL;
 			goto err_reg_get;
 		}
-
-		if (!strcmp(rinfo->name, "rpmh-mmcx"))
-			device->rpmh_mmcx_reg = rinfo->regulator;
 	}
 
 	return 0;
@@ -3838,117 +3557,15 @@ static void __deinit_subcaches(struct iris_hfi_device *device)
 		if (sinfo->subcache) {
 			dprintk(CVP_CORE, "deinit_subcaches: %s\n",
 				sinfo->name);
-			 llcc_slice_putd(sinfo->subcache);  //TODO: AURORA-BU
+			llcc_slice_putd(sinfo->subcache);
 			sinfo->subcache = NULL;
 		}
 	}
-	__llcc_regspace_unmap(device);
 
 exit:
 	return;
 }
-static int map_llcc_iommu_addr(struct iris_hfi_device *device, struct subcache_info *sinfo)
-{
-	u32 iova= 0;
-	u32 scid = 0;
-	int rc = 0;
-	struct context_bank_info *cb;
-	//non-secure context bank
-	cb = msm_cvp_smem_get_context_bank(device->res, 0);
-		if (!cb) {
-				dprintk(CVP_ERR," %s: failed to get context bank\n", __func__);
-				return 0;
-		}
-	if (cb)
-	{
-		   //LLCC
-		dprintk(CVP_CORE, " %s: init_subcaches: %s\n", __func__,
-			sinfo->name);
 
-		if (!strcmp("eva_left", sinfo->name))
-		  {
-			  scid = sinfo->subcache->slice_id;
-			 rc = iommu_map(cb->domain,
-							device->res->llccevaleft_iova,
-							device->res->llccevaleft_phyaddr + (0x1000*scid),
-							device->res->llccevaleft_size ,
-							IOMMU_CACHE | IOMMU_READ | IOMMU_WRITE);
-			 if (rc) {
-					 dprintk(CVP_ERR," %s:  iommu_map llcc eva left failed, rc:%d\n", __func__, rc);
-			 }
-			 else{
-		             dprintk(CVP_INFO," %s:  iommu_map llcc eva left Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
-				            device->res->llccevaleft_iova,
-							device->res->llccevaleft_phyaddr + (0x1000*scid),
-							device->res->llccevaleft_size);
-
-					 iova = device->res->llccevaleft_iova;
-					 device->reg_map_status_flg |= LLCCEVALEFT_REG_MAP_FLG;
-			 }
-
-		  }
-		  else if (!strcmp("eva_right", sinfo->name))
-		  {
-			  scid = sinfo->subcache->slice_id;
-			 rc = iommu_map(cb->domain,
-							device->res->llccevaright_iova,
-							device->res->llccevaright_phyaddr + (0x1000*scid),
-							device->res->llccevaright_size ,
-							IOMMU_CACHE | IOMMU_READ | IOMMU_WRITE);
-			 if (rc) {
-					 dprintk(CVP_ERR,"  %s: iommu_map llcc eva right failed, rc:%d\n", __func__, rc);
-			 }
-			 else{
-		             dprintk(CVP_INFO," %s:  iommu_map llcc eva right Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
-				            device->res->llccevaright_iova,
-							device->res->llccevaright_phyaddr + (0x1000*scid),
-							device->res->llccevaright_size);
-
-					 iova = device->res->llccevaright_iova;
-					 device->reg_map_status_flg |= LLCCEVARIGHT_REG_MAP_FLG;
-			 }
-		  }
-		  else if (!strcmp("eva_gain", sinfo->name))
-		  {
-			  scid = sinfo->subcache->slice_id;
-			 rc = iommu_map(cb->domain,
-							device->res->llccevagain_iova,
-							device->res->llccevagain_phyaddr + (0x1000*scid),
-							device->res->llccevagain_size ,
-							IOMMU_CACHE | IOMMU_READ | IOMMU_WRITE);
-			 if (rc) {
-					 dprintk(CVP_ERR," %s:  iommu_map eva gain failed, rc:%d\n", __func__, rc);
-			 }
-			 else{
-		             dprintk(CVP_INFO," %s:  iommu_map llcc eva gain Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
-				            device->res->llccevagain_iova,
-							device->res->llccevagain_phyaddr + (0x1000*scid),
-							device->res->llccevagain_size);
-
-					 iova = device->res->llccevagain_iova;
-					 device->reg_map_status_flg |= LLCCEVAGAIN_REG_MAP_FLG;
-			 }
-		}else if (!strcmp("spad", sinfo->name))
-			{
-			dprintk(CVP_INFO, " %s: subcache name %s : no iova map needed \n",__func__,
-			sinfo->name);
-		  }else if (!strcmp("eva_csc_left", sinfo->name))
-		  {
-			dprintk(CVP_INFO, " %s: subcache name %s : no iova map needed \n",__func__,
-					sinfo->name);
-		  }else if (!strcmp("eva_csc_right", sinfo->name))
-		  {
-			dprintk(CVP_INFO, " %s: subcache name %s : no iova map needed \n",__func__,
-					sinfo->name);
-		  }else
-		  {
-			dprintk(CVP_ERR, " %s: %s: Invalid subcache name %s\n",__func__,
-					sinfo->name);
-		   }
-	}
-		return iova;
-
-}
 static int __init_subcaches(struct iris_hfi_device *device)
 {
 	int rc = 0;
@@ -3965,37 +3582,10 @@ static int __init_subcaches(struct iris_hfi_device *device)
 
 	iris_hfi_for_each_subcache(device, sinfo) {
 		if (!strcmp("cvp", sinfo->name)) {
-			 sinfo->subcache = llcc_slice_getd(LLCC_CVP);  //TODO: AURORA-BU
-			 sinfo->sc_clentid = EVA;
+			sinfo->subcache = llcc_slice_getd(LLCC_CVP);
 		} else if (!strcmp("cvpfw", sinfo->name)) {
 			sinfo->subcache = llcc_slice_getd(LLCC_CVPFW);
-			sinfo->sc_clentid = LLCC_CVPFW;
-		} else if (!strcmp("eva_left", sinfo->name)) {
-			sinfo->subcache = llcc_slice_getd(LLCC_EVALFT);
-			sinfo->sc_clentid = LSR_LEFT;
-				} else if (!strcmp("eva_right", sinfo->name)) {
-			sinfo->subcache = llcc_slice_getd(LLCC_EVARGHT);
-			sinfo->sc_clentid = LSR_RIGHT;
-				} else if (!strcmp("eva_gain", sinfo->name)) {
-			sinfo->subcache = llcc_slice_getd(LLCC_EVAGAIN);
-			sinfo->sc_clentid = GAIN_MESH;
-		} else if (!strcmp("spad", sinfo->name))
-			   {
-			sinfo->subcache = llcc_slice_getd(LLCC_SPAD);
-			// Only Activation and DeActivation of SPAD is enough. No need to pass the scids to FW
-			   }
-		 else if (!strcmp("eva_csc_left", sinfo->name))
-			   {
-			sinfo->subcache = llcc_slice_getd(LLCC_EVCSLFT);
-			sinfo->sc_clentid = CSC_LEFT;
-			   }
-		 else if (!strcmp("eva_csc_right", sinfo->name))
-			   {
-			sinfo->subcache = llcc_slice_getd(LLCC_EVCSRGHT);
-			sinfo->sc_clentid = CSC_RIGHT;
-			   }
-			   else
-			   {
+		} else {
 			dprintk(CVP_ERR, "Invalid subcache name %s\n",
 					sinfo->name);
 		}
@@ -4010,8 +3600,6 @@ static int __init_subcaches(struct iris_hfi_device *device)
 		}
 		dprintk(CVP_CORE, "init_subcaches: %s\n",
 			sinfo->name);
-
-		sinfo->sc_ioaddr = map_llcc_iommu_addr(device, sinfo);
 	}
 
 	return 0;
@@ -4032,21 +3620,11 @@ static int __init_resources(struct iris_hfi_device *device,
 		return -ENODEV;
 	}
 
-	/* Clock Initialization */
-	rc = msm_cvp_init_regular_clocks(device);
+	rc = msm_cvp_init_clocks(device);
 	if (rc) {
-		dprintk(CVP_ERR, "Failed to init regular clocks\n");
+		dprintk(CVP_ERR, "Failed to init clocks\n");
 		rc = -ENODEV;
-		goto err_init_reg_clocks;
-	}
-	if(!sreg_inited) {
-		rc = msm_cvp_init_sreg_clocks(device);
-		if (rc) {
-			dprintk(CVP_ERR, "Failed to init sreg clocks\n");
-			rc = -ENODEV;
-			goto err_init_sreg_clocks;
-		}
-		sreg_inited = true;
+		goto err_init_clocks;
 	}
 
 	for (i = 0; i < device->res->reset_set.count; i++) {
@@ -4074,11 +3652,10 @@ static int __init_resources(struct iris_hfi_device *device,
 
 	return rc;
 
-err_init_bus:
 err_init_reset_clk:
-err_init_sreg_clocks:
-	msm_cvp_deinit_regular_clocks(device);
-err_init_reg_clocks:
+err_init_bus:
+	msm_cvp_deinit_clocks(device);
+err_init_clocks:
 	__deinit_regulators(device);
 	return rc;
 }
@@ -4087,7 +3664,7 @@ static void __deinit_resources(struct iris_hfi_device *device)
 {
 	__deinit_subcaches(device);
 	__deinit_bus(device);
-	msm_cvp_deinit_regular_clocks(device);
+	msm_cvp_deinit_clocks(device);
 	__deinit_regulators(device);
 	kfree(device->sys_init_capabilities);
 	device->sys_init_capabilities = NULL;
@@ -4214,9 +3791,7 @@ static int __enable_subcaches(struct iris_hfi_device *device)
 
 	/* Activate subcaches */
 	iris_hfi_for_each_subcache(device, sinfo) {
-		if(!strcmp("spad", sinfo->name))
-			continue;
-		 rc = llcc_slice_activate(sinfo->subcache);   //TODO: AURORA-BU
+		rc = llcc_slice_activate(sinfo->subcache);
 		if (rc) {
 			dprintk(CVP_WARN, "Failed to activate %s: %d\n",
 				sinfo->name, rc);
@@ -4238,53 +3813,6 @@ err_activate_fail:
 	return 0;
 }
 
-static int iris_enable_spad_subcache(void *dev)
-{
-	int rc = 0;
-	u32 c = 0;
-	struct iris_hfi_device *device;
-	struct subcache_info *sinfo;
-	dprintk(CVP_PWR, "%s E\n", __func__);
-
-	if (!dev) {
-		dprintk(CVP_ERR, "%s: null device\n", __func__);
-		return -EINVAL;
-	}
-	device = dev;
-
-	if (!is_sys_cache_present(device)) {
-		dprintk(CVP_ERR, "Skipping SPAD activation due to no DT entry\n");
-		return -EINVAL;
-	}
-
-	/* Activate subcaches */
-	iris_hfi_for_each_subcache(device, sinfo) {
-		if(strcmp("spad", sinfo->name))
-			continue;//skip sending the spad related to FW
-		if (!sinfo->isactive) {
-			rc = llcc_slice_activate(sinfo->subcache);
-			if (rc) {
-				dprintk(CVP_ERR, "Failed to activate %s: %d\n",
-					sinfo->name, rc);
-				msm_cvp_res_handle_fatal_hw_error(device->res, true);
-				goto err_activate_fail;
-			}
-			sinfo->isactive = true;
-			dprintk(CVP_CORE, "Activated subcache %s : rc : %d \n", sinfo->name,rc);
-			if(msm_cvp_spad_reg_dump){
-				__print_spad_reg_dump(device);
-			}
-		}
-		c++;
-	}
-	dprintk(CVP_CORE, "Activated %d Subcaches to CVP\n", c);
-	dprintk(CVP_PWR, "%s X\n", __func__);
-	return 0;
-
-err_activate_fail:
-	dprintk(CVP_WARN, "%s X\n", __func__);
-	return -EINVAL;
-}
 static int __set_subcaches(struct iris_hfi_device *device)
 {
 	int rc = 0;
@@ -4306,13 +3834,9 @@ static int __set_subcaches(struct iris_hfi_device *device)
 	sc_res = &(sc_res_info->rg_subcache_entries[0]);
 
 	iris_hfi_for_each_subcache(device, sinfo) {
-		if(!strcmp("spad", sinfo->name))
-			continue;//skip sending the spad related to FW
 		if (sinfo->isactive) {
 			sc_res[c].size = sinfo->subcache->slice_size;
-			sc_res[c].sc_id = (msm_cvp_llcc_enable == 1) ? sinfo->subcache->slice_id : 0;
-			sc_res[c].scid_Client = sinfo->sc_clentid;
-			sc_res[c].scid_RegAddr = sinfo->sc_ioaddr;
+			sc_res[c].sc_id = sinfo->subcache->slice_id;
 			c++;
 		}
 	}
@@ -4344,7 +3868,6 @@ static int __set_subcaches(struct iris_hfi_device *device)
 	return 0;
 
 err_fail_set_subacaches:
-	__release_subcaches(device);
 	__disable_subcaches(device);
 
 	return 0;
@@ -4370,8 +3893,6 @@ static int __release_subcaches(struct iris_hfi_device *device)
 
 	/* Release resource command to Iris */
 	iris_hfi_for_each_subcache_reverse(device, sinfo) {
-		if(!strcmp("spad", sinfo->name))
-			continue;//skip sending the spad related to FW
 		if (sinfo->isset) {
 			/* Update the entry */
 			sc_res[c].size = sinfo->subcache->slice_size;
@@ -4385,13 +3906,13 @@ static int __release_subcaches(struct iris_hfi_device *device)
 		dprintk(CVP_CORE, "Releasing %d subcaches\n", c);
 		rhdr.resource_handle = sc_res_info; /* cookie */
 		rhdr.resource_id = CVP_RESOURCE_SYSCACHE;
-		if(device->state != IRIS_STATE_DEINIT) {
-			rc = __core_release_resource(device, &rhdr);
-			if (rc)
-				dprintk(CVP_WARN,
-					"Failed to release %d subcaches\n", c);
-			}
-		}
+
+		rc = __core_release_resource(device, &rhdr);
+		if (rc)
+			dprintk(CVP_WARN,
+				"Failed to release %d subcaches\n", c);
+	}
+
 	device->res->sys_cache_res_set = false;
 
 	return 0;
@@ -4407,12 +3928,10 @@ static int __disable_subcaches(struct iris_hfi_device *device)
 
 	/* De-activate subcaches */
 	iris_hfi_for_each_subcache_reverse(device, sinfo) {
-		if(!strcmp("spad", sinfo->name))
-			continue;
 		if (sinfo->isactive) {
 			dprintk(CVP_CORE, "De-activate subcache %s\n",
 				sinfo->name);
-			 rc = llcc_slice_deactivate(sinfo->subcache);   //TODO: AURORA-BU
+			rc = llcc_slice_deactivate(sinfo->subcache);
 			if (rc) {
 				dprintk(CVP_WARN,
 					"Failed to de-activate %s: %d\n",
@@ -4423,52 +3942,6 @@ static int __disable_subcaches(struct iris_hfi_device *device)
 	}
 
 	return 0;
-}
-static int iris_disable_spad_subcache(void *dev)
-{
-	struct subcache_info *sinfo;
-	struct iris_hfi_device *device;
-	int rc = 0;
-	dprintk(CVP_PWR, "%s E\n", __func__);
-
-	if (!dev) {
-		dprintk(CVP_ERR, "%s: null device\n", __func__);
-		return -EINVAL;
-	}
-	device = dev;
-
-	if (!is_sys_cache_present(device)) {
-		dprintk(CVP_ERR, "Skipping SPAD deactivation due to no DT entry\n");
-		return -EINVAL;
-	}
-
-	/* De-activate subcaches */
-	iris_hfi_for_each_subcache_reverse(device, sinfo) {
-		if(strcmp("spad", sinfo->name))
-			continue;
-		if (sinfo->isactive) {
-			rc = llcc_slice_deactivate(sinfo->subcache);
-			if (rc) {
-				dprintk(CVP_ERR, "Failed to deactivate %s: %d\n",
-					sinfo->name, rc);
-				//msm_cvp_res_handle_fatal_hw_error(device->res, true);
-				goto err_deactivate_fail;
-			}
-
-			dprintk(CVP_WARN,
-				"de-activate %s status: %d\n", sinfo->name, rc);
-
-			sinfo->isactive = false;
-			if(msm_cvp_spad_reg_dump){
-				__print_spad_reg_dump(device);
-			}
-		}
-	}
-	dprintk(CVP_PWR, "%s X\n", __func__);
-	return 0;
-err_deactivate_fail:
-	dprintk(CVP_WARN, "%s X\n", __func__);
-	return -EINVAL;
 }
 
 static void interrupt_init_iris2(struct iris_hfi_device *device)
@@ -4536,47 +4009,16 @@ static int __set_ubwc_config(struct iris_hfi_device *device)
 fail_to_set_ubwc_config:
 	return rc;
 }
-static int __vote_spad_clks(struct iris_hfi_device *device)
-{
-	int rc = 0;
-	rc = msm_cvp_prepare_enable_clk(device, "gcc_ddrss_spad_clk");
-	if (rc) {
-		dprintk(CVP_ERR, "Failed to vote spad clk: %d\n", rc);
-		goto fail_reset_spad_clks;
-	}
 
-	dprintk(CVP_PWR,
-			"Voting gcc_ddrss_spad_clk : Calling msm_cvp_vote_clk .....\n");
-		rc =  msm_cvp_vote_clk(device,"gcc_ddrss_spad_clk", 300000000);
-
-		if (rc) {
-			dprintk(CVP_ERR, "Failed to vote gcc_ddrss_spad_clk clk: %d\n", rc);
-			goto fail_reset_spad_clks;
-		}
-	dprintk(CVP_PWR, "EVA-LSR voted spad clks\n");
-	return 0;
-
-fail_reset_spad_clks:
-	msm_cvp_disable_unprepare_clk(device, "gcc_ddrss_spad_clk");
-	return rc;
-}
 static int __power_on_controller(struct iris_hfi_device *device)
 {
 	int rc = 0;
-	u32 reg_val = 0, bit_val = 0;
 
 	rc = __enable_regulator(device, "cvp");
 	if (rc) {
 		dprintk(CVP_ERR, "Failed to enable ctrler: %d\n", rc);
 		return rc;
 	}
-
-	reg_val = __read_register(device, CVP_VIDEO_CC_MVS1C_DIV_DCDR);
-	bit_val = (reg_val >> 0) & 1U;
-	if(bit_val == 0)
-		dprintk(CVP_INFO, "CVP_VIDEO_CC_MVS1C_DIV_DCDR: DIV ratio is set to 1\n");
-	else
-		dprintk(CVP_ERR, "CVP_VIDEO_CC_MVS1C_DIV_DCDR: DIV ratio is not set to 1\n");
 
 	rc = call_iris_op(device, reset_ahb2axi_bridge, device);
 	if (rc) {
@@ -4595,41 +4037,6 @@ static int __power_on_controller(struct iris_hfi_device *device)
 		dprintk(CVP_ERR, "Failed to enable cvp_clk: %d\n", rc);
 		goto fail_enable_clk;
 	}
-dprintk(CVP_PWR,
-		"Voting gcc_iris_ss_hf_axi1_clk\n");
-	rc = msm_cvp_prepare_enable_clk(device, "gcc_iris_ss_hf_axi1_clk");
-	if (rc) {
-		dprintk(CVP_ERR, "Failed to enable gcc_iris_ss_hf_axi1_clk clk: %d\n", rc);
-		goto fail_reset_clks;
-	}
-dprintk(CVP_PWR,
-		"Enabled gcc_iris_ss_hf_axi1_clk rc %d\n",rc);
-dprintk(CVP_PWR,
-		"Voting gcc_iris_ss_hf_axi1_clk : Calling msm_cvp_vote_clk .....\n");
-	rc =  msm_cvp_vote_clk(device,"gcc_iris_ss_hf_axi1_clk", 250000000);
-
-	if (rc) {
-		dprintk(CVP_ERR, "Failed to vote gcc_iris_ss_hf_axi1_clk clk: %d\n", rc);
-		goto fail_reset_clks;
-	}
-
-dprintk(CVP_PWR,
-		"Voting gcc_iris_ss_spd_axi1_clk\n");
-	rc = msm_cvp_prepare_enable_clk(device, "gcc_iris_ss_spd_axi1_clk");
-dprintk(CVP_PWR,
-		"Enabled gcc_iris_ss_spd_axi1_clk rc %d\n",rc);
-	if (rc) {
-		dprintk(CVP_ERR, "Failed to enable gcc_iris_ss_spd_axi1_clk: %d\n", rc);
-		goto fail_enable_clk;
-	}
-	dprintk(CVP_PWR,
-			"Voting gcc_iris_ss_spd_axi1_clk : Calling msm_cvp_vote_clk .....\n");
-		rc =  msm_cvp_vote_clk(device,"gcc_iris_ss_spd_axi1_clk", 300000000);
-
-		if (rc) {
-			dprintk(CVP_ERR, "Failed to vote gcc_iris_ss_spd_axi1_clk clk: %d\n", rc);
-			goto fail_reset_clks;
-		}
 
 	dprintk(CVP_PWR, "EVA controller powered on\n");
 	return 0;
@@ -4678,15 +4085,6 @@ static int __iris_power_on(struct iris_hfi_device *device)
 	if (device->power_enabled)
 		return 0;
 
-	/* Since EVA powering-up again, reset pulse can be applied during MMCX down */
-	reset_pulse_applied = false;
-	from_callback = false;
-
-	rc = __vote_spad_clks(device);
-	dprintk(CVP_WARN, "EVA_POWER_ON: voting spad in regular power on sequence, rc = %d \n", rc);
-	if (rc)
-		goto fail_voting_spad;
-
 	/* Vote for all hardware resources */
 	rc = __vote_buses(device, device->bus_vote.data,
 			device->bus_vote.data_count);
@@ -4699,8 +4097,7 @@ static int __iris_power_on(struct iris_hfi_device *device)
 	if (rc)
 		goto fail_enable_controller;
 
-
-	rc = __power_on_core(device);	
+	rc = __power_on_core(device);
 	if (rc)
 		goto fail_enable_core;
 
@@ -4730,24 +4127,13 @@ static int __iris_power_on(struct iris_hfi_device *device)
 	__write_register(device,
 		CVP_WRAPPER_DEBUG_BRIDGE_LPI_CONTROL, 0x7);
 	pr_info(CVP_DBG_TAG "cvp (eva) powered on\n", "pwr");
-
-#ifndef SPAD_UC_BOUNDRY
-	if(!auto_boot_time) {
-		rc = iris_enable_spad_subcache(device);
-		if (rc)
-			dprintk(CVP_ERR,
-				"Failed to activate subcaches\n");
-	}
-#endif
-
 	return 0;
+
 fail_enable_core:
 	__power_off_controller(device);
 fail_enable_controller:
 	__unvote_buses(device);
 fail_vote_buses:
-	__unvote_spad(device);
-fail_voting_spad:
 	device->power_enabled = false;
 	return rc;
 }
@@ -4771,7 +4157,7 @@ static inline int __suspend(struct iris_hfi_device *device)
 		dprintk(CVP_WARN, "Failed to suspend cvp core %d\n", rc);
 		goto err_tzbsp_suspend;
 	}
-	__release_subcaches(device);
+
 	__disable_subcaches(device);
 
 	call_iris_op(device, power_off, device);
@@ -4783,999 +4169,6 @@ static inline int __suspend(struct iris_hfi_device *device)
 
 err_tzbsp_suspend:
 	return rc;
-}
-
-static int __read_spad1_lpi_lb_register(struct iris_hfi_device *device, u32 reg)
-{
-	int rc = 0;
-	u8 *base_addr;
-
-	if (!device) {
-		dprintk(CVP_ERR, "Invalid params: %pK\n", device);
-		return -EINVAL;
-	}
-	__strict_check(device);
-
-	if (!device->power_enabled) {
-		dprintk(CVP_WARN,"%s HFI Read register failed : Power is OFF\n",
-		__func__);
-		msm_cvp_res_handle_fatal_hw_error(device->res, true);
-		return -EINVAL;
-	}
-	base_addr = device->cvp_hal_data->spad1_lpi_lb_reg_base;
-	rc = readl_relaxed(base_addr + reg);
-	/*
-	 * Memory barrier to make sure value is read correctly from the
-	 * register.
-	 */
-	rmb();
-	dprintk(CVP_REG,"spad1_lpi_lb_reg_base Base addr: %pK,  read from: %#x, value: %#x...\n",
-	base_addr, (base_addr+reg), rc);
-	return rc;
-}
-
-static int __read_spad_broadcast_andlpi_lb_register(struct iris_hfi_device *device, u32 reg)
-{
-	int rc = 0;
-	u8 *base_addr;
-
-	if (!device) {
-		dprintk(CVP_ERR, "Invalid params: %pK\n", device);
-		return -EINVAL;
-	}
-	__strict_check(device);
-
-	if (!device->power_enabled) {
-	dprintk(CVP_WARN,"%s HFI Read register failed : Power is OFF\n",
-	__func__);
-	msm_cvp_res_handle_fatal_hw_error(device->res, true);
-	return -EINVAL;
-	}
-	base_addr = device->cvp_hal_data->spad_broadcast_andlpi_lb_reg_base;
-	rc = readl_relaxed(base_addr + reg);
-	/*
-	 * Memory barrier to make sure value is read correctly from the
-	 * register.
-	 */
-	rmb();
-	dprintk(CVP_REG,"spad_broadcast_andlpi_lb_reg_base base addr: %pK,  read from: %#x, value: %#x...\n",
-	base_addr, (base_addr+reg), rc);
-	return rc;
-}
-static int __read_spad_broadcast_orlpi_lb_register(struct iris_hfi_device *device, u32 reg)
-{
-	int rc = 0;
-	u8 *base_addr;
-
-	if (!device) {
-		dprintk(CVP_ERR, "Invalid params: %pK\n", device);
-		return -EINVAL;
-	}
-	__strict_check(device);
-	if (!device->power_enabled) {
-		dprintk(CVP_WARN,"%s HFI Read register failed : Power is OFF\n",__func__);
-		msm_cvp_res_handle_fatal_hw_error(device->res, true);
-		return -EINVAL;
-	}
-	base_addr = device->cvp_hal_data->spad_broadcast_orlpi_lb_reg_base;
-	rc = readl_relaxed(base_addr + reg);
-	/*
-	 * Memory barrier to make sure value is read correctly from the
-	 * register.
-	 */
-	rmb();
-	dprintk(CVP_REG,"spad_broadcast_orlpi_lb_reg_base Base addr: %pK, read from: %#x, value: %#x...\n",
-	base_addr, (base_addr+reg), rc);
-	return rc;
-}
-
-static int __read_spad0_lpi_lb_register(struct iris_hfi_device *device, u32 reg)
-{
-	int rc = 0;
-	u8 *base_addr;
-
-	if (!device) {
-		dprintk(CVP_ERR, "Invalid params: %pK\n", device);
-		return -EINVAL;
-	}
-	__strict_check(device);
-	if (!device->power_enabled) {
-		dprintk(CVP_WARN,"%s HFI Read register failed : Power is OFF\n",
-		__func__);
-		msm_cvp_res_handle_fatal_hw_error(device->res, true);
-		return -EINVAL;
-	}
-	base_addr = device->cvp_hal_data->spad0_lpi_lb_reg_base;
-	rc = readl_relaxed(base_addr + reg);
-	/*
-	 * Memory barrier to make sure value is read correctly from the
-	 * register.
-	 */
-	rmb();
-	dprintk(CVP_REG,"spad0_lpi_lb_reg_base Base addr: %pK, read from: %#x, value: %#x...\n",
-	base_addr, (base_addr+reg), rc);
-	return rc;
-}
-
-static void __print_spad_reg_dump(struct iris_hfi_device *device)
-{
-	if(msm_cvp_spad_reg_dump & SPAD0_DUMP)
-	__print_spad0_regs(device);
-	if(msm_cvp_spad_reg_dump & SPAD1_DUMP)
-	__print_spad1_regs(device);
-	if(msm_cvp_spad_reg_dump & SPAD_ORLPI_DUMP)
-	__print_spad_broadcast_orlpi_lb_regs(device);
-	if(msm_cvp_spad_reg_dump & SPAD_ANDLPI_DUMP)
-	__print_spad_broadcast_andlpi_lb_regs(device);
-}
-
-static void  __print_spad1_regs(struct iris_hfi_device *device)
-{
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_RAM_TIMING0                              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_RAM_TIMING0                              ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_RAM_TIMING1                              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_RAM_TIMING1                              ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_RAM_TIMING2                              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_RAM_TIMING2                              ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCB_SLP_SEL0                             =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCB_SLP_SEL0                             ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCB_SLP_NRET_SEL0                        =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCB_SLP_NRET_SEL0                        ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCB_SLP_SEL1                             =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCB_SLP_SEL1                             ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCB_SLP_NRET_SEL1                        =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCB_SLP_NRET_SEL1                        ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCB_WAKEUP_SEL0                          =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCB_WAKEUP_SEL0                          ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCB_WAKEUP_SEL1                          =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCB_WAKEUP_SEL1                          ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCB_ENABLE                               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCB_ENABLE                               ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_RAM_IDLE_THRESHOLD                       =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_RAM_IDLE_THRESHOLD                       ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCB_CMD                                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCB_CMD                                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_COUNTER_SYNC_RATE                        =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_COUNTER_SYNC_RATE                        ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_RAMSLP_STATUS                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_RAMSLP_STATUS                            ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCB_PWR_STATUS0                          =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCB_PWR_STATUS0                          ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCB_PWR_STATUS1                          =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCB_PWR_STATUS1                          ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCB_PWR_STATUS2                          =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCB_PWR_STATUS2                          ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCB_PWR_STATUS3                          =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCB_PWR_STATUS3                          ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PRE_ARES_STATUS                          =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PRE_ARES_STATUS                          ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DEBUG_CTRL0                              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DEBUG_CTRL0                              ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DEBUG_CTRL1                              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DEBUG_CTRL1                              ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DEBUG_CTRL2                              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DEBUG_CTRL2                              ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DEBUG_CTRL3                              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DEBUG_CTRL3                              ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DEBUG_CTRL4                              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DEBUG_CTRL4                              ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DEBUG_CTRL5                              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DEBUG_CTRL5                              ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCBSLP_STATUS0                           =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCBSLP_STATUS0                           ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCBSLP_STATUS1                           =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCBSLP_STATUS1                           ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCBSLP_STATUS2                           =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCBSLP_STATUS2                           ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCBSLP_STATUS3                           =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCBSLP_STATUS3                           ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCBSLP_STATUS4                           =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCBSLP_STATUS4                           ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCBSLP_STATUS5                           =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCBSLP_STATUS5                           ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PCBSLP_STATUS6                           =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PCBSLP_STATUS6                           ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_CLK_EN_CFG                               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_CLK_EN_CFG                               ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PRE_ARES_CTRL                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PRE_ARES_CTRL                            ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_ADDR_REGION_CFG0                         =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_ADDR_REGION_CFG0                         ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_ADDR_REGION_CFG1                         =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_ADDR_REGION_CFG1                         ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_ADDR_REGION_CFG2                         =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_ADDR_REGION_CFG2                         ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_ADDR_REGION_CFG3                         =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_ADDR_REGION_CFG3                         ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_MODE                             =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_MODE                             ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_CORE_CLOCK_CTRL                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_CORE_CLOCK_CTRL                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_CFG_CLOCK_CTRL                   =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_CFG_CLOCK_CTRL                   ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_DEBUG_CTRL                       =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_DEBUG_CTRL                       ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_STATUS                           =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_STATUS                           ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_CONFIGURATION_INFO               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_CONFIGURATION_INFO               ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_0_CONFIG                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_0_CONFIG                 ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_1_CONFIG                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_1_CONFIG                 ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_2_CONFIG                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_2_CONFIG                 ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_3_CONFIG                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_3_CONFIG                 ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_4_CONFIG                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_4_CONFIG                 ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_5_CONFIG                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_5_CONFIG                 ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_6_CONFIG                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_6_CONFIG                 ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_7_CONFIG                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_7_CONFIG                 ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_8_CONFIG                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_8_CONFIG                 ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_9_CONFIG                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_9_CONFIG                 ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_10_CONFIG                =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_10_CONFIG                ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_11_CONFIG                =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_11_CONFIG                ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_12_CONFIG                =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_12_CONFIG                ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_13_CONFIG                =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_13_CONFIG                ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_14_CONFIG                =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_14_CONFIG                ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_15_CONFIG                =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_15_CONFIG                ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_0_VALUE                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_0_VALUE                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_1_VALUE                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_1_VALUE                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_2_VALUE                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_2_VALUE                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_3_VALUE                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_3_VALUE                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_4_VALUE                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_4_VALUE                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_5_VALUE                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_5_VALUE                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_6_VALUE                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_6_VALUE                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_7_VALUE                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_7_VALUE                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_8_VALUE                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_8_VALUE                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_9_VALUE                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_9_VALUE                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_10_VALUE                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_10_VALUE                 ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_11_VALUE                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_11_VALUE                 ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_12_VALUE                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_12_VALUE                 ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_13_VALUE                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_13_VALUE                 ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_14_VALUE                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_14_VALUE                 ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_15_VALUE                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_15_VALUE                 ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_0_OVERFLOW               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_0_OVERFLOW               ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_1_OVERFLOW               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_1_OVERFLOW               ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_2_OVERFLOW               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_2_OVERFLOW               ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_3_OVERFLOW               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_3_OVERFLOW               ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_4_OVERFLOW               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_4_OVERFLOW               ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_5_OVERFLOW               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_5_OVERFLOW               ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_6_OVERFLOW               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_6_OVERFLOW               ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_7_OVERFLOW               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_7_OVERFLOW               ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_8_OVERFLOW               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_8_OVERFLOW               ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_9_OVERFLOW               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_9_OVERFLOW               ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_10_OVERFLOW              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_10_OVERFLOW              ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_11_OVERFLOW              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_11_OVERFLOW              ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_12_OVERFLOW              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_12_OVERFLOW              ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_13_OVERFLOW              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_13_OVERFLOW              ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_14_OVERFLOW              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_14_OVERFLOW              ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PERFMON_COUNTER_15_OVERFLOW              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PERFMON_COUNTER_15_OVERFLOW              ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PRED_WAKEUP_EN                           =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PRED_WAKEUP_EN                           ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PROF_FILTER_0_CFG                        =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PROF_FILTER_0_CFG                        ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_PROF_FILTER_1_CFG                        =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_PROF_FILTER_1_CFG                        ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_ECC_ERROR_CFG                        =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_ECC_ERROR_CFG                        ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DEBUG_CTRL                               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DEBUG_CTRL                               ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_ECC_ERROR_INJECTION_0                =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_ECC_ERROR_INJECTION_0                ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_ECC_ERROR_INJECTION_1                =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_ECC_ERROR_INJECTION_1                ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DEBUG_TESTBUS                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DEBUG_TESTBUS                            ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_HW_EVENT_CTRL                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_HW_EVENT_CTRL                            ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_INTERRUPT_STATUS                     =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_INTERRUPT_STATUS                     ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_INTERRUPT_ENABLE                     =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_INTERRUPT_ENABLE                     ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_ERROR_STATUS                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_ERROR_STATUS                 ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN0                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN0                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN1                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN1                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN2                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN2                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN3                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN3                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN4                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN4                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN5                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN5                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN6                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN6                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN0                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN0                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN1                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN1                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN2                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN2                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN3                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN3                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN4                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN4                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN5                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN5                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN6                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN6                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_FIFO_EMPTY_STATUS                    =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_FIFO_EMPTY_STATUS                    ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_FIFO_FULL_STATUS                     =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_FIFO_FULL_STATUS                     ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_ADDR_DECODE_ERR_CFG                      =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_ADDR_DECODE_ERR_CFG                      ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_ADDR_DECODE_ERR_INTERRUPT_STATUS         =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_ADDR_DECODE_ERR_INTERRUPT_STATUS         ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_ADDR_DECODE_ERR_INTERRUPT_ENABLE         =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_ADDR_DECODE_ERR_INTERRUPT_ENABLE         ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_RD_ADDR_DECODE_ERR_STATUS1               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_RD_ADDR_DECODE_ERR_STATUS1               ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_RD_ADDR_DECODE_ERR_STATUS2               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_RD_ADDR_DECODE_ERR_STATUS2               ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_RD_ADDR_DECODE_ERR_STATUS3               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_RD_ADDR_DECODE_ERR_STATUS3               ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_RD_ADDR_DECODE_ERR_STATUS4               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_RD_ADDR_DECODE_ERR_STATUS4               ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_RD_ADDR_DECODE_ERR_STATUS5               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_RD_ADDR_DECODE_ERR_STATUS5               ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN7                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN7                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN8                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN8                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN9                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN9                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_ERROR_STATUS                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_ERROR_STATUS                 ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN10                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN10                 ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN7                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN7                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN8                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN8                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN9                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN9                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN10                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN10                 ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN7                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN7                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN8                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN8                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN9                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN9                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN10                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN10                 ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN7                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN7                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN8                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN8                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN9                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN9                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN10                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN10                 ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_WR_ADDR_DECODE_ERR_STATUS1               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_WR_ADDR_DECODE_ERR_STATUS1               ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_WR_ADDR_DECODE_ERR_STATUS2               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_WR_ADDR_DECODE_ERR_STATUS2               ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_WR_ADDR_DECODE_ERR_STATUS3               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_WR_ADDR_DECODE_ERR_STATUS3               ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_WR_ADDR_DECODE_ERR_STATUS4               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_WR_ADDR_DECODE_ERR_STATUS4               ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_WR_ADDR_DECODE_ERR_STATUS5               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_WR_ADDR_DECODE_ERR_STATUS5               ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DCRSW_CFG                                =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DCRSW_CFG                                ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DCRSW_STATUS0                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DCRSW_STATUS0                            ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DCRSW_STATUS1                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DCRSW_STATUS1                            ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DCRSW_STATUS2                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DCRSW_STATUS2                            ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DCRSW_STATUS3                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DCRSW_STATUS3                            ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DCRSW_STATUS4                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DCRSW_STATUS4                            ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DCRSW_STATUS5                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DCRSW_STATUS5                            ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DCRSW_STATUS6                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DCRSW_STATUS6                            ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DCRSW_STATUS7                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DCRSW_STATUS7                            ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DCRSW_STATUS8                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DCRSW_STATUS8                            ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_IF_CHANNEL_STATUS                        =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_IF_CHANNEL_STATUS                        ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_FIFO_STATUS                              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_FIFO_STATUS                              ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_RSPPROC_CREDITS_STATUS                   =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_RSPPROC_CREDITS_STATUS                   ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DBG_EVENT_STATUS                         =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DBG_EVENT_STATUS                         ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DBG_EVENT_FWD                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DBG_EVENT_FWD                            ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_UNS_ERR_CFG                              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_UNS_ERR_CFG                              ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_UNS_ERR_STATUS1                          =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_UNS_ERR_STATUS1                          ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_UNS_ERR_STATUS2                          =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_UNS_ERR_STATUS2                          ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_UNS_ERR_STATUS3                          =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_UNS_ERR_STATUS3                          ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_UNS_ERR_STATUS4                          =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_UNS_ERR_STATUS4                          ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_UNS_ERR_STATUS5                          =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_UNS_ERR_STATUS5                          ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN0                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN0                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN1                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN1                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN2                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN2                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN3                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN3                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN4                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN4                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN5                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN5                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN6                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN6                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN0                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN0                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN1                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN1                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN2                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN2                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN3                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN3                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN4                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN4                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN5                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN5                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN6                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN6                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_FF_CLK_ON_CTRL                           =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_FF_CLK_ON_CTRL                           ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_CTRL                                =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_CTRL                                ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_CLK_CTRL                            =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_CLK_CTRL                            ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_WRITE_CONFIG1                       =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_WRITE_CONFIG1                       ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_WRITE_CONFIG2                       =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_WRITE_CONFIG2                       ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_WR_ADDR                             =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_WR_ADDR                             ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_WR_BIST_SEED_31_0                   =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_WR_BIST_SEED_31_0                   ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_WR_BIST_SEED_63_32                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_WR_BIST_SEED_63_32                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_WR_BIST_SEED_95_64                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_WR_BIST_SEED_95_64                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_WR_BIST_SEED_127_96                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_WR_BIST_SEED_127_96                 ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_READ_CONFIG1                        =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_READ_CONFIG1                        ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_READ_CONFIG2                        =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_READ_CONFIG2                        ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_RD_ADDR                             =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_RD_ADDR                             ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_RD_BIST_SEED_31_0                   =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_RD_BIST_SEED_31_0                   ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_RD_BIST_SEED_63_32                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_RD_BIST_SEED_63_32                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_RD_BIST_SEED_95_64                  =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_RD_BIST_SEED_95_64                  ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_RD_BIST_SEED_127_96                 =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_RD_BIST_SEED_127_96                 ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_LFSR_TAP_POINT                      =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_LFSR_TAP_POINT                      ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_STATUS                              =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_STATUS                              ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_FAILURE                             =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_FAILURE                             ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_FAILURE_0_BITS                      =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_FAILURE_0_BITS                      ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_FAILURE_1_BITS                      =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_FAILURE_1_BITS                      ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_FAILURE_2_BITS                      =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_FAILURE_2_BITS                      ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_FAILURE_3_BITS                      =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_FAILURE_3_BITS                      ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_FAILURE_4_BITS                      =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_FAILURE_4_BITS                      ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_FAILURE_5_BITS                      =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_FAILURE_5_BITS                      ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_SPARE                               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_SPARE                               ));
-	dprintk(CVP_ERR,"SPAD1_LPI_LB_BIST_TAG_RAM_EXTRA_COL_ACT               =0x%x", __read_spad1_lpi_lb_register(device,SPAD1_LPI_LB_BIST_TAG_RAM_EXTRA_COL_ACT               ));
-}
-static void __print_spad_broadcast_andlpi_lb_regs(struct iris_hfi_device *device)
-{
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_RAM_TIMING0                                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_RAM_TIMING0                                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_RAM_TIMING1                                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_RAM_TIMING1                                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_RAM_TIMING2                                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_RAM_TIMING2                                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCB_SLP_SEL0                                 =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCB_SLP_SEL0                                               ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCB_SLP_NRET_SEL0                            =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCB_SLP_NRET_SEL0                                          ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCB_SLP_SEL1                                 =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCB_SLP_SEL1                                               ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCB_SLP_NRET_SEL1                            =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCB_SLP_NRET_SEL1                                          ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCB_WAKEUP_SEL0                              =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCB_WAKEUP_SEL0                                            ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCB_WAKEUP_SEL1                              =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCB_WAKEUP_SEL1                                            ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCB_ENABLE                                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCB_ENABLE                                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_RAM_IDLE_THRESHOLD                           =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_RAM_IDLE_THRESHOLD                                         ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCB_CMD                                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCB_CMD                                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_COUNTER_SYNC_RATE                            =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_COUNTER_SYNC_RATE                                          ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_RAMSLP_STATUS                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_RAMSLP_STATUS                                              ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCB_PWR_STATUS0                              =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCB_PWR_STATUS0                                            ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCB_PWR_STATUS1                              =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCB_PWR_STATUS1                                            ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCB_PWR_STATUS2                              =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCB_PWR_STATUS2                                            ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCB_PWR_STATUS3                              =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCB_PWR_STATUS3                                            ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PRE_ARES_STATUS                              =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PRE_ARES_STATUS                                            ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL0                                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL0                                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL1                                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL1                                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL2                                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL2                                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL3                                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL3                                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL4                                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL4                                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL5                                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL5                                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS0                               =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS0                                             ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS1                               =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS1                                             ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS2                               =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS2                                             ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS3                               =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS3                                             ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS4                               =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS4                                             ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS5                               =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS5                                             ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS6                               =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PCBSLP_STATUS6                                             ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_CLK_EN_CFG                                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_CLK_EN_CFG                                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PRE_ARES_CTRL                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PRE_ARES_CTRL                                              ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_ADDR_REGION_CFG0                             =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_ADDR_REGION_CFG0                                           ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_ADDR_REGION_CFG1                             =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_ADDR_REGION_CFG1                                           ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_ADDR_REGION_CFG2                             =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_ADDR_REGION_CFG2                                           ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_ADDR_REGION_CFG3                             =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_ADDR_REGION_CFG3                                           ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_MODE                                 =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_MODE                                               ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_CORE_CLOCK_CTRL                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_CORE_CLOCK_CTRL                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_CFG_CLOCK_CTRL                       =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_CFG_CLOCK_CTRL                                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_DEBUG_CTRL                           =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_DEBUG_CTRL                                         ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_STATUS                               =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_STATUS                                             ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_CONFIGURATION_INFO                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_CONFIGURATION_INFO                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_0_CONFIG                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_0_CONFIG                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_1_CONFIG                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_1_CONFIG                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_2_CONFIG                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_2_CONFIG                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_3_CONFIG                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_3_CONFIG                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_4_CONFIG                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_4_CONFIG                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_5_CONFIG                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_5_CONFIG                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_6_CONFIG                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_6_CONFIG                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_7_CONFIG                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_7_CONFIG                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_8_CONFIG                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_8_CONFIG                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_9_CONFIG                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_9_CONFIG                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_10_CONFIG                    =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_10_CONFIG                                  ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_11_CONFIG                    =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_11_CONFIG                                  ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_12_CONFIG                    =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_12_CONFIG                                  ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_13_CONFIG                    =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_13_CONFIG                                  ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_14_CONFIG                    =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_14_CONFIG                                  ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_15_CONFIG                    =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_15_CONFIG                                  ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_0_VALUE                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_0_VALUE                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_1_VALUE                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_1_VALUE                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_2_VALUE                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_2_VALUE                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_3_VALUE                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_3_VALUE                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_4_VALUE                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_4_VALUE                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_5_VALUE                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_5_VALUE                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_6_VALUE                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_6_VALUE                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_7_VALUE                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_7_VALUE                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_8_VALUE                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_8_VALUE                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_9_VALUE                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_9_VALUE                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_10_VALUE                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_10_VALUE                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_11_VALUE                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_11_VALUE                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_12_VALUE                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_12_VALUE                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_13_VALUE                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_13_VALUE                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_14_VALUE                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_14_VALUE                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_15_VALUE                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_15_VALUE                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_0_OVERFLOW                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_0_OVERFLOW                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_1_OVERFLOW                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_1_OVERFLOW                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_2_OVERFLOW                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_2_OVERFLOW                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_3_OVERFLOW                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_3_OVERFLOW                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_4_OVERFLOW                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_4_OVERFLOW                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_5_OVERFLOW                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_5_OVERFLOW                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_6_OVERFLOW                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_6_OVERFLOW                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_7_OVERFLOW                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_7_OVERFLOW                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_8_OVERFLOW                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_8_OVERFLOW                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_9_OVERFLOW                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_9_OVERFLOW                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_10_OVERFLOW                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_10_OVERFLOW                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_11_OVERFLOW                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_11_OVERFLOW                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_12_OVERFLOW                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_12_OVERFLOW                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_13_OVERFLOW                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_13_OVERFLOW                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_14_OVERFLOW                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_14_OVERFLOW                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_15_OVERFLOW                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PERFMON_COUNTER_15_OVERFLOW                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PRED_WAKEUP_EN                               =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PRED_WAKEUP_EN                                             ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PROF_FILTER_0_CFG                            =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PROF_FILTER_0_CFG                                          ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_PROF_FILTER_1_CFG                            =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_PROF_FILTER_1_CFG                                          ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_ECC_ERROR_CFG                            =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_ECC_ERROR_CFG                                          ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL                                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DEBUG_CTRL                                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_ECC_ERROR_INJECTION_0                    =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_ECC_ERROR_INJECTION_0                                  ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_ECC_ERROR_INJECTION_1                    =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_ECC_ERROR_INJECTION_1                                  ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DEBUG_TESTBUS                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DEBUG_TESTBUS                                              ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_HW_EVENT_CTRL                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_HW_EVENT_CTRL                                              ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_INTERRUPT_STATUS                         =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_INTERRUPT_STATUS                                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_INTERRUPT_ENABLE                         =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_INTERRUPT_ENABLE                                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_ERROR_STATUS                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_ERROR_STATUS                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN0                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN0                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN1                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN1                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN2                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN2                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN3                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN3                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN4                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN4                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN5                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN5                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN6                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN6                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN0                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN0                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN1                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN1                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN2                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN2                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN3                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN3                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN4                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN4                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN5                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN5                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN6                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN6                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_FIFO_EMPTY_STATUS                        =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_FIFO_EMPTY_STATUS                                      ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_FIFO_FULL_STATUS                         =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_FIFO_FULL_STATUS                                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_ADDR_DECODE_ERR_CFG                          =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_ADDR_DECODE_ERR_CFG                                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_ADDR_DECODE_ERR_INTERRUPT_STATUS             =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_ADDR_DECODE_ERR_INTERRUPT_STATUS                           ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_ADDR_DECODE_ERR_INTERRUPT_ENABLE             =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_ADDR_DECODE_ERR_INTERRUPT_ENABLE                           ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_RD_ADDR_DECODE_ERR_STATUS1                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_RD_ADDR_DECODE_ERR_STATUS1                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_RD_ADDR_DECODE_ERR_STATUS2                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_RD_ADDR_DECODE_ERR_STATUS2                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_RD_ADDR_DECODE_ERR_STATUS3                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_RD_ADDR_DECODE_ERR_STATUS3                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_RD_ADDR_DECODE_ERR_STATUS4                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_RD_ADDR_DECODE_ERR_STATUS4                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_RD_ADDR_DECODE_ERR_STATUS5                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_RD_ADDR_DECODE_ERR_STATUS5                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN7                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN7                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN8                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN8                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN9                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN9                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_ERROR_STATUS                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_ERROR_STATUS                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN10                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_SB_ERR_SYN10                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN7                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN7                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN8                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN8                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN9                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN9                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN10                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN10                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN7                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN7                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN8                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN8                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN9                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN9                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN10                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN10                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN7                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN7                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN8                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN8                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN9                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN9                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN10                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH0_ECC_DB_ERR_SYN10                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_WR_ADDR_DECODE_ERR_STATUS1                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_WR_ADDR_DECODE_ERR_STATUS1                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_WR_ADDR_DECODE_ERR_STATUS2                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_WR_ADDR_DECODE_ERR_STATUS2                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_WR_ADDR_DECODE_ERR_STATUS3                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_WR_ADDR_DECODE_ERR_STATUS3                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_WR_ADDR_DECODE_ERR_STATUS4                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_WR_ADDR_DECODE_ERR_STATUS4                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_WR_ADDR_DECODE_ERR_STATUS5                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_WR_ADDR_DECODE_ERR_STATUS5                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DCRSW_CFG                                    =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DCRSW_CFG                                                  ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS0                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS0                                              ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS1                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS1                                              ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS2                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS2                                              ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS3                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS3                                              ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS4                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS4                                              ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS5                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS5                                              ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS6                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS6                                              ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS7                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS7                                              ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS8                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DCRSW_STATUS8                                              ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_IF_CHANNEL_STATUS                            =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_IF_CHANNEL_STATUS                                          ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_FIFO_STATUS                                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_FIFO_STATUS                                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_RSPPROC_CREDITS_STATUS                       =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_RSPPROC_CREDITS_STATUS                                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DBG_EVENT_STATUS                             =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DBG_EVENT_STATUS                                           ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DBG_EVENT_FWD                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DBG_EVENT_FWD                                              ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_UNS_ERR_CFG                                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_UNS_ERR_CFG                                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_UNS_ERR_STATUS1                              =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_UNS_ERR_STATUS1                                            ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_UNS_ERR_STATUS2                              =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_UNS_ERR_STATUS2                                            ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_UNS_ERR_STATUS3                              =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_UNS_ERR_STATUS3                                            ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_UNS_ERR_STATUS4                              =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_UNS_ERR_STATUS4                                            ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_UNS_ERR_STATUS5                              =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_UNS_ERR_STATUS5                                            ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN0                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN0                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN1                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN1                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN2                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN2                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN3                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN3                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN4                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN4                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN5                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN5                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN6                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_SB_ERR_SYN6                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN0                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN0                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN1                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN1                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN2                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN2                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN3                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN3                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN4                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN4                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN5                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN5                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN6                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_DRP_CH1_ECC_DB_ERR_SYN6                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_FF_CLK_ON_CTRL                               =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_FF_CLK_ON_CTRL                                             ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_CTRL                                    =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_CTRL                                                  ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_CLK_CTRL                                =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_CLK_CTRL                                              ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_WRITE_CONFIG1                           =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_WRITE_CONFIG1                                         ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_WRITE_CONFIG2                           =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_WRITE_CONFIG2                                         ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_WR_ADDR                                 =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_WR_ADDR                                               ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_WR_BIST_SEED_31_0                       =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_WR_BIST_SEED_31_0                                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_WR_BIST_SEED_63_32                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_WR_BIST_SEED_63_32                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_WR_BIST_SEED_95_64                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_WR_BIST_SEED_95_64                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_WR_BIST_SEED_127_96                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_WR_BIST_SEED_127_96                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_READ_CONFIG1                            =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_READ_CONFIG1                                          ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_READ_CONFIG2                            =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_READ_CONFIG2                                          ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_RD_ADDR                                 =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_RD_ADDR                                               ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_RD_BIST_SEED_31_0                       =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_RD_BIST_SEED_31_0                                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_RD_BIST_SEED_63_32                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_RD_BIST_SEED_63_32                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_RD_BIST_SEED_95_64                      =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_RD_BIST_SEED_95_64                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_RD_BIST_SEED_127_96                     =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_RD_BIST_SEED_127_96                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_LFSR_TAP_POINT                          =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_LFSR_TAP_POINT                                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_STATUS                                  =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_STATUS                                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE                                 =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE                                               ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE_0_BITS                          =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE_0_BITS                                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE_1_BITS                          =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE_1_BITS                                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE_2_BITS                          =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE_2_BITS                                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE_3_BITS                          =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE_3_BITS                                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE_4_BITS                          =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE_4_BITS                                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE_5_BITS                          =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_FAILURE_5_BITS                                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_SPARE                                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_SPARE                                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ANDLPI_LB_BIST_TAG_RAM_EXTRA_COL_ACT                   =0x%x", __read_spad_broadcast_andlpi_lb_register(device,SPAD_BROADCAST_ANDLPI_LB_BIST_TAG_RAM_EXTRA_COL_ACT                                 ));
-}
-
-static void __print_spad_broadcast_orlpi_lb_regs(struct iris_hfi_device *device)
-{
-
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_RAM_TIMING0                                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_RAM_TIMING0                                    ));
-	#if 1
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_RAM_TIMING1                                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_RAM_TIMING1                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_RAM_TIMING2                                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_RAM_TIMING2                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCB_SLP_SEL0                                   =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCB_SLP_SEL0                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCB_SLP_NRET_SEL0                              =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCB_SLP_NRET_SEL0                              ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCB_SLP_SEL1                                   =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCB_SLP_SEL1                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCB_SLP_NRET_SEL1                              =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCB_SLP_NRET_SEL1                              ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCB_WAKEUP_SEL0                                =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCB_WAKEUP_SEL0                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCB_WAKEUP_SEL1                                =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCB_WAKEUP_SEL1                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCB_ENABLE                                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCB_ENABLE                                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_RAM_IDLE_THRESHOLD                             =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_RAM_IDLE_THRESHOLD                             ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCB_CMD                                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCB_CMD                                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_COUNTER_SYNC_RATE                              =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_COUNTER_SYNC_RATE                              ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_RAMSLP_STATUS                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_RAMSLP_STATUS                                  ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCB_PWR_STATUS0                                =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCB_PWR_STATUS0                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCB_PWR_STATUS1                                =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCB_PWR_STATUS1                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCB_PWR_STATUS2                                =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCB_PWR_STATUS2                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCB_PWR_STATUS3                                =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCB_PWR_STATUS3                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PRE_ARES_STATUS                                =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PRE_ARES_STATUS                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL0                                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL0                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL1                                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL1                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL2                                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL2                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL3                                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL3                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL4                                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL4                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL5                                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL5                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS0                                 =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS0                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS1                                 =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS1                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS2                                 =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS2                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS3                                 =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS3                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS4                                 =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS4                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS5                                 =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS5                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS6                                 =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PCBSLP_STATUS6                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_CLK_EN_CFG                                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_CLK_EN_CFG                                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PRE_ARES_CTRL                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PRE_ARES_CTRL                                  ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_ADDR_REGION_CFG0                               =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_ADDR_REGION_CFG0                               ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_ADDR_REGION_CFG1                               =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_ADDR_REGION_CFG1                               ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_ADDR_REGION_CFG2                               =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_ADDR_REGION_CFG2                               ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_ADDR_REGION_CFG3                               =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_ADDR_REGION_CFG3                               ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_MODE                                   =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_MODE                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_CORE_CLOCK_CTRL                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_CORE_CLOCK_CTRL                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_CFG_CLOCK_CTRL                         =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_CFG_CLOCK_CTRL                         ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_DEBUG_CTRL                             =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_DEBUG_CTRL                             ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_STATUS                                 =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_STATUS                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_CONFIGURATION_INFO                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_CONFIGURATION_INFO                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_0_CONFIG                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_0_CONFIG                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_1_CONFIG                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_1_CONFIG                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_2_CONFIG                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_2_CONFIG                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_3_CONFIG                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_3_CONFIG                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_4_CONFIG                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_4_CONFIG                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_5_CONFIG                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_5_CONFIG                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_6_CONFIG                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_6_CONFIG                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_7_CONFIG                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_7_CONFIG                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_8_CONFIG                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_8_CONFIG                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_9_CONFIG                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_9_CONFIG                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_10_CONFIG                      =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_10_CONFIG                      ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_11_CONFIG                      =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_11_CONFIG                      ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_12_CONFIG                      =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_12_CONFIG                      ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_13_CONFIG                      =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_13_CONFIG                      ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_14_CONFIG                      =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_14_CONFIG                      ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_15_CONFIG                      =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_15_CONFIG                      ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_0_VALUE                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_0_VALUE                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_1_VALUE                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_1_VALUE                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_2_VALUE                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_2_VALUE                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_3_VALUE                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_3_VALUE                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_4_VALUE                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_4_VALUE                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_5_VALUE                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_5_VALUE                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_6_VALUE                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_6_VALUE                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_7_VALUE                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_7_VALUE                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_8_VALUE                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_8_VALUE                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_9_VALUE                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_9_VALUE                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_10_VALUE                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_10_VALUE                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_11_VALUE                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_11_VALUE                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_12_VALUE                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_12_VALUE                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_13_VALUE                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_13_VALUE                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_14_VALUE                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_14_VALUE                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_15_VALUE                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_15_VALUE                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_0_OVERFLOW                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_0_OVERFLOW                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_1_OVERFLOW                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_1_OVERFLOW                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_2_OVERFLOW                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_2_OVERFLOW                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_3_OVERFLOW                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_3_OVERFLOW                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_4_OVERFLOW                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_4_OVERFLOW                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_5_OVERFLOW                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_5_OVERFLOW                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_6_OVERFLOW                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_6_OVERFLOW                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_7_OVERFLOW                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_7_OVERFLOW                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_8_OVERFLOW                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_8_OVERFLOW                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_9_OVERFLOW                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_9_OVERFLOW                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_10_OVERFLOW                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_10_OVERFLOW                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_11_OVERFLOW                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_11_OVERFLOW                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_12_OVERFLOW                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_12_OVERFLOW                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_13_OVERFLOW                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_13_OVERFLOW                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_14_OVERFLOW                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_14_OVERFLOW                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_15_OVERFLOW                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PERFMON_COUNTER_15_OVERFLOW                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PRED_WAKEUP_EN                                 =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PRED_WAKEUP_EN                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PROF_FILTER_0_CFG                              =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PROF_FILTER_0_CFG                              ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_PROF_FILTER_1_CFG                              =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_PROF_FILTER_1_CFG                              ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_ECC_ERROR_CFG                              =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_ECC_ERROR_CFG                              ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL                                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DEBUG_CTRL                                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_ECC_ERROR_INJECTION_0                      =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_ECC_ERROR_INJECTION_0                      ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_ECC_ERROR_INJECTION_1                      =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_ECC_ERROR_INJECTION_1                      ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DEBUG_TESTBUS                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DEBUG_TESTBUS                                  ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_HW_EVENT_CTRL                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_HW_EVENT_CTRL                                  ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_INTERRUPT_STATUS                           =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_INTERRUPT_STATUS                           ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_INTERRUPT_ENABLE                           =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_INTERRUPT_ENABLE                           ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_ERROR_STATUS                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_ERROR_STATUS                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN0                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN0                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN1                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN1                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN2                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN2                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN3                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN3                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN4                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN4                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN5                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN5                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN6                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN6                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN0                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN0                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN1                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN1                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN2                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN2                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN3                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN3                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN4                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN4                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN5                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN5                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN6                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN6                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_FIFO_EMPTY_STATUS                          =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_FIFO_EMPTY_STATUS                          ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_FIFO_FULL_STATUS                           =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_FIFO_FULL_STATUS                           ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_ADDR_DECODE_ERR_CFG                            =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_ADDR_DECODE_ERR_CFG                            ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_ADDR_DECODE_ERR_INTERRUPT_STATUS               =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_ADDR_DECODE_ERR_INTERRUPT_STATUS               ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_ADDR_DECODE_ERR_INTERRUPT_ENABLE               =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_ADDR_DECODE_ERR_INTERRUPT_ENABLE               ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_RD_ADDR_DECODE_ERR_STATUS1                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_RD_ADDR_DECODE_ERR_STATUS1                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_RD_ADDR_DECODE_ERR_STATUS2                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_RD_ADDR_DECODE_ERR_STATUS2                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_RD_ADDR_DECODE_ERR_STATUS3                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_RD_ADDR_DECODE_ERR_STATUS3                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_RD_ADDR_DECODE_ERR_STATUS4                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_RD_ADDR_DECODE_ERR_STATUS4                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_RD_ADDR_DECODE_ERR_STATUS5                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_RD_ADDR_DECODE_ERR_STATUS5                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN7                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN7                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN8                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN8                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN9                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN9                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_ERROR_STATUS                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_ERROR_STATUS                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN10                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_SB_ERR_SYN10                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN7                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN7                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN8                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN8                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN9                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN9                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN10                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN10                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN7                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN7                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN8                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN8                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN9                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN9                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN10                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN10                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN7                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN7                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN8                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN8                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN9                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN9                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN10                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH0_ECC_DB_ERR_SYN10                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_WR_ADDR_DECODE_ERR_STATUS1                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_WR_ADDR_DECODE_ERR_STATUS1                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_WR_ADDR_DECODE_ERR_STATUS2                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_WR_ADDR_DECODE_ERR_STATUS2                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_WR_ADDR_DECODE_ERR_STATUS3                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_WR_ADDR_DECODE_ERR_STATUS3                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_WR_ADDR_DECODE_ERR_STATUS4                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_WR_ADDR_DECODE_ERR_STATUS4                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_WR_ADDR_DECODE_ERR_STATUS5                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_WR_ADDR_DECODE_ERR_STATUS5                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DCRSW_CFG                                      =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DCRSW_CFG                                      ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS0                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS0                                  ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS1                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS1                                  ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS2                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS2                                  ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS3                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS3                                  ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS4                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS4                                  ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS5                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS5                                  ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS6                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS6                                  ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS7                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS7                                  ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS8                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DCRSW_STATUS8                                  ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_IF_CHANNEL_STATUS                              =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_IF_CHANNEL_STATUS                              ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_FIFO_STATUS                                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_FIFO_STATUS                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_RSPPROC_CREDITS_STATUS                         =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_RSPPROC_CREDITS_STATUS                         ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DBG_EVENT_STATUS                               =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DBG_EVENT_STATUS                               ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DBG_EVENT_FWD                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DBG_EVENT_FWD                                  ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_UNS_ERR_CFG                                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_UNS_ERR_CFG                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_UNS_ERR_STATUS1                                =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_UNS_ERR_STATUS1                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_UNS_ERR_STATUS2                                =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_UNS_ERR_STATUS2                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_UNS_ERR_STATUS3                                =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_UNS_ERR_STATUS3                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_UNS_ERR_STATUS4                                =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_UNS_ERR_STATUS4                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_UNS_ERR_STATUS5                                =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_UNS_ERR_STATUS5                                ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN0                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN0                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN1                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN1                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN2                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN2                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN3                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN3                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN4                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN4                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN5                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN5                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN6                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_SB_ERR_SYN6                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN0                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN0                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN1                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN1                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN2                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN2                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN3                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN3                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN4                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN4                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN5                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN5                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN6                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_DRP_CH1_ECC_DB_ERR_SYN6                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_FF_CLK_ON_CTRL                                 =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_FF_CLK_ON_CTRL                                 ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_CTRL                                      =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_CTRL                                      ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_CLK_CTRL                                  =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_CLK_CTRL                                  ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_WRITE_CONFIG1                             =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_WRITE_CONFIG1                             ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_WRITE_CONFIG2                             =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_WRITE_CONFIG2                             ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_WR_ADDR                                   =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_WR_ADDR                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_WR_BIST_SEED_31_0                         =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_WR_BIST_SEED_31_0                         ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_WR_BIST_SEED_63_32                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_WR_BIST_SEED_63_32                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_WR_BIST_SEED_95_64                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_WR_BIST_SEED_95_64                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_WR_BIST_SEED_127_96                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_WR_BIST_SEED_127_96                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_READ_CONFIG1                              =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_READ_CONFIG1                              ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_READ_CONFIG2                              =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_READ_CONFIG2                              ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_RD_ADDR                                   =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_RD_ADDR                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_RD_BIST_SEED_31_0                         =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_RD_BIST_SEED_31_0                         ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_RD_BIST_SEED_63_32                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_RD_BIST_SEED_63_32                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_RD_BIST_SEED_95_64                        =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_RD_BIST_SEED_95_64                        ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_RD_BIST_SEED_127_96                       =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_RD_BIST_SEED_127_96                       ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_LFSR_TAP_POINT                            =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_LFSR_TAP_POINT                            ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_STATUS                                    =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_STATUS                                    ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE                                   =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE                                   ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE_0_BITS                            =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE_0_BITS                            ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE_1_BITS                            =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE_1_BITS                            ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE_2_BITS                            =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE_2_BITS                            ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE_3_BITS                            =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE_3_BITS                            ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE_4_BITS                            =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE_4_BITS                            ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE_5_BITS                            =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_FAILURE_5_BITS                            ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_SPARE                                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_SPARE                                     ));
-	dprintk(CVP_ERR,"SPAD_BROADCAST_ORLPI_LB_BIST_TAG_RAM_EXTRA_COL_ACT                     =0x%x", __read_spad_broadcast_orlpi_lb_register(device,SPAD_BROADCAST_ORLPI_LB_BIST_TAG_RAM_EXTRA_COL_ACT                     ));
-	#endif
-}
-static void  __print_spad0_regs(struct iris_hfi_device *device)
-{
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_RAM_TIMING0                               =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_RAM_TIMING0                     ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_RAM_TIMING1                               =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_RAM_TIMING1                     ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_RAM_TIMING2                               =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_RAM_TIMING2                     ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCB_SLP_SEL0                              =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCB_SLP_SEL0                    ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCB_SLP_NRET_SEL0                         =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCB_SLP_NRET_SEL0               ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCB_SLP_SEL1                              =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCB_SLP_SEL1                    ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCB_SLP_NRET_SEL1                         =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCB_SLP_NRET_SEL1               ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCB_WAKEUP_SEL0                           =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCB_WAKEUP_SEL0                 ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCB_WAKEUP_SEL1                           =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCB_WAKEUP_SEL1                 ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCB_ENABLE                                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCB_ENABLE                      ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_RAM_IDLE_THRESHOLD                        =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_RAM_IDLE_THRESHOLD              ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCB_CMD                                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCB_CMD                         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_COUNTER_SYNC_RATE                         =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_COUNTER_SYNC_RATE               ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_RAMSLP_STATUS                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_RAMSLP_STATUS                   ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCB_PWR_STATUS0                           =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCB_PWR_STATUS0                 ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCB_PWR_STATUS1                           =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCB_PWR_STATUS1                 ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCB_PWR_STATUS2                           =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCB_PWR_STATUS2                 ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCB_PWR_STATUS3                           =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCB_PWR_STATUS3                 ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PRE_ARES_STATUS                           =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PRE_ARES_STATUS                 ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DEBUG_CTRL0                               =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DEBUG_CTRL0                     ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DEBUG_CTRL1                               =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DEBUG_CTRL1                     ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DEBUG_CTRL2                               =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DEBUG_CTRL2                     ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DEBUG_CTRL3                               =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DEBUG_CTRL3                     ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DEBUG_CTRL4                               =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DEBUG_CTRL4                     ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DEBUG_CTRL5                               =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DEBUG_CTRL5                     ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCBSLP_STATUS0                            =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCBSLP_STATUS0                  ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCBSLP_STATUS1                            =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCBSLP_STATUS1                  ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCBSLP_STATUS2                            =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCBSLP_STATUS2                  ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCBSLP_STATUS3                            =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCBSLP_STATUS3                  ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCBSLP_STATUS4                            =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCBSLP_STATUS4                  ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCBSLP_STATUS5                            =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCBSLP_STATUS5                  ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PCBSLP_STATUS6                            =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PCBSLP_STATUS6                  ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_CLK_EN_CFG                                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_CLK_EN_CFG                      ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PRE_ARES_CTRL                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PRE_ARES_CTRL                   ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_ADDR_REGION_CFG0                          =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_ADDR_REGION_CFG0                ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_ADDR_REGION_CFG1                          =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_ADDR_REGION_CFG1                ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_ADDR_REGION_CFG2                          =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_ADDR_REGION_CFG2                ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_ADDR_REGION_CFG3                          =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_ADDR_REGION_CFG3                ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_MODE                              =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_MODE                    ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_CORE_CLOCK_CTRL                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_CORE_CLOCK_CTRL         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_CFG_CLOCK_CTRL                    =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_CFG_CLOCK_CTRL          ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_DEBUG_CTRL                        =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_DEBUG_CTRL              ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_STATUS                            =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_STATUS                  ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_CONFIGURATION_INFO                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_CONFIGURATION_INFO      ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_0_CONFIG                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_0_CONFIG        ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_1_CONFIG                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_1_CONFIG        ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_2_CONFIG                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_2_CONFIG        ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_3_CONFIG                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_3_CONFIG        ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_4_CONFIG                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_4_CONFIG        ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_5_CONFIG                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_5_CONFIG        ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_6_CONFIG                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_6_CONFIG        ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_7_CONFIG                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_7_CONFIG        ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_8_CONFIG                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_8_CONFIG        ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_9_CONFIG                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_9_CONFIG        ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_10_CONFIG                 =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_10_CONFIG       ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_11_CONFIG                 =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_11_CONFIG       ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_12_CONFIG                 =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_12_CONFIG       ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_13_CONFIG                 =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_13_CONFIG       ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_14_CONFIG                 =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_14_CONFIG       ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_15_CONFIG                 =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_15_CONFIG       ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_0_VALUE                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_0_VALUE         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_1_VALUE                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_1_VALUE         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_2_VALUE                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_2_VALUE         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_3_VALUE                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_3_VALUE         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_4_VALUE                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_4_VALUE         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_5_VALUE                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_5_VALUE         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_6_VALUE                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_6_VALUE         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_7_VALUE                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_7_VALUE         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_8_VALUE                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_8_VALUE         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_9_VALUE                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_9_VALUE         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_10_VALUE                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_10_VALUE        ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_11_VALUE                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_11_VALUE        ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_12_VALUE                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_12_VALUE        ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_13_VALUE                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_13_VALUE        ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_14_VALUE                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_14_VALUE        ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_15_VALUE                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_15_VALUE        ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_0_OVERFLOW                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_0_OVERFLOW      ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_1_OVERFLOW                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_1_OVERFLOW      ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_2_OVERFLOW                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_2_OVERFLOW      ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_3_OVERFLOW                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_3_OVERFLOW      ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_4_OVERFLOW                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_4_OVERFLOW      ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_5_OVERFLOW                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_5_OVERFLOW      ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_6_OVERFLOW                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_6_OVERFLOW      ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_7_OVERFLOW                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_7_OVERFLOW      ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_8_OVERFLOW                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_8_OVERFLOW      ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_9_OVERFLOW                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_9_OVERFLOW      ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_10_OVERFLO                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_10_OVERFLOW     ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_11_OVERFLO                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_11_OVERFLOW     ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_12_OVERFLO                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_12_OVERFLOW     ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_13_OVERFLO                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_13_OVERFLOW     ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_14_OVERFLO                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_14_OVERFLOW     ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PERFMON_COUNTER_15_OVERFLO                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PERFMON_COUNTER_15_OVERFLOW     ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PRED_WAKEUP_EN                            =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PRED_WAKEUP_EN                  ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PROF_FILTER_0_CFG                         =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PROF_FILTER_0_CFG               ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_PROF_FILTER_1_CFG                         =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_PROF_FILTER_1_CFG               ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_ECC_ERROR_CFG                         =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_ECC_ERROR_CFG               ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DEBUG_CTRL                                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DEBUG_CTRL                      ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_ECC_ERROR_INJECTION_0                 =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_ECC_ERROR_INJECTION_0       ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_ECC_ERROR_INJECTION_1                 =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_ECC_ERROR_INJECTION_1       ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DEBUG_TESTBUS                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DEBUG_TESTBUS                   ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_HW_EVENT_CTRL                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_HW_EVENT_CTRL                   ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_INTERRUPT_STATUS                      =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_INTERRUPT_STATUS            ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_INTERRUPT_ENABLE                      =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_INTERRUPT_ENABLE            ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_ERROR_STATUS                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_ERROR_STATUS        ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN0                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN0         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN1                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN1         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN2                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN2         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN3                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN3         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN4                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN4         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN5                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN5         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN6                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN6         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN0                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN0         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN1                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN1         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN2                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN2         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN3                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN3         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN4                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN4         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN5                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN5         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN6                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN6         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_FIFO_EMPTY_STATUS                     =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_FIFO_EMPTY_STATUS           ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_FIFO_FULL_STATUS                      =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_FIFO_FULL_STATUS            ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_ADDR_DECODE_ERR_CFG                       =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_ADDR_DECODE_ERR_CFG             ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_ADDR_DECODE_ERR_INTERRUPT_                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_ADDR_DECODE_ERR_INTERRUPT_STATUS));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_ADDR_DECODE_ERR_INTERRUPT_                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_ADDR_DECODE_ERR_INTERRUPT_ENABLE));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_RD_ADDR_DECODE_ERR_STATUS1                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_RD_ADDR_DECODE_ERR_STATUS1      ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_RD_ADDR_DECODE_ERR_STATUS2                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_RD_ADDR_DECODE_ERR_STATUS2      ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_RD_ADDR_DECODE_ERR_STATUS3                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_RD_ADDR_DECODE_ERR_STATUS3      ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_RD_ADDR_DECODE_ERR_STATUS4                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_RD_ADDR_DECODE_ERR_STATUS4      ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_RD_ADDR_DECODE_ERR_STATUS5                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_RD_ADDR_DECODE_ERR_STATUS5      ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN7                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN7         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN8                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN8         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN9                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN9         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_ERROR_STATUS                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_ERROR_STATUS        ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN10                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_SB_ERR_SYN10        ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN7                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN7         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN8                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN8         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN9                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN9         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN10                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN10        ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN7                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN7         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN8                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN8         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN9                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN9         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN10                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN10        ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN7                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN7         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN8                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN8         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN9                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN9         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN10                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH0_ECC_DB_ERR_SYN10        ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_WR_ADDR_DECODE_ERR_STATUS1                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_WR_ADDR_DECODE_ERR_STATUS1      ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_WR_ADDR_DECODE_ERR_STATUS2                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_WR_ADDR_DECODE_ERR_STATUS2      ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_WR_ADDR_DECODE_ERR_STATUS3                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_WR_ADDR_DECODE_ERR_STATUS3      ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_WR_ADDR_DECODE_ERR_STATUS4                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_WR_ADDR_DECODE_ERR_STATUS4      ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_WR_ADDR_DECODE_ERR_STATUS5                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_WR_ADDR_DECODE_ERR_STATUS5      ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DCRSW_CFG                                 =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DCRSW_CFG                       ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DCRSW_STATUS0                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DCRSW_STATUS0                   ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DCRSW_STATUS1                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DCRSW_STATUS1                   ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DCRSW_STATUS2                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DCRSW_STATUS2                   ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DCRSW_STATUS3                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DCRSW_STATUS3                   ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DCRSW_STATUS4                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DCRSW_STATUS4                   ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DCRSW_STATUS5                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DCRSW_STATUS5                   ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DCRSW_STATUS6                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DCRSW_STATUS6                   ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DCRSW_STATUS7                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DCRSW_STATUS7                   ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DCRSW_STATUS8                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DCRSW_STATUS8                   ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_IF_CHANNEL_STATUS                         =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_IF_CHANNEL_STATUS               ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_FIFO_STATUS                               =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_FIFO_STATUS                     ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_RSPPROC_CREDITS_STATUS                    =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_RSPPROC_CREDITS_STATUS          ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DBG_EVENT_STATUS                          =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DBG_EVENT_STATUS                ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DBG_EVENT_FWD                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DBG_EVENT_FWD                   ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_UNS_ERR_CFG                               =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_UNS_ERR_CFG                     ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_UNS_ERR_STATUS1                           =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_UNS_ERR_STATUS1                 ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_UNS_ERR_STATUS2                           =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_UNS_ERR_STATUS2                 ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_UNS_ERR_STATUS3                           =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_UNS_ERR_STATUS3                 ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_UNS_ERR_STATUS4                           =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_UNS_ERR_STATUS4                 ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_UNS_ERR_STATUS5                           =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_UNS_ERR_STATUS5                 ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN0                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN0         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN1                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN1         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN2                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN2         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN3                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN3         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN4                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN4         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN5                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN5         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN6                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_SB_ERR_SYN6         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN0                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN0         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN1                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN1         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN2                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN2         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN3                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN3         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN4                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN4         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN5                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN5         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN6                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_DRP_CH1_ECC_DB_ERR_SYN6         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_FF_CLK_ON_CTRL                            =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_FF_CLK_ON_CTRL                  ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_CTRL                                 =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_CTRL                       ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_CLK_CTRL                             =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_CLK_CTRL                   ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_WRITE_CONFIG1                        =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_WRITE_CONFIG1              ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_WRITE_CONFIG2                        =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_WRITE_CONFIG2              ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_WR_ADDR                              =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_WR_ADDR                    ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_WR_BIST_SEED_31_0                    =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_WR_BIST_SEED_31_0          ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_WR_BIST_SEED_63_32                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_WR_BIST_SEED_63_32         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_WR_BIST_SEED_95_64                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_WR_BIST_SEED_95_64         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_WR_BIST_SEED_127_96                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_WR_BIST_SEED_127_96        ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_READ_CONFIG1                         =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_READ_CONFIG1               ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_READ_CONFIG2                         =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_READ_CONFIG2               ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_RD_ADDR                              =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_RD_ADDR                    ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_RD_BIST_SEED_31_0                    =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_RD_BIST_SEED_31_0          ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_RD_BIST_SEED_63_32                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_RD_BIST_SEED_63_32         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_RD_BIST_SEED_95_64                   =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_RD_BIST_SEED_95_64         ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_RD_BIST_SEED_127_96                  =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_RD_BIST_SEED_127_96        ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_LFSR_TAP_POINT                       =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_LFSR_TAP_POINT             ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_STATUS                               =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_STATUS                     ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_FAILURE                              =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_FAILURE                    ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_FAILURE_0_BITS                       =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_FAILURE_0_BITS             ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_FAILURE_1_BITS                       =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_FAILURE_1_BITS             ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_FAILURE_2_BITS                       =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_FAILURE_2_BITS             ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_FAILURE_3_BITS                       =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_FAILURE_3_BITS             ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_FAILURE_4_BITS                       =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_FAILURE_4_BITS             ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_FAILURE_5_BITS                       =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_FAILURE_5_BITS             ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_SPARE                                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_SPARE                      ));
-	dprintk(CVP_ERR,"SPAD0_LPI_LB_BIST_TAG_RAM_EXTRA_COL_ACT                =0x%x", __read_spad0_lpi_lb_register(device,SPAD0_LPI_LB_BIST_TAG_RAM_EXTRA_COL_ACT      ));
 }
 
 static void __print_sidebandmanager_regs(struct iris_hfi_device *device)
@@ -5823,115 +4216,11 @@ exit:
 		cpu_cs_x2rpmh);
 }
 
-static void clk_unprepare_work_handler(struct work_struct *work)
-{
-	struct msm_cvp_core *core;
-	struct iris_hfi_device *device;
-
-	core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
-	if (core)
-		device = core->device->hfi_device_data;
-	else
-		return;
-
-	dprintk(CVP_CORE, "Unpreparing SREG's\n");
-	msm_cvp_unprepare_clk(device, "gcc_video_axi0_sreg");
-	msm_cvp_unprepare_clk(device, "gcc_video_axi1_sreg");
-	msm_cvp_unprepare_clk(device, "gcc_iris_ss_hf_axi1_sreg");
-	msm_cvp_unprepare_clk(device, "gcc_iris_ss_spd_axi1_sreg");
-
-	sreg_prepared = false;
-}
-
-static DECLARE_WORK(clk_unprepare_work, clk_unprepare_work_handler);
-
-static int eva_mmcx_cb(struct notifier_block *nb, unsigned long evt, void *p)
-{
-#ifdef MMCX_CB_RESET_ENABLE
-	int rc = NOTIFY_OK;
-	struct iris_hfi_device *device = container_of(nb, struct iris_hfi_device, mmcx_PC_nb);
-#endif
-
-#ifdef MMCX_CB_RESET_ENABLE
-	switch (evt) {
-	case REGULATOR_EVENT_PRE_DISABLE:
-		if(reset_pulse_applied) {
-			dprintk(CVP_CORE, "Skipping reset pulse; Not required when EVA-PC is done!\n");
-			return NOTIFY_OK;
-		}
-
-		if (poweron_inprogress) {
-			dprintk(CVP_WARN, "EVA Power-ON in-progress, notify stop to MMCX!\n");
-			return NOTIFY_STOP;
-		}
-
-		mutex_lock(&device->mmcx_lock);
-		from_callback = true;
-		rc = call_iris_op(device, reset_ahb2axi_bridge, device);
-		if (rc) {
-			rc = NOTIFY_STOP;
-			dprintk(CVP_ERR, "Failed to execute reset pulse %d\n", rc);
-		}
-		else {
-			dprintk(CVP_WARN, "reset pulse executed successfully\n");
-			from_callback = false;
-			reset_pulse_applied = true;
-			/*  Can not call unprepare sreg in case of reset_ahb2_axi_bridge returns fail
-			    becasue if we unprepare the sreg clocks in fail case and mmcx_cb called
-				again, we will go and do clk enable operations on unprepared sreg clocks.
-			*/
-			queue_work(device->clk_unprepare_workq, &clk_unprepare_work);
-		}
-		mutex_unlock(&device->mmcx_lock);
-
-		break;
-	default:
-		break;
-	}
-#endif
-	return rc;
-}
-
-static int __register_for_MMCX(struct iris_hfi_device *device)
-{
-	int rc = 1;
-
-	if (regulator_is_enabled(device->rpmh_mmcx_reg)) {
-		device->mmcx_PC_nb.notifier_call = eva_mmcx_cb;
-		rc = regulator_register_notifier(device->rpmh_mmcx_reg,
-				&device->mmcx_PC_nb);
-		if (rc) {
-			dprintk(CVP_ERR, "Failed to register cb for MMCX-PC, rc %d \n", rc);
-		}
-	} else {
-		dprintk(CVP_ERR, "%s: RPMH regulator is not enabled\n", __FUNCTION__);
-	}
-
-	return rc;
-}
-#if 0
-static int __unregister_for_MMCX(struct iris_hfi_device *device)
-{
-	int rc = 1;
-
-	if (regulator_is_enabled(device->rpmh_mmcx_reg)) {
-		device->mmcx_PC_nb.notifier_call = eva_mmcx_cb;
-		rc = regulator_unregister_notifier(device->rpmh_mmcx_reg,
-				&device->mmcx_PC_nb);
-		if (rc) {
-			dprintk(CVP_ERR, "Failed to unregister cb for MMCX-PC, rc %d \n", rc);
-		}
-	} else {
-		dprintk(CVP_ERR, "%s: RPMH regulator is not enabled\n", __FUNCTION__);
-	}
-
-	return rc;
-}
-#endif
-
 static int __power_off_controller(struct iris_hfi_device *device)
 {
 	u32 lpi_status, reg_status = 0, count = 0, max_count = 1000;
+	u32 sbm_ln0_low;
+	int rc;
 
 	/* HPG 6.2.2 Step 1  */
 	__write_register(device, CVP_CPU_CS_X2RPMh, 0x3);
@@ -5960,44 +4249,65 @@ static int __power_off_controller(struct iris_hfi_device *device)
 			"Core NOC not in qaccept status %x %x %x %x\n",
 			reg_status, lpi_status, wfi_status, pc_ready);
 
-		__print_sidebandmanager_regs(device);
+		// __print_sidebandmanager_regs(device);
 	}
 
-#ifdef EVA_LSR
-	/* HPG 6.2.2 Step 3, Set LSR NOC to Low power*/
-	__write_register(device, CVP_AON_WRAPPER_LSR_NOC_LPI_CONTROL, 0x1);
+
+	/* HPG 6.2.2 Step 3, Set Iris CPU NoC to Low power */
+
+	/* New addition to put CPU/Tensilica to low power */
+	reg_status = 0;
+	count = 0;
+	__write_register(device, CVP_WRAPPER_CPU_NOC_LPI_CONTROL, 0x1);
 	while (!reg_status && count < max_count) {
 		lpi_status =
 			 __read_register(device,
-				CVP_AON_WRAPPER_LSR_NOC_LPI_STATUS);
+				CVP_WRAPPER_CPU_NOC_LPI_STATUS);
 		reg_status = lpi_status & BIT(0);
 		/* Wait for CPU noc lpi status to be set */
 		usleep_range(50, 100);
 		count++;
 	}
-#endif
+	sbm_ln0_low = __read_register(device, CVP_NOC_SBM_SENSELN0_LOW);
+	dprintk(CVP_PWR,
+		"CPU Noc: lpi_status %x noc_status %x (count %d) 0x%x\n",
+		lpi_status, reg_status, count, sbm_ln0_low);
+	if (count == max_count) {
+		u32 pc_ready, wfi_status;
 
-	/* HPG 6.2.2 Step 4, Set Debug bridge Low power */
+		wfi_status = __read_register(device, CVP_WRAPPER_CPU_STATUS);
+		pc_ready = __read_register(device, CVP_CTRL_STATUS);
+
+		dprintk(CVP_WARN,
+			"CPU NOC not in qaccept status %x %x %x %x\n",
+			reg_status, lpi_status, wfi_status, pc_ready);
+
+		// __print_sidebandmanager_regs(device);
+	}
+
+
+	/* HPG 6.2.2 Step 4, debug bridge to low power */
+
 	__write_register(device,
- 		CVP_WRAPPER_DEBUG_BRIDGE_LPI_CONTROL, 0x7);
+		CVP_WRAPPER_DEBUG_BRIDGE_LPI_CONTROL, 0x7);
 
- 	reg_status = 0;
- 	count = 0;
- 	while ((reg_status != 0x7) && count < max_count) {
- 		lpi_status = __read_register(device,
- 			CVP_WRAPPER_DEBUG_BRIDGE_LPI_STATUS);
- 		reg_status = lpi_status & 0x7;
- 		// Wait for debug bridge lpi status to be set
- 		usleep_range(50, 100);
- 		count++;
- 	}
- 	dprintk(CVP_PWR,
- 		"DBLP Set : lpi_status %d reg_status %d (count %d)\n",
- 		lpi_status, reg_status, count);
- 	if (count == max_count) {
- 		dprintk(CVP_WARN,
- 			"DBLP Set: status %x %x\n", reg_status, lpi_status);
- 	}
+	reg_status = 0;
+	count = 0;
+	while ((reg_status != 0x7) && count < max_count) {
+		lpi_status = __read_register(device,
+			CVP_WRAPPER_DEBUG_BRIDGE_LPI_STATUS);
+		reg_status = lpi_status & 0x7;
+		// Wait for debug bridge lpi status to be set
+		usleep_range(50, 100);
+		count++;
+	}
+	dprintk(CVP_PWR,
+		"DBLP Set : lpi_status %d reg_status %d (count %d)\n",
+		lpi_status, reg_status, count);
+	if (count == max_count) {
+		dprintk(CVP_WARN,
+			"DBLP Set: status %x %x\n", reg_status, lpi_status);
+	}
 
 	/* HPG 6.2.2 Step 5, debug bridge to lpi release */
 	__write_register(device,
@@ -6024,28 +4334,17 @@ static int __power_off_controller(struct iris_hfi_device *device)
 	__write_register(device, CVP_WRAPPER_QNS4PDXFIFO_RESET, 0x0);
 	__write_register(device, CVP_WRAPPER_AXI_CLOCK_CONFIG, 0x0);
 
-	/*Preparing SREG clks as we can't call clk_prepare in mmcx cb*/
-	if(!sreg_prepared) {
-		dprintk(CVP_CORE, "Preparing SREG's\n");
-		msm_cvp_prepare_clk(device, "gcc_video_axi0_sreg");
-		msm_cvp_prepare_clk(device, "gcc_video_axi1_sreg");
-		msm_cvp_prepare_clk(device, "gcc_iris_ss_hf_axi1_sreg");
-		msm_cvp_prepare_clk(device, "gcc_iris_ss_spd_axi1_sreg");
-		sreg_prepared = true;
-	}
-
 	/* HPG 6.2.2 Step 7 */
-#ifdef EVA_LSR
-	msm_cvp_disable_unprepare_clk(device, "gcc_iris_ss_spd_axi1_clk");
-	msm_cvp_disable_unprepare_clk(device, "gcc_iris_ss_hf_axi1_clk");
-#endif
 	msm_cvp_disable_unprepare_clk(device, "cvp_clk");
 	msm_cvp_disable_unprepare_clk(device, "gcc_video_axi1");
 
+	/* Added to avoid pending transaction after power off */
+	rc = call_iris_op(device, reset_ahb2axi_bridge, device);
+	if (rc)
+		dprintk(CVP_ERR, "Off: Failed to reset ahb2axi: %d\n", rc);
+
 	/* HPG 6.2.2 Step 8, Controller collapse */
 	__disable_regulator(device, "cvp");
-
-	msm_cvp_disable_unprepare_clk(device, "video_cc_mvs1_clk_src");
 
 	return 0;
 }
@@ -6071,6 +4370,7 @@ static int __power_off_core(struct iris_hfi_device *device)
 		}
 		__disable_regulator(device, "cvp-core");
 		msm_cvp_disable_unprepare_clk(device, "core_clk");
+		msm_cvp_disable_unprepare_clk(device, "video_cc_mvs1_clk_src");
 		return 0;
 	}
 
@@ -6141,80 +4441,7 @@ static int __power_off_core(struct iris_hfi_device *device)
 
 	if (warn_flag)
 		__print_sidebandmanager_regs(device);
-#ifndef EVA_LSR // Temporary workaround to Disable the code for now to avoid crashes
-//// LSR_NoC Partial-Reset
-//
-//// Check for LSR IDLE -- GCX_DONE_IDLE_INT, CSC_DONE_IDLE_INT
-//
-//reg_poll(`CVP_LSR0_LSR_SS_IRQ_STATUS, 32'h0000_0202,32'h0000_0202);
-//
-//reg_poll(`CVP_LSR1_LSR_SS_IRQ_STATUS, 32'h0000_0202,32'h0000_0202);
-//
-//
-//
-//// Program Ack Sel and apply partial reset on MSF intf for GCX, CSC, DDL and wait for ACK
-//
-//reg_write(`AON_WRAPPER_LSR_NOC_RESET_REQ, 32'h00FF_FFFF);
-__write_register(device, AON_WRAPPER_LSR_NOC_RESET_REQ, 0x00FFFFFF);
-//
-//
-//// AON_WRAPPER_LSR_NOC_RESET_ACK
-//
-//reg_poll(`AON_WRAPPER_LSR_NOC_RESET_ACK, 32'h0000_0FFF, 32'h0000_0FFF);
-	count = 0;
-	do {
-		value = __read_register(device, AON_WRAPPER_LSR_NOC_RESET_ACK);
-		if ((value & 0xFFF) == 0xFFF)
-			break;
-		else
-			usleep_range(100, 200);
-		count++;
-	} while (count < max_count);
-//
-//
-//
-//// Apply partial reset pulse
-//
-//reg_write(`CVP_VPU_WRAPPER_CORE_SW_RESET_H, 32'h0000_0000);
-__write_register(device, CVP_WRAPPER_CORE_SW_RESET_H, 0x00000000);
-//reg_write(`CVP_VPU_WRAPPER_CORE_SW_RESET_L, 32'h0007_FF80);
-__write_register(device, CVP_WRAPPER_CORE_SW_RESET_L, 0x0007FF80);
-//reg_write(`CVP_VPU_WRAPPER_CORE_SW_RESET_TRIGGER, 32'h0000_0001);
-__write_register(device, CVP_WRAPPER_CORE_SW_RESET_TRIGGER, 0x1);
-//reg_write(`CVP_VPU_WRAPPER_CORE_SW_RESET_H, 32'h0000_0000); // Optional
-__write_register(device, CVP_WRAPPER_CORE_SW_RESET_H, 0x00000000);
-//reg_write(`CVP_VPU_WRAPPER_CORE_SW_RESET_L, 32'h0000_0000);
-__write_register(device, CVP_WRAPPER_CORE_SW_RESET_L, 0x00000000);
-//reg_write(`CVP_VPU_WRAPPER_CORE_SW_RESET_TRIGGER, 32'h0000_0000);
-__write_register(device, CVP_WRAPPER_CORE_SW_RESET_TRIGGER, 0x00000000);
-//
-//
-//// De-assert partial reset REQ on MSF interface for GCX, CSC, DDL
-//
-//reg_write(`AON_WRAPPER_LSR_NOC_RESET_REQ, 32'h00FF_F000);
-__write_register(device, AON_WRAPPER_LSR_NOC_RESET_REQ, 0x00FFF000);
-//
-//
-//// AON_WRAPPER_LSR_NOC_RESET_ACK
-//
-//reg_poll(`AON_WRAPPER_LSR_NOC_RESET_ACK, 32'h0000_0000, 32'h0000_0FFF);
-	count = 0;
-	do {
-		value = __read_register(device, AON_WRAPPER_LSR_NOC_RESET_ACK);
-		if ((value & 0xFFF) == 0x000)
-			break;
-		else
-			usleep_range(100, 200);
-		count++;
-	} while (count < max_count);
-//
-//
-//// Reset Ack Sel
-//
-//reg_write(`AON_WRAPPER_LSR_NOC_RESET_REQ, 32'h0000_0000);
-__write_register(device, AON_WRAPPER_LSR_NOC_RESET_REQ, 0x00000000);
-//// End LSR NoC Partial Reset
-#endif
+
 	/* Reset both sides of 2 ahb2ahb_bridges (TZ and non-TZ) */
 	__write_register(device, CVP_AHB_BRIDGE_SYNC_RESET, 0x3);
 	__write_register(device, CVP_AHB_BRIDGE_SYNC_RESET, 0x2);
@@ -6227,25 +4454,11 @@ __write_register(device, AON_WRAPPER_LSR_NOC_RESET_REQ, 0x00000000);
 	msm_cvp_disable_unprepare_clk(device, "video_cc_mvs1_clk_src");
 	return 0;
 }
-static int __unvote_spad(struct iris_hfi_device *device)
-{
-	msm_cvp_disable_unprepare_clk(device, "gcc_ddrss_spad_clk");
-	return 0;
-}
+
 static void power_off_iris2(struct iris_hfi_device *device)
 {
-	int rc = 0;
-
 	if (!device->power_enabled || !device->res->sw_power_collapsible)
 		return;
-
-#ifndef SPAD_UC_BOUNDRY
-	if(!auto_boot_time) {
-		rc = iris_disable_spad_subcache(device);
-		if(rc)
-			dprintk(CVP_ERR, "%s: Failed to deactivate SPAD, rc %d\n", __func__, rc);
-	}
-#endif
 
 	if (!(device->intr_status & CVP_WRAPPER_INTR_STATUS_A2HWD_BMSK))
 		disable_irq_nosync(device->cvp_hal_data->irq);
@@ -6257,8 +4470,6 @@ static void power_off_iris2(struct iris_hfi_device *device)
 
 	if (__unvote_buses(device))
 		dprintk(CVP_WARN, "Failed to unvote for buses\n");
-
-	__unvote_spad(device);
 
 	/*Do not access registers after this point!*/
 	device->power_enabled = false;
@@ -6284,11 +4495,7 @@ static inline int __resume(struct iris_hfi_device *device)
 	core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
 
 	dprintk(CVP_PWR, "Resuming from power collapse\n");
-	mutex_lock(&device->mmcx_lock);
-	poweron_inprogress = true;
 	rc = __iris_power_on(device);
-	poweron_inprogress = false;
-	mutex_unlock(&device->mmcx_lock);
 	if (rc) {
 		dprintk(CVP_ERR, "Failed to power on cvp\n");
 		goto err_iris_power_on;
@@ -6348,23 +4555,29 @@ err_iris_power_on:
 	dprintk(CVP_ERR, "Failed to resume from power collapse\n");
 	return rc;
 }
+
 static int __dev_regspace_mapping(struct iris_hfi_device *device)
 {
 	int rc = 0;
 	struct context_bank_info *cb;
+	// struct subcache_info *sinfo = NULL;
+	// uint32_t scid = 0;
+
 	//non-secure context bank
 	cb = msm_cvp_smem_get_context_bank(device->res, 0);
-		if (!cb) {
-				dprintk(CVP_ERR," %s: failed to get context bank\n", __func__);
-		}
+	if (!cb) {
+		dprintk(CVP_ERR," %s: failed to get context bank\n", __func__);
+	}
+
 	if (cb)
 	{
 	   if (cb->name)
-			dprintk(CVP_INFO," %s:  cb name:%s\n", __func__,cb->name);
+			dprintk(CVP_ERR," %s:  cb name:%s\n", __func__,cb->name);
+
 	   //ipclite Global Memory iova - UC region
 	   rc = iommu_map(cb->domain,
 					  device->res->ipclite_iova ,//0xFE500000 or 0xdd000000
-					  device->res->ipclite_phyaddr,// 0xa6f00000,
+					  device->res->ipclite_phyaddr,
 					  device->res->ipclite_size,// 0x100000,
 					   IOMMU_READ | IOMMU_WRITE);
 	   if (rc) {
@@ -6372,51 +4585,32 @@ static int __dev_regspace_mapping(struct iris_hfi_device *device)
 	   }
 	   else
 	   {
-			dprintk(CVP_INFO," %s:  iommu_map ipclite Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
+		   dprintk(CVP_INFO," %s:  iommu_map ipclite Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
 				      device->res->ipclite_iova ,
 					  device->res->ipclite_phyaddr,
 					  device->res->ipclite_size);
-			device->reg_map_status_flg |= IPCLITE_REG_MAP_FLG;
-	   }
 
+	   }
 	   //Device Region
 
-		//Display
-	   rc = iommu_map(cb->domain,
-					  device->res->display_iova,
-					  device->res->display_phyaddr,
-					  device->res->display_size,
-					  IOMMU_MMIO | IOMMU_READ | IOMMU_WRITE);
-	   if (rc) {
-			dprintk(CVP_ERR," %s:  iommu_map display failed, rc:%d\n", __func__, rc);
-	   }
+	   //Always ON Timers
+		rc = iommu_map(cb->domain,
+					 device->res->aontimers_iova,
+					 device->res->aontimers_phyaddr,
+					 device->res->aontimers_size,
+					 IOMMU_MMIO | IOMMU_READ | IOMMU_WRITE);
+		if (rc) {
+		   dprintk(CVP_ERR," %s:  iommu_map always-on timers failed, rc:%d\n", __func__, rc);
+		}
 	   else
 	   {
-			dprintk(CVP_INFO," %s:  iommu_map display Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
-				      device->res->display_iova ,
-					  device->res->display_phyaddr,
-					  device->res->display_size);
-			device->reg_map_status_flg |= DISPLAY_REG_MAP_FLG;
-
-	   }
-		//Always ON Timers
-	   rc = iommu_map(cb->domain,
-					  device->res->aontimers_iova,
-					  device->res->aontimers_phyaddr,
-					  device->res->aontimers_size,
-					  IOMMU_MMIO | IOMMU_READ | IOMMU_WRITE);
-	   if (rc) {
-			dprintk(CVP_ERR," %s:  iommu_map always-on timers failed, rc:%d\n", __func__, rc);
-	   }
-	   else
-	   {
-			dprintk(CVP_INFO," %s:  iommu_map aon-timers Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
+		   dprintk(CVP_INFO," %s:  iommu_map aon-timers Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
 				      device->res->aontimers_iova ,
 					  device->res->aontimers_phyaddr,
 					  device->res->aontimers_size);
-			device->reg_map_status_flg |= AONTIMERS_REG_MAP_FLG;
 
 	   }
+
 	   //hwmutex iova
 	   rc = iommu_map(cb->domain,
 					  device->res->hwmutex_iova,// 0xFFB00000 or 0xde000000,
@@ -6428,185 +4622,37 @@ static int __dev_regspace_mapping(struct iris_hfi_device *device)
 	   }
 	   else
 	   {
-			dprintk(CVP_INFO," %s:  iommu_map hwmutex Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
-				      device->res->hwmutex_iova ,
-					  device->res->hwmutex_phyaddr,
-					  device->res->hwmutex_size);
-			device->reg_map_status_flg |= HWMUTEX_REG_MAP_FLG;
+		   dprintk(CVP_INFO," %s:  iommu_map hwmutex Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
+					device->res->hwmutex_iova,
+					device->res->hwmutex_phyaddr,
+					device->res->hwmutex_size);
 
 	   }
-//spad regs mapping
-	   //SPAD0_LPI_LB iova
-	   rc = iommu_map(cb->domain,
-					  SPAD0_LPI_LB_IOVA,
-					  SPAD0_LPI_LB,
-					  SPAD0_LPI_LB_REG_SIZE,
-					  IOMMU_MMIO | IOMMU_READ | IOMMU_WRITE);
-	   if (rc) {
-			dprintk(CVP_ERR," %s:  iommu_map SPAD0_LPI_LB failed, rc:%d\n", __func__, rc);
-	   }
-	   else
-	   {
-			dprintk(CVP_INFO," %s:  iommu_map SPAD0_LPI_LB Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
-					  SPAD0_LPI_LB_IOVA,
-					  SPAD0_LPI_LB,
-					  SPAD0_LPI_LB_REG_SIZE);
-			device->reg_map_status_flg |= SPAD0_LPI_LB_REG_MAP_FLG;
 
-	   }
-	   //SPAD1_LPI_LB iova
-	   rc = iommu_map(cb->domain,
-					  SPAD1_LPI_LB_IOVA,
-					  SPAD1_LPI_LB,
-					  SPAD1_LPI_LB_REG_SIZE,
-					  IOMMU_MMIO | IOMMU_READ | IOMMU_WRITE);
-	   if (rc) {
-			dprintk(CVP_ERR," %s:  iommu_map SPAD1_LPI_LB failed, rc:%d\n", __func__, rc);
-	   }
-	   else
-	   {
-			dprintk(CVP_INFO," %s:  iommu_map SPAD1_LPI_LB Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
-					  SPAD1_LPI_LB_IOVA,
-					  SPAD1_LPI_LB,
-					  SPAD1_LPI_LB_REG_SIZE);
-			device->reg_map_status_flg |= SPAD1_LPI_LB_REG_MAP_FLG;
-
-	   }
-	   //SPAD_BROADCAST_ORLPI_LB iova
-	   rc = iommu_map(cb->domain,
-					  SPAD_BROADCAST_ORLPI_LB_IOVA,
-					  SPAD_BROADCAST_ORLPI_LB,
-					  SPAD_BROADCAST_ORLPI_LB_REG_SIZE,
-					  IOMMU_MMIO | IOMMU_READ | IOMMU_WRITE);
-	   if (rc) {
-			dprintk(CVP_ERR," %s:  iommu_map SPAD_BROADCAST_ORLPI_LB failed, rc:%d\n", __func__, rc);
-	   }
-	   else
-	   {
-			dprintk(CVP_INFO," %s:  iommu_map SPAD_BROADCAST_ORLPI_LB Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
-					  SPAD_BROADCAST_ORLPI_LB_IOVA,
-					  SPAD_BROADCAST_ORLPI_LB,
-					  SPAD_BROADCAST_ORLPI_LB_REG_SIZE);
-			device->reg_map_status_flg |= SPAD_BROADCAST_ORLPI_LB_REG_MAP_FLG;
-
-	   }
-	   //SPAD_BROADCAST_ANDLPI_LB iova
-	   rc = iommu_map(cb->domain,
-					  SPAD_BROADCAST_ANDLPI_LB_IOVA,
-					  SPAD_BROADCAST_ANDLPI_LB,
-					  SPAD_BROADCAST_ANDLPI_LB_REG_SIZE,
-					  IOMMU_MMIO | IOMMU_READ | IOMMU_WRITE);
-	   if (rc) {
-			dprintk(CVP_ERR," %s:  iommu_map SPAD_BROADCAST_ANDLPI_LB failed, rc:%d\n", __func__, rc);
-	   }
-	   else
-	   {
-			dprintk(CVP_INFO," %s:  iommu_map SPAD_BROADCAST_ANDLPI_LB Mapping status , rc:%d, i_p_s :%x,%x,%x\n", __func__, rc,
-					  SPAD_BROADCAST_ANDLPI_LB_IOVA,
-					  SPAD_BROADCAST_ANDLPI_LB,
-					  SPAD_BROADCAST_ANDLPI_LB_REG_SIZE);
-			device->reg_map_status_flg |= SPAD_BROADCAST_ANDLPI_LB_REG_MAP_FLG;
-	   }
-//spad regs mapping
 	}
 	return rc;
 }
+
 static int __dev_regspace_unmap(struct iris_hfi_device *device)
 {
 	int rc = 0;
 	struct context_bank_info *cb;
+
 	//non-secure context bank
 	cb = msm_cvp_smem_get_context_bank(device->res, 0);
 	if (!cb) {
-			dprintk(CVP_ERR," %s: failed to get context bank\n", __func__);
-			rc = -EINVAL;
-			return rc;
+		dprintk(CVP_ERR," %s: failed to get context bank\n", __func__);
+		rc = -EINVAL;
+		goto err_get_context_bank;
 	}
-	else {
-			if (((device->reg_map_status_flg) & IPCLITE_REG_MAP_FLG) == IPCLITE_REG_MAP_FLG) {
-				iommu_unmap(cb->domain, device->res->ipclite_iova, device->res->ipclite_size);//
-				dprintk(CVP_INFO," %s:  iommu_map ipclite unmapping done\n", __func__);
-			} else {
-				dprintk(CVP_ERR," %s:  iommu_map ipclite mapping is not done\n", __func__);
-			}
-			if (((device->reg_map_status_flg) & DISPLAY_REG_MAP_FLG) == DISPLAY_REG_MAP_FLG) {
-				iommu_unmap(cb->domain, device->res->display_iova, device->res->display_size);//
-				dprintk(CVP_INFO," %s:  iommu_map display unmapping done\n", __func__);
-			} else {
-				dprintk(CVP_ERR," %s:  iommu_map display mapping is not done\n", __func__);
-			}
-			if (((device->reg_map_status_flg) & AONTIMERS_REG_MAP_FLG) == AONTIMERS_REG_MAP_FLG) {
-				iommu_unmap(cb->domain, device->res->aontimers_iova, device->res->aontimers_size);//
-				dprintk(CVP_INFO," %s:  iommu_map aontimers unmapping done\n", __func__);
-			} else {
-				dprintk(CVP_ERR," %s:  iommu_map aontimers mapping is not done\n", __func__);
-			}
-			if (((device->reg_map_status_flg) & HWMUTEX_REG_MAP_FLG) == HWMUTEX_REG_MAP_FLG) {
-				iommu_unmap(cb->domain, device->res->hwmutex_iova, device->res->hwmutex_size);//
-				dprintk(CVP_INFO," %s:  iommu_map hwmutex unmapping done\n", __func__);
-			} else {
-				dprintk(CVP_ERR," %s:  iommu_map hwmutex mapping is not done\n", __func__);
-			}
-			if (((device->reg_map_status_flg) & SPAD0_LPI_LB_REG_MAP_FLG) == SPAD0_LPI_LB_REG_MAP_FLG) {
-				iommu_unmap(cb->domain, SPAD0_LPI_LB_IOVA, SPAD0_LPI_LB_REG_SIZE);//
-				dprintk(CVP_INFO," %s:  iommu_map SPAD0_LPI_LB unmapping done\n", __func__);
-			} else {
-				dprintk(CVP_ERR," %s:  iommu_map SPAD0_LPI_LB mapping is not done\n", __func__);
-			}
-			if (((device->reg_map_status_flg) & SPAD1_LPI_LB_REG_MAP_FLG) == SPAD1_LPI_LB_REG_MAP_FLG) {
-				iommu_unmap(cb->domain, SPAD1_LPI_LB_IOVA, SPAD1_LPI_LB_REG_SIZE);//
-				dprintk(CVP_INFO," %s:  iommu_map SPAD1_LPI_LB unmapping done\n", __func__);
-			} else {
-				dprintk(CVP_ERR," %s:  iommu_map SPAD1_LPI_LB mapping is not done\n", __func__);
-			}
-			if (((device->reg_map_status_flg) & SPAD_BROADCAST_ORLPI_LB_REG_MAP_FLG) == SPAD_BROADCAST_ORLPI_LB_REG_MAP_FLG) {
-				iommu_unmap(cb->domain, SPAD_BROADCAST_ORLPI_LB_IOVA, SPAD_BROADCAST_ORLPI_LB_REG_SIZE);//
-				dprintk(CVP_INFO," %s:  iommu_map SPAD_BROADCAST_ORLPI_LB unmapping done\n", __func__);
-			} else {
-				dprintk(CVP_ERR," %s:  iommu_map SPAD_BROADCAST_ORLPI_LB mapping is not done\n", __func__);
-			}
-			if (((device->reg_map_status_flg) & SPAD_BROADCAST_ANDLPI_LB_REG_MAP_FLG) == SPAD_BROADCAST_ANDLPI_LB_REG_MAP_FLG) {
-				iommu_unmap(cb->domain, SPAD_BROADCAST_ANDLPI_LB_IOVA, SPAD_BROADCAST_ANDLPI_LB_REG_SIZE);//
-				dprintk(CVP_INFO," %s:  iommu_map SPAD_BROADCAST_ANDLPI_LB unmapping done\n", __func__);
-			} else {
-				dprintk(CVP_ERR," %s:  iommu_map SPAD_BROADCAST_ANDLPI_LB mapping is not done\n", __func__);
-			}
-	}
+	iommu_unmap(cb->domain, device->res->ipclite_iova, device->res->ipclite_size);
+	iommu_unmap(cb->domain, device->res->aontimers_iova, device->res->aontimers_size);
+	iommu_unmap(cb->domain, device->res->hwmutex_iova, device->res->hwmutex_size);
+
+err_get_context_bank:
 	return rc;
 }
-static int __llcc_regspace_unmap(struct iris_hfi_device *device)
-{
-	int rc = 0;
-	struct context_bank_info *cb;
-	//non-secure context bank
-	cb = msm_cvp_smem_get_context_bank(device->res, 0);
-	if (!cb) {
-			dprintk(CVP_ERR," %s: failed to get context bank\n", __func__);
-			rc = -EINVAL;
-            return rc;
-	}
-	else {
-			if (((device->reg_map_status_flg) & LLCCEVALEFT_REG_MAP_FLG) == LLCCEVALEFT_REG_MAP_FLG) {
-				iommu_unmap(cb->domain, device->res->llccevaleft_iova, device->res->llccevaleft_size);//
-				dprintk(CVP_INFO," %s:  iommu_map llccevaleft unmapping done\n", __func__);
-			} else {
-				dprintk(CVP_ERR," %s:  iommu_map llccevaleft mapping is not done\n", __func__);
-			}
-			if (((device->reg_map_status_flg) & LLCCEVARIGHT_REG_MAP_FLG) == LLCCEVARIGHT_REG_MAP_FLG) {
-				iommu_unmap(cb->domain, device->res->llccevaright_iova, device->res->llccevaright_size);//
-				dprintk(CVP_INFO," %s:  iommu_map llccevaright unmapping done\n", __func__);
-			} else {
-				dprintk(CVP_ERR," %s:  iommu_map llccevaright mapping is not done\n", __func__);
-			}
-			if (((device->reg_map_status_flg) & LLCCEVAGAIN_REG_MAP_FLG) == LLCCEVAGAIN_REG_MAP_FLG) {
-				iommu_unmap(cb->domain, device->res->llccevagain_iova, device->res->llccevagain_size);//
-				dprintk(CVP_INFO," %s:  iommu_map llccevagain unmapping done\n", __func__);
-			} else {
-				dprintk(CVP_ERR," %s:  iommu_map llccevagain mapping is not done\n", __func__);
-			}
-	}
-	return rc;
-}
+
 static int __load_fw(struct iris_hfi_device *device)
 {
 	int rc = 0;
@@ -6624,19 +4670,9 @@ static int __load_fw(struct iris_hfi_device *device)
 		goto fail_init_pkt;
 	}
 
-	mutex_lock(&device->mmcx_lock);
-	poweron_inprogress = true;
 	rc = __iris_power_on(device);
-	poweron_inprogress = false;
-	mutex_unlock(&device->mmcx_lock);
 	if (rc) {
 		dprintk(CVP_ERR, "Failed to power on iris in in load_fw\n");
-		goto fail_iris_power_on;
-	}
-
-	rc = __register_for_MMCX(device);
-	if (rc) {
-		dprintk(CVP_ERR, "Failed to register MMCX callback\n");
 		goto fail_iris_power_on;
 	}
 
@@ -6668,16 +4704,6 @@ static void __unload_fw(struct iris_hfi_device *device)
 		flush_workqueue(device->iris_pm_workq);
 
 	unload_cvp_fw_impl(device);
-	#if 0
-	/*
-		Need to decide where to call unregister mmcx call. Calling here is
-		leading to crash in SSR case.
-		Multiple register mmcx call will not cause issue as notifier call chain does
-		not create duplicate handle.
-	*/
-	if (__unregister_for_MMCX(device))
-		dprintk(CVP_ERR, "Failed to un-register MMCX callback\n");
-	#endif
 	__interface_queues_release(device);
 	call_iris_op(device, power_off, device);
 	__deinit_resources(device);
@@ -6747,6 +4773,7 @@ static const char * const mid_names[16] = {
 	"Invalid",
 	"Invalid"
 };
+
 static void __print_reg_details(u32 val)
 {
 	u32 mid, sid;
@@ -6995,15 +5022,7 @@ static struct iris_hfi_device *__add_device(u32 device_id,
 		goto err_cleanup;
 	}
 
-	hdevice->clk_unprepare_workq = create_singlethread_workqueue(
-			"clk_unprepare_workq");
-	if (!hdevice->clk_unprepare_workq) {
-		dprintk(CVP_ERR, ": create clk unprepare workq failed\n");
-		goto err_cleanup;
-	}
-
 	mutex_init(&hdevice->lock);
-	mutex_init(&hdevice->mmcx_lock);
 	INIT_LIST_HEAD(&hdevice->sess_head);
 
 	return hdevice;
@@ -7048,17 +5067,12 @@ void cvp_iris_hfi_delete_device(void *device)
 		return;
 
 	mutex_destroy(&dev->lock);
-	mutex_destroy(&dev->mmcx_lock);
 	destroy_workqueue(dev->cvp_workq);
 	destroy_workqueue(dev->iris_pm_workq);
 	free_irq(dev->cvp_hal_data->irq, dev);
 	iounmap(dev->cvp_hal_data->register_base);
 	iounmap(dev->cvp_hal_data->gcc_reg_base);
 	iounmap(dev->cvp_hal_data->aon_reg_base);
-	iounmap(dev->cvp_hal_data->spad0_lpi_lb_reg_base);
-	iounmap(dev->cvp_hal_data->spad1_lpi_lb_reg_base);
-	iounmap(dev->cvp_hal_data->spad_broadcast_orlpi_lb_reg_base);
-	iounmap(dev->cvp_hal_data->spad_broadcast_andlpi_lb_reg_base);
 	kfree(dev->cvp_hal_data);
 	kfree(dev->response_pkt);
 	kfree(dev->raw_packet);
@@ -7084,12 +5098,13 @@ static int iris_hfi_validate_session(void *sess, const char *func)
 	mutex_unlock(&device->lock);
 	return rc;
 }
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-static int iris_hfi_notify_gpu_status(void *device, u32 packet_type, void *session)
+
+#ifndef HALLIDAY_DISABLE
+static int iris_hfi_notify_gpu_status(void *device, u32 packet_type)
 {
 	int rc = 0;
 	struct iris_hfi_device *dev;
-	struct cvp_hfi_cmd_session_gpu_packet pkt;
+	struct cvp_hfi_cmd_sys_gpu_packet pkt;
 
 	if (!device) {
 		dprintk(CVP_ERR, "Invalid device\n");
@@ -7097,8 +5112,7 @@ static int iris_hfi_notify_gpu_status(void *device, u32 packet_type, void *sessi
 	}
 
 	dev = device;
-	rc = call_hfi_pkt_op(dev, session_gpu_cmd_prep, &pkt, packet_type,
-					(struct cvp_hal_session *)session);
+	rc = call_hfi_pkt_op(dev, sys_gpu_cmd_prep, &pkt, packet_type);
 	if (rc) {
 		dprintk(CVP_ERR, "set_res: failed to create packet\n");
 		goto err_create_pkt;
@@ -7110,6 +5124,7 @@ err_create_pkt:
 	return rc;
 }
 #endif
+
 static void iris_init_hfi_callbacks(struct cvp_hfi_device *hdev)
 {
 	hdev->core_init = iris_hfi_core_init;
@@ -7122,7 +5137,6 @@ static void iris_init_hfi_callbacks(struct cvp_hfi_device *hdev)
 	hdev->session_set_buffers = iris_hfi_session_set_buffers;
 	hdev->session_release_buffers = iris_hfi_session_release_buffers;
 	hdev->session_send = iris_hfi_session_send;
-	hdev->session_stop = iris_hfi_session_stop;
 	hdev->session_flush = iris_hfi_session_flush;
 	hdev->scale_clocks = iris_hfi_scale_clocks;
 	hdev->vote_bus = iris_hfi_vote_buses;
@@ -7134,11 +5148,9 @@ static void iris_init_hfi_callbacks(struct cvp_hfi_device *hdev)
 	hdev->noc_error_info = iris_hfi_noc_error_info;
 	hdev->validate_session = iris_hfi_validate_session;
 	hdev->pm_qos_update = iris_pm_qos_update;
-	hdev->spad_activate = iris_enable_spad_subcache;
-	hdev->spad_deactivate = iris_disable_spad_subcache;
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
+	#ifndef HALLIDAY_DISABLE
 	hdev->notify_gpu_status = iris_hfi_notify_gpu_status;
-#endif
+	#endif
 }
 
 int cvp_iris_hfi_initialize(struct cvp_hfi_device *hdev, u32 device_id,
@@ -7167,11 +5179,3 @@ err_iris_hfi_init:
 	return rc;
 }
 
-void lsr_smmu_fault_handler_notifier(struct iris_hfi_device *device)
-{
-	uint32_t read_val = 0;
-	__write_register(device, CVP_CPU_CS_SCIBARG3, 1);
-	read_val = __read_register(device, CVP_CPU_CS_SCIBARG3);
-	dprintk(CVP_INFO, "CVP_CPU_CS_SCIBARG3:  read_val : %d\n",read_val);
-	__write_register(device, CVP_CPU_CS_H2ASOFTINT, 1);
-}

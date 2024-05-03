@@ -16,10 +16,6 @@
 #include "msm_cvp_resources.h"
 #include "cvp_hfi_helper.h"
 
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-#include "msm_gpu_eva.h"
-#endif
-
 #define CONTAINS(__a, __sz, __t) (\
 	(__t >= __a) && \
 	(__t < __a + __sz) \
@@ -67,10 +63,6 @@ enum cvp_status {
 	CVP_ERR_CLIENT_PRESENT = 0x90000001,
 	CVP_ERR_CLIENT_FATAL,
 	CVP_ERR_CMD_QUEUE_FULL,
-        CVP_ERR_LSR_STALL_DETECTED,
-        CVP_ERR_LSR_FENCE_FAILURE,
-        CVP_ERR_LSR_CDM_BUFFER_NULL,
-        CVP_ERR_LSR_INPUT_TASKQ_FULL,
 	CVP_ERR_UNUSED = 0x10000000
 };
 
@@ -83,10 +75,9 @@ enum hal_ssr_trigger_type {
 	SSR_SW_DIV_BY_ZERO,
 	SSR_HW_WDOG_IRQ,
 	SSR_SESSION_ABORT,
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
+    #ifndef HALLIDAY_DISABLE
 	SSR_GPU,
-#endif
-	SSR_HW_FENCE_TIMEOUT,
+    #endif
 };
 
 enum hal_intra_refresh_mode {
@@ -137,6 +128,8 @@ enum hal_command_response {
 	HAL_SYS_IDLE,
 	HAL_SYS_DEBUG,
 	HAL_SYS_WATCHDOG_TIMEOUT,
+	HAL_SYS_GMU_START_DONE,
+	HAL_SYS_GMU_STOP_DONE,
 	HAL_SYS_ERROR,
 	/* SESSION COMMANDS_DONE */
 	HAL_SESSION_EVENT_CHANGE,
@@ -157,10 +150,6 @@ enum hal_command_response {
 	HAL_SESSION_RELEASE_RESOURCE_DONE,
 	HAL_SESSION_PROPERTY_INFO,
 	HAL_SESSION_DUMP_NOTIFY,
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-	HAL_SESSION_GMU_START_DONE,
-	HAL_SESSION_GMU_STOP_DONE,
-#endif
 	HAL_SESSION_ERROR,
 	HAL_RESPONSE_UNUSED = 0x10000000,
 };
@@ -269,7 +258,6 @@ struct cvp_hfi_device {
 	int (*session_abort)(void *session);
 	int (*session_set_buffers)(void *sess, u32 iova, u32 size);
 	int (*session_release_buffers)(void *sess);
-	int (*session_stop)(void *session);
 	int (*session_send)(void *sess, struct eva_kmd_hfi_packet *in_pkt);
 	int (*session_flush)(void *sess);
 	int (*scale_clocks)(void *dev, u32 freq);
@@ -284,12 +272,9 @@ struct cvp_hfi_device {
 	int (*noc_error_info)(void *dev);
 	int (*validate_session)(void *sess, const char *func);
 	int (*pm_qos_update)(void *device);
-    int (*spad_activate)(void *dev);
-    int (*spad_deactivate)(void *dev);
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-	int (*notify_gpu_status)(void *device, u32 packet_type,
-						void *sess);
-#endif
+    #ifndef HALLIDAY_DISABLE
+	int (*notify_gpu_status)(void *device, u32 packet_type);
+    #endif
 };
 
 typedef void (*hfi_cmd_response_callback) (enum hal_command_response cmd,
@@ -326,5 +311,5 @@ unsigned int get_msg_errorcode(void *msg);
 int get_msg_opconfigs(void *msg, unsigned int *session_id,
 		unsigned int *error_type, unsigned int *config_id);
 extern const struct msm_cvp_hfi_defs cvp_hfi_defs[];
-void print_hfi_queue_info(struct cvp_hfi_device *hdev);
+
 #endif /*__CVP_HFI_API_H__ */

@@ -14,6 +14,7 @@
 #include <linux/pm_qos.h>
 #include <linux/spinlock.h>
 #include <linux/soc/qcom/msm_mmrm.h>
+#include <linux/interrupt.h>
 #include "cvp_hfi_api.h"
 #include "cvp_hfi_helper.h"
 #include "cvp_hfi_api.h"
@@ -198,17 +199,9 @@ struct cvp_hal_data {
 	u8 __iomem *register_base;
 	u8 __iomem *gcc_reg_base;
 	u8 __iomem *aon_reg_base;
-	u8 __iomem *spad0_lpi_lb_reg_base;
-	u8 __iomem *spad1_lpi_lb_reg_base;
-	u8 __iomem *spad_broadcast_orlpi_lb_reg_base;
-	u8 __iomem *spad_broadcast_andlpi_lb_reg_base;
 	u32 register_size;
 	u32 gcc_reg_size;
 	u32 aon_reg_size;
-	u32 spad0_lpi_lb_reg_size;
-	u32 spad1_lpi_lb_reg_size;
-	u32 spad_broadcast_orlpi_lb_reg_size;
-	u32 spad_broadcast_andlpi_lb_reg_size;
 };
 
 struct iris_resources {
@@ -245,14 +238,12 @@ struct iris_hfi_device {
 	u32 clk_freq;
 	u32 last_packet_type;
 	u32 error;
-	u32 reg_map_status_flg;
 	unsigned long clk_bitrate;
 	unsigned long scaled_rate;
 	struct msm_cvp_gov_data bus_vote;
 	bool power_enabled;
 	bool reg_dumped;
 	struct mutex lock;
-	struct mutex mmcx_lock;
 	msm_cvp_callback callback;
 	struct cvp_mem_addr iface_q_table;
 	struct cvp_mem_addr dsp_iface_q_table;
@@ -279,11 +270,10 @@ struct iris_hfi_device {
 	unsigned int skip_pc_count;
 	struct msm_cvp_capability *sys_init_capabilities;
 	struct iris_hfi_vpu_ops *vpu_ops;
-	struct notifier_block mmcx_PC_nb;
-	struct regulator       *rpmh_mmcx_reg;
-	struct workqueue_struct *clk_unprepare_workq;
 };
 
+irqreturn_t cvp_hfi_isr(int irq, void *dev);
+irqreturn_t iris_hfi_core_work_handler(int irq, void *data);
 void cvp_iris_hfi_delete_device(void *device);
 
 int cvp_iris_hfi_initialize(struct cvp_hfi_device *hdev, u32 device_id,
@@ -292,4 +282,5 @@ int cvp_iris_hfi_initialize(struct cvp_hfi_device *hdev, u32 device_id,
 
 int load_cvp_fw_impl(struct iris_hfi_device *device);
 int unload_cvp_fw_impl(struct iris_hfi_device *device);
+uint64_t __read_aon_time(struct iris_hfi_device *device);
 #endif

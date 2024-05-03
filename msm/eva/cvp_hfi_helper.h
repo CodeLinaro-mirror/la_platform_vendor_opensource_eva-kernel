@@ -3,14 +3,11 @@
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
  * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  */
-
+ 
+#include "cvp_comm_def.h"
 #ifndef __H_CVP_HFI_HELPER_H__
 #define __H_CVP_HFI_HELPER_H__
 
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-#include "msm_gpu_eva.h"
-#endif
-#include <media/msm_eva_private.h>
 #define HFI_COMMON_BASE				(0)
 #define HFI_DOMAIN_BASE_COMMON		(HFI_COMMON_BASE + 0)
 #define HFI_DOMAIN_BASE_CVP			(HFI_COMMON_BASE + 0x04000000)
@@ -77,10 +74,6 @@
 #define  HFI_ERR_SESSION_KERNEL_MAX_STREAMS_REACHED     (HFI_COMMON_BASE + 0x101D) /*Maximum Streams per Kernel reached in a session*/
 #define  HFI_ERR_SESSION_MAX_STREAMS_REACHED            (HFI_COMMON_BASE + 0x101E) /*Maximum Streams Reached in a session*/
 #define  HFI_ERR_SESSION_HW_HANG_DETECTED               (HFI_COMMON_BASE + 0x101F) /*HW hang was detected in one of the HW blocks for a frame*/
-#define  HFI_ERR_SESSION_LSR_STALL_DETECTED             (HFI_COMMON_BASE + 0x1020)
-#define  HFI_ERR_SESSION_LSR_FENCE_FAILURE              (HFI_COMMON_BASE + 0x1021) /*LSR Frame Fences failure detected*/
-#define  HFI_ERR_SESSION_CDM_BUFFER_NULL                (HFI_COMMON_BASE + 0x1022) /*CDM Buffer Address is Null */
-#define  HFI_ERR_SESSION_INPUT_TASKQ_FULL               (HFI_COMMON_BASE + 0x1023) /*Input Task Queue is full */
 
 #define HFI_EVENT_SYS_ERROR				(HFI_COMMON_BASE + 0x1)
 #define HFI_EVENT_SESSION_ERROR			(HFI_COMMON_BASE + 0x2)
@@ -131,7 +124,7 @@
 #define HFI_DEBUG_MSG_ERROR					0x00000008
 #define HFI_DEBUG_MSG_FATAL					0x00000010
 #define HFI_DEBUG_MSG_PERF					0x00000020
-
+#define HFI_DEBUG_MSG_TIME					0x00000080
 #define HFI_DEBUG_MODE_QUEUE					0x00000001
 #define HFI_DEBUG_MODE_QDSS					0x00000002
 
@@ -146,21 +139,9 @@ struct cvp_hfi_enable {
 
 #define HFI_RESOURCE_SYSCACHE 0x00000002
 
-typedef enum eEVA_LSR_SUBCACHE_IDX
-{
-EVA = 0,
-LSR_LEFT = 1,
-LSR_RIGHT = 2,
-GAIN_MESH = 3,
-CSC_LEFT = 4,
-CSC_RIGHT = 5
-}eEVA_LSR_SUBCACHE_IDX;
-
 struct cvp_hfi_resource_subcache_type {
 	u32 size;
 	u32 sc_id;
-    u32 scid_Client;//eEVA_LSR_SUBCACHE_IDX
-    u32 scid_RegAddr;
 };
 
 struct cvp_hfi_resource_syscache_info_type {
@@ -181,6 +162,8 @@ struct cvp_hfi_resource_syscache_info_type {
 #define HFI_CMD_SYS_SESSION_END		(HFI_CMD_SYS_COMMON_START + 0x008)
 #define HFI_CMD_SYS_SET_BUFFERS		(HFI_CMD_SYS_COMMON_START + 0x009)
 #define HFI_CMD_SYS_SESSION_ABORT	(HFI_CMD_SYS_COMMON_START + 0x00A)
+#define HFI_CMD_SYS_START_GMU_CMD	(HFI_CMD_SYS_COMMON_START + 0x00E)
+#define HFI_CMD_SYS_STOP_GMU_CMD	(HFI_CMD_SYS_COMMON_START + 0x00F)
 #define HFI_CMD_SYS_TEST_START		(HFI_CMD_SYS_COMMON_START + 0x100)
 
 #define HFI_MSG_SYS_COMMON_START			\
@@ -197,7 +180,8 @@ struct cvp_hfi_resource_syscache_info_type {
 #define HFI_MSG_SYS_PROPERTY_INFO	(HFI_MSG_SYS_COMMON_START + 0xA)
 #define HFI_MSG_SYS_SESSION_ABORT_DONE	(HFI_MSG_SYS_COMMON_START + 0xC)
 #define HFI_MSG_SESSION_SYNC_DONE      (HFI_MSG_SESSION_OX_START + 0xD)
-
+#define HFI_MSG_SYS_START_GMU_CMD_DONE	(HFI_MSG_SYS_COMMON_START + 0xE)
+#define HFI_MSG_SYS_STOP_GMU_CMD_DONE	(HFI_MSG_SYS_COMMON_START + 0xF)
 
 #define HFI_MSG_SESSION_COMMON_START		\
 	(HFI_DOMAIN_BASE_COMMON + HFI_ARCH_COMMON_OFFSET +	\
@@ -329,6 +313,19 @@ struct cvp_hfi_client {
 	u32 reserved2;
 } __packed;
 
+#ifdef CVP_CONFIG_SYNX_V2
+struct cvp_hfi_buf_type {
+	u32 iova;
+	u32 size;
+	u32 offset;
+	u32 flags;
+	u32 reserved1;
+	u32 reserved2;
+	u32 fence_type;
+	u32 input_handle;
+	u32 output_handle;
+};
+#else
 struct cvp_hfi_buf_type {
 	u32 iova;
 	u32 size;
@@ -337,6 +334,7 @@ struct cvp_hfi_buf_type {
 	u32 reserved1;
 	u32 reserved2;
 };
+#endif
 
 struct cvp_hfi_cmd_session_set_buffers_packet {
 	u32 size;
@@ -356,22 +354,6 @@ struct cvp_session_release_buffers_packet {
 	u32 num_buffers;
 	u32 buffer_idx;
 } __packed;
-
-struct cvp_session_stop_packet {
-	u32 size;
-	u32 packet_type;
-	u32 session_id;
-	struct cvp_hfi_client client_data;
-} __packed;
-
-struct cvp_session_stop_packet_done
-{
-	u32 size;
-	u32 packet_type;
-	u32 session_id;
-	u32 error_type;
-	struct cvp_hfi_client client_data;
-}__packed;
 
 struct cvp_hfi_cmd_session_hdr {
 	u32 size;
@@ -401,20 +383,13 @@ struct cvp_hfi_dumpmsg_session_hdr {
 } __packed;
 
 #define HFI_MAX_HW_ACTIVATIONS_PER_FRAME (6)
-#ifdef LSR_SPLIT_VOTING
-#define HFI_MAX_HW_THREADS (5)
-#else
 #define HFI_MAX_HW_THREADS (4)
-#endif
 
 enum hfi_hw_thread {
 	HFI_HW_FDU,
 	HFI_HW_MPU,
 	HFI_HW_OD,
-	HFI_HW_ICA,
-#ifdef LSR_SPLIT_VOTING
-	HFI_HW_LSR
-#endif
+	HFI_HW_ICA
 };
 
 struct cvp_hfi_msg_session_hdr_ext {
@@ -543,19 +518,18 @@ struct cvp_hfi_msg_sys_session_flush_done_packet {
 	u32 error_type;
 	struct cvp_hfi_client client_data;
 };
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-struct cvp_hfi_cmd_session_gpu_packet {
+
+#ifndef HALLIDAY_DISABLE
+struct cvp_hfi_cmd_sys_gpu_packet {
 	u32 size;
 	u32 packet_type;
-	u32 session_id;
 	struct cvp_hfi_client client_data;
 	u32 reserved;
 }__packed;
 
-struct cvp_hfi_msg_session_gpu_packet {
+struct cvp_hfi_msg_sys_gpu_packet {
 	u32 size;
 	u32 packet_type;
-	u32 session_id;
 	u32 error_type;
 	struct cvp_hfi_client client_data;
 	u32 reserved;

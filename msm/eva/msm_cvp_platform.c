@@ -111,7 +111,7 @@ static struct msm_cvp_common_data sm8550_common_data[] = {
 	},
 	{
 		.key = "qcom,sw-power-collapse",
-		.value = 1,
+		.value = 0,
 	},
 	{
 		.key = "qcom,domain-attr-non-fatal-faults",
@@ -168,6 +168,11 @@ static struct msm_cvp_ubwc_config_data aurora_ubwc_data[] = {
 	UBWC_CONFIG(1, 1, 1, 0, 0, 0, 8, 32, 13, 0, 0),
 };
 
+/* Default UBWC config for LPDDR5 */
+static struct msm_cvp_ubwc_config_data halliday_ubwc_data[] = {
+	UBWC_CONFIG(1, 1, 1, 0, 0, 0, 8, 32, 16, 0, 0),
+};
+
 static struct msm_cvp_qos_setting waipio_noc_qos = {
 	.axi_qos = 0x99,
 	.prioritylut_low = 0x22222222,
@@ -176,32 +181,17 @@ static struct msm_cvp_qos_setting waipio_noc_qos = {
 	.dangerlut_low = 0x0,
 	.safelut_low = 0xffff,
 };
-struct msm_lsr_csc_gcx_qos_setting aurora_lsr_csc_gcx_qos = {
-	.l_prioritylut_low = 0x33333333,
-	.l_prioritylut_high = 0x33333333,
-	.l_urgency_low = 0x1033,
-	.l_dangerlut_low = 0x0,
-	.l_safelut_low = 0xFFFF,
-	.r_prioritylut_low = 0x33333333,
-	.r_prioritylut_high = 0x33333333,
-	.r_urgency_low = 0x1033,
-	.r_dangerlut_low = 0x0,
-	.r_safelut_low = 0xFFFF,
-};
-struct msm_lsr_ddl_qos_setting aurora_lsr_ddl_qos = {
-	.l_prioritylut_low = 0x33333333,
-	.l_prioritylut_high = 0x33333333,
-	.l_urgency_low = 0x1033,
-	.l_dangerlut_low = 0x0,
-	.l_safelut_low = 0xFFFF,
-	.r_prioritylut_low = 0x33333333,
-	.r_prioritylut_high = 0x33333333,
-	.r_urgency_low = 0x1033,
-	.r_dangerlut_low = 0x0,
-	.r_safelut_low = 0xFFFF,
-};
 
 static struct msm_cvp_qos_setting aurora_noc_qos = {
+	.axi_qos = 0x99,
+	.prioritylut_low = 0x22222222,
+	.prioritylut_high = 0x33333333,
+	.urgency_low = 0x1022,
+	.dangerlut_low = 0x0,
+	.safelut_low = 0xffff,
+};
+
+static struct msm_cvp_qos_setting halliday_noc_qos = {
 	.axi_qos = 0x99,
 	.prioritylut_low = 0x22222222,
 	.prioritylut_high = 0x33333333,
@@ -235,8 +225,15 @@ static struct msm_cvp_platform_data aurora_data = {
 	.vpu_ver = VPU_VERSION_5,
 	.ubwc_config = aurora_ubwc_data,
 	.noc_qos = &aurora_noc_qos,	/*Reuse Waipio setting*/  //TODO: AURORA-BU
-	.lsr_noc_csc_gcx_qos = &aurora_lsr_csc_gcx_qos,
-	.lsr_noc_ddl_qos = &aurora_lsr_ddl_qos,
+};
+
+static struct msm_cvp_platform_data halliday_data = {
+	.common_data = sm8450_common_data,
+	.common_data_length =  ARRAY_SIZE(sm8450_common_data),
+	.sku_version = 0,
+	.vpu_ver = VPU_VERSION_5,
+	.ubwc_config = halliday_ubwc_data,
+	.noc_qos = &halliday_noc_qos,
 };
 
 static struct msm_cvp_platform_data sm8550_data = {
@@ -256,6 +253,10 @@ static const struct of_device_id msm_cvp_dt_match[] = {
 	{
 		.compatible = "qcom,aurora-cvp",
 		.data = &aurora_data,
+	},
+	{
+		.compatible = "qcom,halliday-cvp",
+		.data = &halliday_data,
 	},
 	{
 		.compatible = "qcom,kalama-cvp",
@@ -347,6 +348,12 @@ const struct msm_cvp_hfi_defs cvp_hfi_defs[] = {
 	{
 		.size = 0xffffffff,
 		.type = HFI_CMD_SESSION_CVP_RELEASE_PERSIST_BUFFERS,
+		.is_config_pkt = true,
+		.resp = HAL_NO_RESP,
+	},
+	{
+		.size = HFI_DS_CONFIG_CMD_SIZE,
+		.type = HFI_CMD_SESSION_CVP_DS_CONFIG,
 		.is_config_pkt = true,
 		.resp = HAL_NO_RESP,
 	},
@@ -506,6 +513,7 @@ const struct msm_cvp_hfi_defs cvp_hfi_defs[] = {
 		.is_config_pkt = false,
 		.resp = HAL_NO_RESP,
 	},
+#ifndef HALLIDAY_DISABLE
 	{
 		.size = 0xFFFFFFFF,
 		.type = HFI_CMD_SESSION_EVA_LSR_CONFIG,
@@ -520,7 +528,7 @@ const struct msm_cvp_hfi_defs cvp_hfi_defs[] = {
 	},
 	{
 		.size = 0xFFFFFFFF,
-		.type = HFI_CMD_SESSION_EVA_LSR_SET_GAINMAP_GAMMA,
+		.type = HFI_CMD_SESSION_EVA_LSR_SET_GAINMAP,
 		.is_config_pkt = true,
 		.resp = HAL_NO_RESP,
 	},
@@ -548,6 +556,8 @@ const struct msm_cvp_hfi_defs cvp_hfi_defs[] = {
 		.is_config_pkt = true,
 		.resp = HAL_NO_RESP,
 	},
+#endif
+
 	{
 		.size = 0xFFFFFFFF,
 		.type = HFI_CMD_SESSION_STOP,
@@ -558,18 +568,6 @@ const struct msm_cvp_hfi_defs cvp_hfi_defs[] = {
 		.size = 0xFFFFFFFF,
 		.type = HFI_CMD_SESSION_START,
 		.is_config_pkt = false,
-		.resp = HAL_NO_RESP,
-	},
-	{
-		.size = 0xFFFFFFFF,
-		.type = HFI_CMD_SESSION_CVP_SYNX,
-		.is_config_pkt = true,
-		.resp = HAL_NO_RESP,
-	},
-	{
-		.size = 0xFFFFFFFF,
-		.type = HFI_CMD_SESSON_EVA_LSR_GCX_CONFIG_PARAMS,
-		.is_config_pkt = true,
 		.resp = HAL_NO_RESP,
 	},
 	{
@@ -617,6 +615,12 @@ const struct msm_cvp_hfi_defs cvp_hfi_defs[] = {
 	{
 		.size = 0xFFFFFFFF,
 		.type = HFI_CMD_SESSION_CVP_XRA_MATCH_CONFIG,
+		.is_config_pkt = true,
+		.resp = HAL_NO_RESP,
+	},
+    {
+		.size = 0xFFFFFFFF,
+		.type = HFI_CMD_SESSION_CVP_SYNX,
 		.is_config_pkt = true,
 		.resp = HAL_NO_RESP,
 	}

@@ -12,7 +12,7 @@ LOCAL_MODULE      := msm-eva.ko
 LOCAL_MODULE_KBUILD_NAME := msm/msm-eva.ko
 LOCAL_MODULE_PATH := $(KERNEL_MODULES_OUT)
 
-LOCAL_ADDITIONAL_DEPENDENCY      := synx-driver.ko msm_kgsl.ko
+LOCAL_ADDITIONAL_DEPENDENCY      := synx-driver.ko
 
 # export to kbuild
 KBUILD_OPTIONS += KBUILD_EXTRA_SYMBOLS=$(shell pwd)/$(call intermediates-dir-for,DLKM,mmrm-module-symvers)/Module.symvers

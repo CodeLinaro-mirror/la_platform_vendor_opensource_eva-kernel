@@ -8,7 +8,6 @@
 #include "cvp_hfi_api.h"
 #include "msm_cvp_debug.h"
 #include "msm_cvp_clocks.h"
-#include <linux/clk/qcom.h>
 
 static bool __mmrm_client_check_scaling_supported(
 				struct mmrm_client_desc *client)
@@ -304,92 +303,6 @@ int msm_cvp_scale_clocks(struct iris_hfi_device *device)
 	return rc;
 }
 
-int msm_cvp_enable_sw_ctrl(struct iris_hfi_device *device,
-		const char *name)
-{
-	struct clock_info *cl = NULL;
-	int rc = 0;
-
-	if (!device) {
-		dprintk(CVP_ERR, "Invalid params: %pK\n", device);
-		return -EINVAL;
-	}
-
-	iris_hfi_for_each_clock(device, cl) {
-		if (strcmp(cl->name, name))
-                        continue;
-		rc = clk_enable(cl->clk);
-		if (rc) {
-			dprintk(CVP_ERR, "Failed to enable clock %s\n",
-				cl->name);
-			return rc;
-		}
-		if (!__clk_is_enabled(cl->clk)) {
-			dprintk(CVP_ERR, "%s: clock %s not actually enabled\n",
-					__func__, cl->name);
-			qcom_clk_dump(cl->clk, NULL, NULL);
-			return -EINVAL;
-		}
-
-		dprintk(CVP_PWR, "Clock: %s enabled\n",
-				cl->name);
-		return 0;
-	}
-
-	dprintk(CVP_ERR, "%s clock %s not found\n", __func__, name);
-	return -EINVAL;
-}
-
-int msm_cvp_prepare_clk(struct iris_hfi_device *device,
-		const char *name)
-{
-	struct clock_info *cl = NULL;
-	int rc = 0;
-
-	if (!device) {
-		dprintk(CVP_ERR, "Invalid params: %pK\n", device);
-		return -EINVAL;
-	}
-
-	iris_hfi_for_each_clock(device, cl) {
-		if (strcmp(cl->name, name))
-                        continue;
-		rc = clk_prepare(cl->clk);
-		if (rc) {
-			dprintk(CVP_ERR, "Failed to prepare clock %s\n",
-				cl->name);
-			return rc;
-		}
-		dprintk(CVP_PWR, "Clock: %s prepared \n", cl->name);
-		return 0;
-	}
-
-	dprintk(CVP_ERR, "%s clock %s not found\n", __func__, name);
-	return -EINVAL;
-}
-
-int msm_cvp_unprepare_clk(struct iris_hfi_device *device,
-		const char *name)
-{
-	struct clock_info *cl = NULL;
-
-	if (!device) {
-		dprintk(CVP_ERR, "Invalid params: %pK\n", device);
-		return -EINVAL;
-	}
-
-	iris_hfi_for_each_clock_reverse(device, cl) {
-		if (strcmp(cl->name, name))
-                        continue;
-		clk_unprepare(cl->clk);
-		dprintk(CVP_PWR, "Clock: %s unprepared \n", cl->name);
-		return 0;
-	}
-
-	dprintk(CVP_ERR, "%s clock %s not found\n", __func__, name);
-	return -EINVAL;
-}
-
 int msm_cvp_prepare_enable_clk(struct iris_hfi_device *device,
 		const char *name)
 {
@@ -449,84 +362,6 @@ int msm_cvp_prepare_enable_clk(struct iris_hfi_device *device,
 	return -EINVAL;
 }
 
-int msm_cvp_vote_clk(struct iris_hfi_device *device,
-		const char *name, u32 freq)
-{
-	struct clock_info *cl = NULL;
-	int rc = 0;
-
-	if (!device) {
-		dprintk(CVP_ERR, "Invalid params: %pK\n", device);
-		return -EINVAL;
-	}
-
-	iris_hfi_for_each_clock(device, cl) {
-		if (strcmp(cl->name, name))
-                        continue;
-		/*
-		* For the clocks we control, set the rate prior to preparing
-		* them.  Since we don't really have a load at this point,
-		* scale it to the lowest frequency possible
-		*/
-        dprintk(CVP_PWR,
-				"%s: clock source to be set with rate: %ld for %s\n",
-				__func__, freq,name);
-				dprintk(CVP_PWR,
-					"%s: set clock with clk_set_rate\n",
-					__func__);
-				rc = clk_set_rate(cl->clk,freq);
-				if (rc) {
-					dprintk(CVP_ERR,
-						"Failed set clock %u %s: %d\n",
-						freq, cl->name, rc);
-					return rc;
-				}
-		dprintk(CVP_PWR, "Clock: %s is Voted : clk_set_rate rc %d\n",
-				cl->name,rc);
-		return 0;
-	}
-
-	dprintk(CVP_ERR, "%s clock %s not found\n", __func__, name);
-	return -EINVAL;
-}
-
-int msm_cvp_disable_sw_ctrl(struct iris_hfi_device *device,
-		const char *name)
-{
-	struct clock_info *cl;
-	int rc = 0;
-
-	if (!device) {
-		dprintk(CVP_ERR, "Invalid params: %pK\n", device);
-		return -EINVAL;
-	}
-
-	iris_hfi_for_each_clock_reverse(device, cl) {
-		if (strcmp(cl->name, name))
-			continue;
-
-		if (cl->clk) {
-			clk_disable(cl->clk);
-			dprintk(CVP_PWR, "Clock: %s disabled\n",
-				cl->name);
-
-			if (__clk_is_enabled(cl->clk)) {
-				dprintk(CVP_ERR, "%s: clock %s could not be disabled\n",
-						__func__, cl->name);
-				rc = -EINVAL;
-			}
-		} else {
-			dprintk(CVP_ERR, "%s: clk handle for %s is NULL!\n", __func__, cl->name);
-			rc = -EINVAL;
-		}
-
-		return rc;
-	}
-
-	dprintk(CVP_ERR, "%s clock %s not found\n", __func__, name);
-	return -EINVAL;
-}
-
 int msm_cvp_disable_unprepare_clk(struct iris_hfi_device *device,
 		const char *name)
 {
@@ -544,12 +379,6 @@ int msm_cvp_disable_unprepare_clk(struct iris_hfi_device *device,
 		clk_disable_unprepare(cl->clk);
 		dprintk(CVP_PWR, "Clock: %s disable and unprepare\n",
 			cl->name);
-
-		if (__clk_is_enabled(cl->clk)) {
-			dprintk(CVP_ERR, "%s: clock %s could not be disabled\n",
-					__func__, cl->name);
-			return -EINVAL;
-		}
 
 		if (cl->has_scaling) {
 			if (device->mmrm_cvp != NULL) {
@@ -569,7 +398,7 @@ int msm_cvp_disable_unprepare_clk(struct iris_hfi_device *device,
 	return -EINVAL;
 }
 
-int msm_cvp_init_regular_clocks(struct iris_hfi_device *device)
+int msm_cvp_init_clocks(struct iris_hfi_device *device)
 {
 	int rc = 0;
 	struct clock_info *cl = NULL;
@@ -579,24 +408,21 @@ int msm_cvp_init_regular_clocks(struct iris_hfi_device *device)
 		return -EINVAL;
 	}
 
-	dprintk(CVP_PWR, "Getting regular clocks\n");
+	iris_hfi_for_each_clock(device, cl) {
+
+		dprintk(CVP_PWR, "%s: scalable? %d, count %d\n",
+			cl->name, cl->has_scaling, cl->count);
+	}
 
 	iris_hfi_for_each_clock(device, cl) {
 		if (!cl->clk) {
-			if( strcmp(cl->name, "gcc_video_axi0_sreg") &&
-				strcmp(cl->name, "gcc_video_axi1_sreg") &&
-				strcmp(cl->name, "gcc_iris_ss_hf_axi1_sreg") &&
-				strcmp(cl->name, "gcc_iris_ss_spd_axi1_sreg") ) {
-				dprintk(CVP_PWR, "%s: scalable? %d, count %d\n",
-					cl->name, cl->has_scaling, cl->count);
-				cl->clk = clk_get(&device->res->pdev->dev, cl->name);
-				if (IS_ERR_OR_NULL(cl->clk)) {
-					dprintk(CVP_ERR,
-						"Failed to get clock: %s\n", cl->name);
-					rc = PTR_ERR(cl->clk) ? : -EINVAL;
-					cl->clk = NULL;
-					goto err_clk_get;
-				}
+			cl->clk = clk_get(&device->res->pdev->dev, cl->name);
+			if (IS_ERR_OR_NULL(cl->clk)) {
+				dprintk(CVP_ERR,
+					"Failed to get clock: %s\n", cl->name);
+				rc = PTR_ERR(cl->clk) ? : -EINVAL;
+				cl->clk = NULL;
+				goto err_clk_get;
 			}
 		}
 	}
@@ -604,83 +430,19 @@ int msm_cvp_init_regular_clocks(struct iris_hfi_device *device)
 	return 0;
 
 err_clk_get:
-	msm_cvp_deinit_regular_clocks(device);
+	msm_cvp_deinit_clocks(device);
 	return rc;
 }
 
-int msm_cvp_init_sreg_clocks(struct iris_hfi_device *device)
-{
-	int rc = 0;
-	struct clock_info *cl = NULL;
-
-	if (!device) {
-		dprintk(CVP_ERR, "Invalid params: %pK\n", device);
-		return -EINVAL;
-	}
-
-	dprintk(CVP_PWR, "Getting sreg clocks\n");
-
-	iris_hfi_for_each_clock(device, cl) {
-		if (!cl->clk) {
-			if( !strcmp(cl->name, "gcc_video_axi0_sreg") ||
-				!strcmp(cl->name, "gcc_video_axi1_sreg") ||
-				!strcmp(cl->name, "gcc_iris_ss_hf_axi1_sreg") ||
-				!strcmp(cl->name, "gcc_iris_ss_spd_axi1_sreg") ) {
-				dprintk(CVP_PWR, "%s: scalable? %d, count %d\n",
-					cl->name, cl->has_scaling, cl->count);
-				cl->clk = clk_get(&device->res->pdev->dev, cl->name);
-				if (IS_ERR_OR_NULL(cl->clk)) {
-					dprintk(CVP_ERR,
-						"Failed to get clock: %s\n", cl->name);
-					rc = PTR_ERR(cl->clk) ? : -EINVAL;
-					cl->clk = NULL;
-					goto err_clk_get;
-				}
-			}
-		}
-	}
-	device->clk_freq = 0;
-	return 0;
-
-err_clk_get:
-	msm_cvp_deinit_sreg_clocks(device);
-	return rc;
-}
-
-void msm_cvp_deinit_regular_clocks(struct iris_hfi_device *device)
+void msm_cvp_deinit_clocks(struct iris_hfi_device *device)
 {
 	struct clock_info *cl;
 
 	device->clk_freq = 0;
 	iris_hfi_for_each_clock_reverse(device, cl) {
 		if (cl->clk) {
-			if( strcmp(cl->name, "gcc_video_axi0_sreg") &&
-				strcmp(cl->name, "gcc_video_axi1_sreg") &&
-				strcmp(cl->name, "gcc_iris_ss_hf_axi1_sreg") &&
-				strcmp(cl->name, "gcc_iris_ss_spd_axi1_sreg") ) {
-					dprintk(CVP_PWR, "Putting regular clk %s\n", cl->name);
-					clk_put(cl->clk);
-					cl->clk = NULL;
-			}
-		}
-	}
-}
-
-void msm_cvp_deinit_sreg_clocks(struct iris_hfi_device *device)
-{
-	struct clock_info *cl;
-
-	device->clk_freq = 0;
-	iris_hfi_for_each_clock_reverse(device, cl) {
-		if (cl->clk) {
-			if( !strcmp(cl->name, "gcc_video_axi0_sreg") ||
-				!strcmp(cl->name, "gcc_video_axi1_sreg") ||
-				!strcmp(cl->name, "gcc_iris_ss_hf_axi1_sreg") ||
-				!strcmp(cl->name, "gcc_iris_ss_spd_axi1_sreg") ) {
-					dprintk(CVP_PWR, "Putting sreg clk %s\n", cl->name);
-					clk_put(cl->clk);
-					cl->clk = NULL;
-			}
+			clk_put(cl->clk);
+			cl->clk = NULL;
 		}
 	}
 }
@@ -692,7 +454,8 @@ int msm_cvp_set_bw(struct bus_info *bus, unsigned long bw)
 	if (!bus->client)
 		return -EINVAL;
 
-	dprintk(CVP_PWR, "bus->name =  %s to bw =  %u\n",bus->name, bw);
+    dprintk(CVP_PWR, "Voting bw = %u for bus->name = %s \n", bw, bus->name);
+
 	rc = icc_set_bw(bus->client, bw, 0);
 	if (rc)
 		dprintk(CVP_ERR, "Failed voting bus %s to ab %u\n",

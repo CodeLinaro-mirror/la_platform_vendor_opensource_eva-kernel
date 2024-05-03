@@ -6,9 +6,7 @@
 
 #include "hfi_packetization.h"
 #include "msm_cvp_debug.h"
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-#include "msm_gpu_eva.h"
-#endif
+
 /* Set up look-up tables to convert HAL_* to HFI_*.
  *
  * The tables below mostly take advantage of the fact that most
@@ -146,8 +144,9 @@ int cvp_create_pkt_cmd_sys_set_resource(
 		pkt->resource_type = HFI_RESOURCE_SYSCACHE;
 		hfi_sc_info->num_entries = res_sc_info->num_entries;
 
-		pkt->size += (sizeof(struct cvp_hfi_resource_subcache_type))
-				 * hfi_sc_info->num_entries;
+		pkt->size += ((sizeof(struct cvp_hfi_resource_syscache_info_type))
+                  + ((sizeof(struct cvp_hfi_resource_subcache_type)) * hfi_sc_info->num_entries)
+                  - sizeof(u32));
 
 		for (i = 0; i < hfi_sc_info->num_entries; i++) {
 			hfi_sc[i] = res_sc[i];
@@ -341,22 +340,6 @@ int cvp_create_pkt_cmd_session_release_buffers(
 
 	return 0;
 }
-int cvp_create_pkt_cmd_session_stop(
-		void *cmd,
-		struct cvp_hal_session *session)
-{
-	struct cvp_session_stop_packet *pkt;
-
-	if (!cmd || !session)
-		return -EINVAL;
-
-	pkt = (struct cvp_session_stop_packet *)cmd;
-	pkt->size = sizeof(struct cvp_session_stop_packet);
-	pkt->packet_type = HFI_CMD_SESSION_STOP;
-	pkt->session_id = hash32_ptr(session);
-
-	return 0;
-}
 
 int cvp_create_pkt_cmd_session_send(
 		struct eva_kmd_hfi_packet *out_pkt,
@@ -443,22 +426,22 @@ int cvp_create_pkt_cmd_sys_image_version(
 	pkt->rg_property_data[0] = HFI_PROPERTY_SYS_IMAGE_VERSION;
 	return 0;
 }
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-int cvp_create_pkt_cmd_session_gpu_status (
-	struct cvp_hfi_cmd_session_gpu_packet *pkt, u32 packet_type,
-					struct cvp_hal_session *session)
+
+#ifndef HALLIDAY_DISABLE
+int cvp_create_pkt_cmd_sys_gpu_status (
+	struct cvp_hfi_cmd_sys_gpu_packet *pkt, u32 packet_type)
 {
 	if (!pkt) {
 		dprintk(CVP_ERR, "%s invalid param :%pK\n", __func__, pkt);
 		return -EINVAL;
 	}
-	memset(pkt, 0, sizeof(struct cvp_hfi_cmd_session_gpu_packet));
-	pkt->session_id = hash32_ptr(session);
-	pkt->size = sizeof(struct cvp_hfi_cmd_session_gpu_packet);
+	memset(pkt, 0, sizeof(struct cvp_hfi_cmd_sys_gpu_packet));
+	pkt->size = sizeof(struct cvp_hfi_cmd_sys_gpu_packet);
 	pkt->packet_type = packet_type;
 	return 0;
 }
 #endif
+
 static struct cvp_hfi_packetization_ops hfi_default = {
 	.sys_init = cvp_create_pkt_cmd_sys_init,
 	.sys_pc_prep = cvp_create_pkt_cmd_sys_pc_prep,
@@ -472,16 +455,15 @@ static struct cvp_hfi_packetization_ops hfi_default = {
 	.sys_ubwc_config = create_pkt_cmd_sys_ubwc_config,
 	.ssr_cmd = cvp_create_pkt_ssr_cmd,
 	.session_init = cvp_create_pkt_cmd_sys_session_init,
-	.session_stop = cvp_create_pkt_cmd_session_stop,
 	.session_cmd = cvp_create_pkt_cmd_session_cmd,
 	.session_set_buffers =
 		cvp_create_pkt_cmd_session_set_buffers,
 	.session_release_buffers =
 		cvp_create_pkt_cmd_session_release_buffers,
 	.session_send = cvp_create_pkt_cmd_session_send,
-#if IS_REACHABLE(CONFIG_QCOM_KGSL)
-	.session_gpu_cmd_prep = cvp_create_pkt_cmd_session_gpu_status,
-#endif
+    #ifndef HALLIDAY_DISABLE
+	.sys_gpu_cmd_prep = cvp_create_pkt_cmd_sys_gpu_status,
+    #endif
 };
 
 struct cvp_hfi_packetization_ops *cvp_hfi_get_pkt_ops_handle(

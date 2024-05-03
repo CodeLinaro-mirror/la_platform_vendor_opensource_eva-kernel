@@ -395,13 +395,6 @@ static int msm_probe_cvp_device(struct platform_device *pdev)
 	cvp_driver->num_cores++;
 	mutex_unlock(&cvp_driver->lock);
 
-	rc = sysfs_create_group(&core->dev->kobj, &msm_cvp_core_attr_group);
-	if (rc) {
-		dprintk(CVP_ERR,
-				"Failed to create attributes\n");
-		goto err_cores_exceeded;
-	}
-
 	core->device = cvp_hfi_initialize(core->hfi_type, core->id,
 				&core->resources, &cvp_handle_cmd_response);
 	if (IS_ERR_OR_NULL(core->device)) {
@@ -416,6 +409,8 @@ static int msm_probe_cvp_device(struct platform_device *pdev)
 			dprintk(CVP_CORE, "msm_cvp: request probe defer\n");
 		goto err_hfi_initialize;
 	}
+
+	cvp_synx_ftbl_init(core);
 
 	mutex_lock(&cvp_driver->lock);
 	list_add_tail(&core->list, &cvp_driver->cores);
@@ -454,6 +449,13 @@ static int msm_probe_cvp_device(struct platform_device *pdev)
 			dprintk(CVP_DSP, "DSP interface enabled! \n");
 	} else {
 		dprintk(CVP_DSP, "DSP interface not enabled\n");
+}
+	
+	rc = sysfs_create_group(&core->dev->kobj, &msm_cvp_core_attr_group);
+	if (rc) {
+		dprintk(CVP_ERR,
+				"Failed to create attributes\n");
+		goto err_cores_exceeded;
 	}
 
 	// Registering EVA SS with minidump
@@ -633,7 +635,6 @@ static int __init msm_cvp_init(void)
 
 static void __exit msm_cvp_exit(void)
 {
-if (0) {
 	cvp_dsp_device_exit();
 	kmem_cache_destroy(cvp_driver->msg_cache);
 	kmem_cache_destroy(cvp_driver->frame_cache);
@@ -645,12 +646,10 @@ if (0) {
 	mutex_destroy(&cvp_driver->lock);
 	kfree(cvp_driver);
 	cvp_driver = NULL;
-} // TODO: AURORA-BU
 }
 
 module_init(msm_cvp_init);
 module_exit(msm_cvp_exit);
 
 MODULE_SOFTDEP("pre: msm-mmrm");
-MODULE_SOFTDEP("pre: qcom-llcc");
 MODULE_LICENSE("GPL v2");
