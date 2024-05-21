@@ -5,12 +5,16 @@ ENABLE_EVA_KERNEL := true
 endif
 endif
 
+ifeq ($(TARGET_BOARD_PLATFORM), anorak61)
+	LOCAL_MODULE_DDK_BUILD := true
+	LOCAL_MODULE_KO_DIRS := msm/msm-eva.ko
+endif
+
 ifeq ($(ENABLE_EVA_KERNEL), true)
 ifneq ($(TARGET_BOARD_PLATFORM), qssi)
 ifeq ($(call is-board-platform-in-list, $(TARGET_BOARD_PLATFORM)),true)
 
 DLKM_DIR   := device/qcom/common/dlkm
-
 LOCAL_PATH := $(call my-dir)
 
 include $(CLEAR_VARS)

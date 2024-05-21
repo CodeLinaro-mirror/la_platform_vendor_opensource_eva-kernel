@@ -16,5 +16,6 @@ def define_anorak61():
             "TARGET_MMRM_ENABLE",
             "TARGET_DSP_ENABLE",
             "CONFIG_MSM_MMRM",
+            "HALLIDAY_DISABLE",
         ],
     )

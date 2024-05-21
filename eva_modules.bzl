@@ -15,7 +15,6 @@ register_eva_module(
         "eva/cvp_fw_load.c",
         "eva/cvp_hfi.c",
         "eva/cvp_power.c",
-        "eva/cvp_smem.c",
         "eva/hfi_packetization.c",
         "eva/hfi_response_handler.c",
         "eva/msm_cvp.c",
@@ -29,6 +28,7 @@ register_eva_module(
         "eva/msm_cvp_platform.c",
         "eva/msm_cvp_res_parse.c",
         "eva/msm_cvp_synx.c",
+        "eva/msm_smem.c",
     ],
     config_deps = {
        "TARGET_SYNX_ENABLE": [
