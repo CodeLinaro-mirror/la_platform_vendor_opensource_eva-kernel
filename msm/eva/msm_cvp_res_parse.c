@@ -8,6 +8,7 @@
 #include <linux/of.h>
 #include <linux/slab.h>
 #include <linux/sort.h>
+#include <linux/version.h>
 #include <linux/of_reserved_mem.h>
 #include "msm_cvp_debug.h"
 #include "msm_cvp_resources.h"
@@ -911,13 +912,20 @@ int cvp_read_platform_resources_from_dt(
 	kres = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	res->register_base = kres ? kres->start : -1;
 	res->register_size = kres ? (kres->end + 1 - kres->start) : -1;
-
-	kres = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
-	res->irq = kres ? kres->start : -1;
+	#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0)) 
+		res->irq = platform_get_irq(pdev, 0);
+	#else 
+		kres = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
+		res->irq = kres ? kres->start : -1;
+	#endif
 
 	//Parsing for WD interrupt
-	kres = platform_get_resource(pdev, IORESOURCE_IRQ, 1);
-	res->irq_wd = kres ? kres->start : -1;
+	#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+		res->irq_wd = platform_get_irq(pdev, 1);
+	#else
+		kres = platform_get_resource(pdev, IORESOURCE_IRQ, 1);
+		res->irq_wd = kres ? kres->start : -1;
+	#endif
 	dprintk(CVP_CORE, "%s: res->irq_wd:%d \n",
 		__func__, res->irq_wd);
 
