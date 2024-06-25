@@ -263,10 +263,6 @@ static int delete_dsp_session(struct msm_cvp_inst *inst,
 
 	mutex_unlock(&buf_list->lock);
 
-	rc = msm_cvp_session_delete(inst);
-	if (rc)
-		dprintk(CVP_ERR, "Warning: send Delete Session failed\n");
-
 	task = inst->task;
 
 	spin_lock(&inst->core->resources.pm_qos.lock);
@@ -1573,13 +1569,6 @@ static void __dsp_cvp_sess_delete(struct cvp_dsp_cmd_msg *cmd)
 	}
 
 	cvp_put_fastrpc_node(frpc_node);
-
-	rc = msm_cvp_session_delete(inst);
-	if (rc) {
-		dprintk(CVP_ERR, "Warning: send Delete Session failed\n");
-		cmd->ret = -1;
-		goto dsp_fail_delete;
-	}
 
 	task = inst->task;
 
