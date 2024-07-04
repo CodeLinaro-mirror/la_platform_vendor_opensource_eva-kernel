@@ -1554,6 +1554,14 @@ static void __dsp_cvp_sess_delete(struct cvp_dsp_cmd_msg *cmd)
 		dsp2cpu_cmd->session_cpu_low,
 		dsp2cpu_cmd->session_cpu_high,
 		dsp2cpu_cmd->pid);
+	inst = (struct msm_cvp_inst *)ptr_dsp2cpu(
+			dsp2cpu_cmd->session_cpu_high,
+			dsp2cpu_cmd->session_cpu_low);
+	if (!inst || !is_cvp_inst_valid(inst)) {
+		dprintk(CVP_ERR, "%s incorrect session ID\n", __func__);
+		cmd->ret = -1;
+		goto dsp_fail_delete;
+	}
 
 	frpc_node = cvp_get_fastrpc_node_with_handle(dsp2cpu_cmd->pid);
 	if (!frpc_node) {
@@ -1564,14 +1572,6 @@ static void __dsp_cvp_sess_delete(struct cvp_dsp_cmd_msg *cmd)
 	}
 
 	cvp_put_fastrpc_node(frpc_node);
-	inst = (struct msm_cvp_inst *)ptr_dsp2cpu(
-			dsp2cpu_cmd->session_cpu_high,
-			dsp2cpu_cmd->session_cpu_low);
-	if (!inst || !is_cvp_inst_valid(inst)) {
-		dprintk(CVP_ERR, "%s incorrect session ID\n", __func__);
-		cmd->ret = -1;
-		goto dsp_fail_delete;
-	}
 
 	rc = msm_cvp_session_delete(inst);
 	if (rc) {
@@ -1686,13 +1686,6 @@ static void __dsp_cvp_buf_register(struct cvp_dsp_cmd_msg *cmd)
 		dsp2cpu_cmd->session_cpu_high,
 		dsp2cpu_cmd->pid);
 
-	kmd = kzalloc(sizeof(*kmd), GFP_KERNEL);
-        if (!kmd) {
-		dprintk(CVP_ERR, "%s kzalloc failure\n", __func__);
-		cmd->ret = -1;
-		return;
-	}
-
 	inst = (struct msm_cvp_inst *)ptr_dsp2cpu(
 			dsp2cpu_cmd->session_cpu_high,
 			dsp2cpu_cmd->session_cpu_low);
@@ -1700,7 +1693,13 @@ static void __dsp_cvp_buf_register(struct cvp_dsp_cmd_msg *cmd)
 		dprintk(CVP_ERR, "%s Failed to get inst\n",
 			__func__);
 		cmd->ret = -1;
-		goto dsp_fail_buf_reg;
+		return;
+	}
+	kmd = kzalloc(sizeof(*kmd), GFP_KERNEL);
+        if (!kmd) {
+		dprintk(CVP_ERR, "%s kzalloc failure\n", __func__);
+		cmd->ret = -1;
+		return;
 	}
 
 	kmd->type = EVA_KMD_REGISTER_BUFFER;
@@ -1750,13 +1749,6 @@ static void __dsp_cvp_buf_deregister(struct cvp_dsp_cmd_msg *cmd)
 		dsp2cpu_cmd->session_cpu_high,
 		dsp2cpu_cmd->pid);
 
-	kmd = kzalloc(sizeof(*kmd), GFP_KERNEL);
-        if (!kmd) {
-		dprintk(CVP_ERR, "%s kzalloc failure\n", __func__);
-		cmd->ret = -1;
-		return;
-	}
-
 	inst = (struct msm_cvp_inst *)ptr_dsp2cpu(
 			dsp2cpu_cmd->session_cpu_high,
 			dsp2cpu_cmd->session_cpu_low);
@@ -1764,7 +1756,13 @@ static void __dsp_cvp_buf_deregister(struct cvp_dsp_cmd_msg *cmd)
 		dprintk(CVP_ERR, "%s Failed to get inst\n",
 			__func__);
 		cmd->ret = -1;
-		goto fail_dsp_buf_dereg;
+		return;
+	}
+	kmd = kzalloc(sizeof(*kmd), GFP_KERNEL);
+        if (!kmd) {
+		dprintk(CVP_ERR, "%s kzalloc failure\n", __func__);
+		cmd->ret = -1;
+		return;
 	}
 
 	kmd->type = EVA_KMD_UNREGISTER_BUFFER;
@@ -1812,6 +1810,15 @@ static void __dsp_cvp_mem_alloc(struct cvp_dsp_cmd_msg *cmd)
 		dsp2cpu_cmd->session_cpu_high,
 		dsp2cpu_cmd->pid);
 
+	inst = (struct msm_cvp_inst *)ptr_dsp2cpu(
+			dsp2cpu_cmd->session_cpu_high,
+			dsp2cpu_cmd->session_cpu_low);
+	if (!inst || !is_cvp_inst_valid(inst)) {
+		dprintk(CVP_ERR, "%s Failed to get inst\n",
+			__func__);
+		cmd->ret = -1;
+		return;
+	}
 	frpc_node = cvp_get_fastrpc_node_with_handle(dsp2cpu_cmd->pid);
 	if (!frpc_node) {
 		dprintk(CVP_ERR, "%s Failed to find fastrpc node 0x%x\n",
@@ -1819,16 +1826,6 @@ static void __dsp_cvp_mem_alloc(struct cvp_dsp_cmd_msg *cmd)
 		goto fail_fastrpc_node;
 	}
 	frpc_device = frpc_node->cvp_fastrpc_device;
-
-	inst = (struct msm_cvp_inst *)ptr_dsp2cpu(
-			dsp2cpu_cmd->session_cpu_high,
-			dsp2cpu_cmd->session_cpu_low);
-	if (!inst || !is_cvp_inst_valid(inst)) {
-		dprintk(CVP_ERR, "%s Failed to get inst\n",
-			__func__);
-		goto fail_fastrpc_node;
-	}
-
 	buf = kmem_cache_zalloc(cvp_driver->buf_cache, GFP_KERNEL);
 	if (!buf)
 		goto fail_kzalloc_buf;
