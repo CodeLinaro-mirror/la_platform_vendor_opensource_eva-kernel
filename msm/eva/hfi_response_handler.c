@@ -406,7 +406,7 @@ retry:
 			}
 		}
 
-		inst = match ? inst : NULL;
+		inst = match && kref_get_unless_zero(&inst->kref) ? inst : NULL;
 		mutex_unlock(&core->lock);
 	} else {
 		if (core->state == CVP_CORE_UNINIT)
@@ -500,7 +500,7 @@ static int hfi_process_session_cvp_msg(u32 device_id,
 	sess_msg = kmem_cache_alloc(cvp_driver->msg_cache, GFP_KERNEL);
 	if (sess_msg == NULL) {
 		dprintk(CVP_ERR, "%s runs out msg cache memory\n", __func__);
-		return -ENOMEM;
+		goto error_no_mem;
 	}
 
 	memcpy(&sess_msg->pkt, pkt, get_msg_size(pkt));
@@ -522,12 +522,15 @@ static int hfi_process_session_cvp_msg(u32 device_id,
 	wake_up_all(&sq->wq);
 
 	info->response_type = HAL_NO_RESP;
-
+	cvp_put_inst(inst);
 	return 0;
 
 error_handle_msg:
 	spin_unlock(&sq->lock);
 	kmem_cache_free(cvp_driver->msg_cache, sess_msg);
+
+error_no_mem:
+	cvp_put_inst(inst);
 	return -ENOMEM;
 }
 
@@ -540,7 +543,7 @@ static void hfi_process_sys_get_prop_image_version(
 	int req_bytes;
 
 	req_bytes = pkt->size - sizeof(*pkt);
-	if (req_bytes < version_string_size ||
+	if (req_bytes < (signed int)version_string_size ||
 			!pkt->rg_property_data[1] ||
 			pkt->num_properties > 1) {
 		dprintk(CVP_ERR, "%s: bad_pkt: %d\n", __func__, req_bytes);
