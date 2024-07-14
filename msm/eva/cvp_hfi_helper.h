@@ -383,13 +383,14 @@ struct cvp_hfi_dumpmsg_session_hdr {
 } __packed;
 
 #define HFI_MAX_HW_ACTIVATIONS_PER_FRAME (6)
-#define HFI_MAX_HW_THREADS (4)
+#define HFI_MAX_HW_THREADS (5)
 
 enum hfi_hw_thread {
 	HFI_HW_FDU,
 	HFI_HW_MPU,
 	HFI_HW_OD,
-	HFI_HW_ICA
+	HFI_HW_ICA,
+	HFI_HW_XRA
 };
 
 struct cvp_hfi_msg_session_hdr_ext {
