@@ -121,7 +121,7 @@ struct eva_kmd_client_data {
 };
 
 
-#define	MAX_HFI_PKT_SIZE	490
+#define	MAX_HFI_PKT_SIZE	520
 
 struct eva_kmd_hfi_packet {
 	__u32 pkt_data[MAX_HFI_PKT_SIZE];
