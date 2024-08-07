@@ -196,24 +196,9 @@ static int msm_cvp_session_receive_hfi(struct msm_cvp_inst *inst,
 			(struct cvp_hfi_msg_session_hdr_ext *)out_pkt);
 	}
 	msg_hdr = (struct cvp_hfi_msg_session_hdr *)out_pkt;
-	if(( (msm_cvp_debug & CVP_TRACE) == CVP_TRACE ) &&
-		(msg_hdr->packet_type > HFI_MSG_SESSION_CVP_START) &&
-		(msg_hdr->size >= sizeof(struct cvp_hfi_msg_session_hdr)))
-	{
-		u64 aon_cycles = 0;
-		u32 sess_id = 0;
-		u32 pkt_id = 0;
-		u32 stream_id = 0;
-		u32 t_id =0;
-		aon_cycles  = get_aon_time();
-		sess_id = msg_hdr->session_id;
-		pkt_id  = msg_hdr->packet_type;
-		stream_id = msg_hdr->stream_idx;
-		t_id    = msg_hdr->client_data.transaction_id;
-		trace_tracing_eva_frame_from_sw(aon_cycles,"EVA_KMD_REV_END",sess_id,stream_id,pkt_id,t_id);
+	if(msg_hdr->client_data.transaction_id % msm_cvp_logN == 0){
+		msm_cvp_msg_tracing_from_sw(msg_hdr, "EVA_KMD_REV_END");
 	}
-
-
 	cvp_put_inst(inst);
 
 	return rc;
@@ -285,23 +270,9 @@ static int msm_cvp_session_process_hfi(
 		goto exit;
 	}
 	cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)in_pkt;
-	if(( (msm_cvp_debug & CVP_TRACE) == CVP_TRACE ) &&
-		(cmd_hdr->packet_type > HFI_CMD_SESSION_CVP_START) &&
-		(cmd_hdr->size >= sizeof(struct cvp_hfi_cmd_session_hdr)))
-	{
-		u64 aon_cycles = 0;
-		u32 sess_id = 0;
-		u32 pkt_id = 0;
-		u32 stream_id = 0;
-		u32 t_id =0;
-		aon_cycles  = get_aon_time();
-		sess_id = cmd_hdr->session_id;
-		pkt_id  = cmd_hdr->packet_type;
-		stream_id = cmd_hdr->stream_idx;
-		t_id    = cmd_hdr->client_data.transaction_id;
-		trace_tracing_eva_frame_from_sw(aon_cycles,"EVA_KMD_FWD_BEGIN",sess_id,stream_id,pkt_id,t_id);
+	if(cmd_hdr->client_data.transaction_id % msm_cvp_logN == 0){
+		msm_cvp_cmd_tracing_from_sw(cmd_hdr, "EVA_KMD_FWD_BEGIN");
 	}
-
 	cvp_enqueue_pkt(inst, in_pkt, offset, buf_num);
 
 exit:
