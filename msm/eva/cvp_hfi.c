@@ -3198,7 +3198,7 @@ err_core_init:
 
 static int __handle_reset_clk(struct msm_cvp_platform_resources *res,
 			int reset_index, enum reset_state state,
-			enum power_state pwr_state)
+			enum power_states pwr_state)
 {
 	int rc = 0;
 	struct reset_control *rst;
@@ -3383,7 +3383,7 @@ skip_sw_ctrl:
 static int reset_ahb2axi_bridge(struct iris_hfi_device *device)
 {
 	int rc, i;
-	enum power_state s;
+	enum power_states s;
 
 	if (!device) {
 		dprintk(CVP_ERR, "NULL device\n");
@@ -3759,7 +3759,7 @@ static int __enable_regulator(struct iris_hfi_device *device,
 		return 0;
 	}
 
-	dprintk(CVP_ERR, "regulator %s not found\n");
+	dprintk(CVP_ERR, "regulator %s not found\n", name);
 	return -EINVAL;
 }
 

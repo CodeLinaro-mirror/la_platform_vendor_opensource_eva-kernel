@@ -70,9 +70,9 @@ static void print_internal_buffer(u32 tag, const char *str,
 		cbuf->smem->device_addr);
 	} else {
 		dprintk(tag,
-		"%s: %x : idx %2d fd %d off %d size %d iova %#x",
+		"%s: %x : idx %2d fd %d off %s size %d iova %#x",
 		str, hash32_ptr(inst->session), cbuf->fd,
-		cbuf->offset, cbuf->size, cbuf->smem->device_addr);
+		cbuf->offset,cbuf->smem->dma_buf->name,cbuf->size, cbuf->smem->device_addr);
 	}
 }
 
@@ -213,7 +213,7 @@ loop:
 		 */
 		if (file->f_mode & mask)
 			file = NULL;
-		else if (!get_file_rcu_many(file, refs))
+		else if (!get_file_rcu(file))
 			goto loop;
 	}
 	rcu_read_unlock();

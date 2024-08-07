@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2024, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef __MSM_CVP_RESOURCES_H__
@@ -85,7 +86,7 @@ struct bus_set {
 	u32 count;
 };
 
-enum power_state {
+enum power_states {
 	CVP_POWER_INIT,
 	CVP_POWER_ON,
 	CVP_POWER_OFF,
@@ -94,7 +95,7 @@ enum power_state {
 
 struct reset_info {
 	struct reset_control *rst;
-	enum power_state required_state;
+	enum power_states required_state;
 	const char *name;
 };
 

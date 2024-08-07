@@ -568,10 +568,10 @@ static int finish_ssr(struct msm_cvp_core* core)
 	}
 	hfi_device_data = (struct iris_hfi_device *) core->device->hfi_device_data;
 	if (!hfi_device_data) {
-		dprintk(CVP_ERR, "%s invalid hfi_device_data");
+		dprintk(CVP_ERR, "%s invalid hfi_device_data",__func__);
 		return -EINVAL;
 	} else if (!hfi_device_data->cvp_workq) {
-		dprintk(CVP_ERR, "%s cvp_workq not initialized");
+		dprintk(CVP_ERR, "%s cvp_workq not initialized",__func__);
 		return -EINVAL;
 	}
 

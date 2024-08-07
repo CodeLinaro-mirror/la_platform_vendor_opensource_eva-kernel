@@ -251,7 +251,7 @@ int cvp_synx_ops(struct msm_cvp_inst *inst, enum cvp_synx_type type,
 	ssid = inst->synx_session_id;
 
 	if (fc->signature != 0xFEEDFACE) {
-		dprintk(CVP_ERR, "%s deprecated synx, type %d\n", __func__);
+		dprintk(CVP_ERR, "%s deprecated synx, type %d\n", __func__,type);
 				return -EINVAL;
 	}
 
