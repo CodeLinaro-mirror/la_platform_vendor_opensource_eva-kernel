@@ -130,6 +130,7 @@
 struct cvp_hfi_debug_config {
 	u32 debug_config;
 	u32 debug_mode;
+	u32 ftrace_logN;
 };
 
 struct cvp_hfi_enable {

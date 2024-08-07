@@ -40,6 +40,7 @@ bool msm_cvp_dcvs_disable = !true;
 int msm_cvp_minidump_enable = !1;
 int msm_cvp_hw_wd_recovery = 1;
 bool cvp_kernel_fence_enabled = false;
+int msm_cvp_logN = 1;
 
 #define MAX_DBG_BUF_SIZE 4096
 
@@ -255,6 +256,7 @@ struct dentry *msm_cvp_debugfs_init_drv(void)
 	debugfs_create_x32("ftrace_debug_level", 0644, dir, &msm_ftrace_cvp_debug);
 	debugfs_create_x32("fw_level", 0644, dir, &msm_cvp_fw_debug);
 	debugfs_create_u32("fw_debug_mode", 0644, dir, &msm_cvp_fw_debug_mode);
+	debugfs_create_u32("ftrace_logN", 0644, dir, &msm_cvp_logN);
 	debugfs_create_u32("fw_low_power_mode", 0644, dir,
 		&msm_cvp_fw_low_power_mode);
 	debugfs_create_u32("debug_output", 0644, dir, &msm_cvp_debug_out);

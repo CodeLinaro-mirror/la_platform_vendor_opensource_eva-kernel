@@ -1322,21 +1322,8 @@ static int __iface_cmdq_write(struct iris_hfi_device *device, void *pkt)
 					 __read_aon_time(device));
 	}
         cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)pkt;
-	if(( (msm_cvp_debug & CVP_TRACE) == CVP_TRACE ) &&
-			cmd_hdr->packet_type > HFI_CMD_SESSION_CVP_START &&
-			cmd_hdr->size >= sizeof(struct cvp_hfi_cmd_session_hdr))
-	{
-		u64 aon_cycles = 0;
-		u32 sess_id = 0;
-		u32 pkt_id = 0;
-		u32 stream_id = 0;
-		u32 t_id =0;
-		sess_id = cmd_hdr->session_id;
-		pkt_id  = cmd_hdr->packet_type;
-		stream_id = cmd_hdr->stream_idx;
-		t_id    = cmd_hdr->client_data.transaction_id;
-		aon_cycles  = get_aon_time();
-		trace_tracing_eva_frame_from_sw(aon_cycles, "EVA_KMD_FWD_END", sess_id, stream_id, pkt_id, t_id);
+	if(cmd_hdr->client_data.transaction_id % msm_cvp_logN == 0){
+		msm_cvp_cmd_tracing_from_sw(cmd_hdr, "EVA_KMD_FWD_END");
 	}
 	return rc;
 }
@@ -2878,9 +2865,13 @@ static void __flush_debug_queue(struct iris_hfi_device *device, u8 *packet)
 			 * line.
 			 */
 			pkt->rg_msg_data[pkt->msg_size-1] = '\0';
-			dprintk(log_level, "%s", &pkt->rg_msg_data[1]);
-                        if((log_level & CVP_FW) && (pkt->msg_type == HFI_DEBUG_MSG_TIME))
+                        if((log_level & CVP_FW) && (pkt->msg_type == HFI_DEBUG_MSG_TIME)){
 				trace_tracing_eva_frame_from_fw(&pkt->rg_msg_data[1]);
+			}
+			else{
+				dprintk(log_level, "%s", &pkt->rg_msg_data[1]);
+			}
+
 		}
 	}
 #undef SKIP_INVALID_PKT
