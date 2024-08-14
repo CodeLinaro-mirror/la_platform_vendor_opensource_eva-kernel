@@ -1415,14 +1415,14 @@ static void *ptr_dsp2cpu(uint32_t session_cpu_high, uint32_t session_cpu_low)
 static void print_power(const struct eva_power_req *pwr_req)
 {
 	if (pwr_req) {
-		dprintk(CVP_DSP, "Clock: Fdu %d Ica %d Od %d Mpu %d Fw %d xra %u",
+		dprintk(CVP_DSP, "Clock: Fdu %d Ica %d Od %d Mpu %d Fw %d",
 				pwr_req->clock_fdu, pwr_req->clock_ica,
 				pwr_req->clock_od, pwr_req->clock_mpu,
-				pwr_req->clock_fw, pwr_req->clock_xra);
-		dprintk(CVP_DSP, "OpClock: Fdu %d Ica %d Od %d Mpu %d Fw %d xra %u",
+				pwr_req->clock_fw);
+		dprintk(CVP_DSP, "OpClock: Fdu %d Ica %d Od %d Mpu %d Fw %d",
 				pwr_req->op_clock_fdu, pwr_req->op_clock_ica,
 				pwr_req->op_clock_od, pwr_req->op_clock_mpu,
-				pwr_req->op_clock_fw, pwr_req->op_clock_xra);
+				pwr_req->op_clock_fw);
 		dprintk(CVP_DSP, "Actual Bw: Ddr %u, SysCache %u",
 				pwr_req->bw_ddr, pwr_req->bw_sys_cache);
 		dprintk(CVP_DSP, "OpBw: Ddr %u, SysCache %u",
@@ -1642,7 +1642,7 @@ static void __dsp_cvp_power_req(struct cvp_dsp_cmd_msg *cmd)
 	inst->prop.od_cycles =	dsp2cpu_cmd->power_req.clock_od;
 	inst->prop.mpu_cycles =	dsp2cpu_cmd->power_req.clock_mpu;
 	inst->prop.fw_cycles = dsp2cpu_cmd->power_req.clock_fw;
-	inst->prop.xra_cycles = dsp2cpu_cmd->power_req.clock_xra;
+	//inst->prop.xra_cycles = dsp2cpu_cmd->power_req.clock_xra;
 	inst->prop.ddr_bw = dsp2cpu_cmd->power_req.bw_ddr;
 	inst->prop.ddr_cache = dsp2cpu_cmd->power_req.bw_sys_cache;
 	inst->prop.fdu_op_cycles = dsp2cpu_cmd->power_req.op_clock_fdu;
@@ -1650,7 +1650,7 @@ static void __dsp_cvp_power_req(struct cvp_dsp_cmd_msg *cmd)
 	inst->prop.od_op_cycles = dsp2cpu_cmd->power_req.op_clock_od;
 	inst->prop.mpu_op_cycles = dsp2cpu_cmd->power_req.op_clock_mpu;
 	inst->prop.fw_op_cycles = dsp2cpu_cmd->power_req.op_clock_fw;
-	inst->prop.xra_op_cycles = dsp2cpu_cmd->power_req.op_clock_xra;
+	//inst->prop.xra_op_cycles = dsp2cpu_cmd->power_req.op_clock_xra;
 	inst->prop.ddr_op_bw = dsp2cpu_cmd->power_req.op_bw_ddr;
 	inst->prop.ddr_op_cache = dsp2cpu_cmd->power_req.op_bw_sys_cache;
 
