@@ -239,7 +239,9 @@ static int msm_cvp_session_process_hfi(
 		signal = cvp_hfi_defs[pkt_idx].resp;
 		is_config_pkt = cvp_hfi_defs[pkt_idx].is_config_pkt;
 	}
-
+	if (is_config_pkt)
+		pr_info(CVP_DBG_TAG "pid = %u tgid = %u inst %pK config type%x\n",
+			 "cfgp",current->pid, current->tgid,inst, cvp_hfi_defs[pkt_idx].type);
 	if (signal == HAL_NO_RESP) {
 		/* Frame packets are not allowed before session starts*/
 		sq = &inst->session_queue;
@@ -1546,7 +1548,6 @@ static int msm_cvp_session_ctrl(struct msm_cvp_inst *inst,
 		dprintk(CVP_ERR, "%s invalid session\n", __func__);
 		return -EINVAL;
 	}
-
 	switch (ctrl_type) {
 	case SESSION_STOP:
 		rc = msm_cvp_session_stop(inst, arg);
@@ -2092,8 +2093,16 @@ int msm_cvp_handle_syscall(struct msm_cvp_inst *inst, struct eva_kmd_arg *arg)
 		break;
 	}
 	case EVA_KMD_SESSION_CONTROL:
+	{
+		struct eva_kmd_session_control *ctrl = &arg->data.session_ctrl;
+		unsigned int ctrl_type = ctrl->ctrl_type;
+		pr_info(CVP_DBG_TAG "Before: msm_cvp_session_ctrl ,ctrl_type = %d inst %pK pid = %u tgid = %u\n",
+			"ctrl",ctrl_type,inst,current->pid, current->tgid);
 		rc = msm_cvp_session_ctrl(inst, arg);
+		pr_info(CVP_DBG_TAG "After: msm_cvp_session_ctrl ,ctrl_type = %d inst %pK pid = %u tgid = %u\n",
+			"ctrl",ctrl_type,inst,current->pid, current->tgid);
 		break;
+	}
 	case EVA_KMD_GET_SYS_PROPERTY:
 		rc = msm_cvp_get_sysprop(inst, arg);
 		break;
