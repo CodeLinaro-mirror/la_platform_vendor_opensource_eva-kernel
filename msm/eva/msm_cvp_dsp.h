@@ -14,7 +14,7 @@
 
 #include <linux/pid.h>
 #include <linux/sched.h>
-#include <linux/fastrpc.h>
+#include <fastrpc.h>
 
 #define CVP_APPS_DSP_GLINK_GUID "cvp-glink-apps-dsp"
 #define CVP_APPS_DSP_SMD_GUID "cvp-smd-apps-dsp"
