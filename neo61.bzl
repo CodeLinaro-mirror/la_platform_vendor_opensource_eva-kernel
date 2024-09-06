@@ -4,7 +4,7 @@ load(":eva_module_build.bzl", "define_consolidate_gki_perf_modules")
 
 def define_neo61():
     define_consolidate_gki_perf_modules(
-        target = "neo_la",
+        target = "neo-la",
         registry = eva_modules,
         modules = [
             "msm-eva",
