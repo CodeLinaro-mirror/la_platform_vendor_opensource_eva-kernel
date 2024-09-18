@@ -170,7 +170,7 @@ void *msm_cvp_open(int core_id, int session_type)
 		goto err_invalid_core;
 	}
 
-	pr_info(CVP_DBG_TAG "Opening cvp instance: %pK\n", "sess", inst);
+	pr_info(CVP_DBG_TAG "Opening cvp instance: %pK pid = %u tgid = %u\n", "sess", inst,current->pid, current->tgid);
 	mutex_init(&inst->sync_lock);
 	mutex_init(&inst->lock);
 	spin_lock_init(&inst->event_handler.lock);
