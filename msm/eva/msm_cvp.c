@@ -196,24 +196,9 @@ static int msm_cvp_session_receive_hfi(struct msm_cvp_inst *inst,
 			(struct cvp_hfi_msg_session_hdr_ext *)out_pkt);
 	}
 	msg_hdr = (struct cvp_hfi_msg_session_hdr *)out_pkt;
-	if(( (msm_cvp_debug & CVP_TRACE) == CVP_TRACE ) &&
-		(msg_hdr->packet_type > HFI_MSG_SESSION_CVP_START) &&
-		(msg_hdr->size >= sizeof(struct cvp_hfi_msg_session_hdr)))
-	{
-		u64 aon_cycles = 0;
-		u32 sess_id = 0;
-		u32 pkt_id = 0;
-		u32 stream_id = 0;
-		u32 t_id =0;
-		aon_cycles  = get_aon_time();
-		sess_id = msg_hdr->session_id;
-		pkt_id  = msg_hdr->packet_type;
-		stream_id = msg_hdr->stream_idx;
-		t_id    = msg_hdr->client_data.transaction_id;
-		trace_tracing_eva_frame_from_sw(aon_cycles,"EVA_KMD_REV_END",sess_id,stream_id,pkt_id,t_id);
+	if(msg_hdr->client_data.transaction_id % msm_cvp_logN == 0){
+		msm_cvp_msg_tracing_from_sw(msg_hdr, "EVA_KMD_REV_END");
 	}
-
-
 	cvp_put_inst(inst);
 
 	return rc;
@@ -253,7 +238,9 @@ static int msm_cvp_session_process_hfi(
 		signal = cvp_hfi_defs[pkt_idx].resp;
 		is_config_pkt = cvp_hfi_defs[pkt_idx].is_config_pkt;
 	}
-
+	if (is_config_pkt)
+		pr_info(CVP_DBG_TAG "pid = %u tgid = %u inst %pK config type%x\n",
+			 "cfgp",current->pid, current->tgid,inst, cvp_hfi_defs[pkt_idx].type);
 	if (signal == HAL_NO_RESP) {
 		/* Frame packets are not allowed before session starts*/
 		sq = &inst->session_queue;
@@ -285,23 +272,9 @@ static int msm_cvp_session_process_hfi(
 		goto exit;
 	}
 	cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)in_pkt;
-	if(( (msm_cvp_debug & CVP_TRACE) == CVP_TRACE ) &&
-		(cmd_hdr->packet_type > HFI_CMD_SESSION_CVP_START) &&
-		(cmd_hdr->size >= sizeof(struct cvp_hfi_cmd_session_hdr)))
-	{
-		u64 aon_cycles = 0;
-		u32 sess_id = 0;
-		u32 pkt_id = 0;
-		u32 stream_id = 0;
-		u32 t_id =0;
-		aon_cycles  = get_aon_time();
-		sess_id = cmd_hdr->session_id;
-		pkt_id  = cmd_hdr->packet_type;
-		stream_id = cmd_hdr->stream_idx;
-		t_id    = cmd_hdr->client_data.transaction_id;
-		trace_tracing_eva_frame_from_sw(aon_cycles,"EVA_KMD_FWD_BEGIN",sess_id,stream_id,pkt_id,t_id);
+	if(cmd_hdr->client_data.transaction_id % msm_cvp_logN == 0){
+		msm_cvp_cmd_tracing_from_sw(cmd_hdr, "EVA_KMD_FWD_BEGIN");
 	}
-
 	cvp_enqueue_pkt(inst, in_pkt, offset, buf_num);
 
 exit:
@@ -994,6 +967,7 @@ static bool is_subblock_profile_existed(struct msm_cvp_inst *inst)
 	return (inst->prop.od_cycles ||
 			inst->prop.mpu_cycles ||
 			inst->prop.fdu_cycles ||
+			inst->prop.xra_cycles ||
 			inst->prop.ica_cycles);
 }
 
@@ -1005,14 +979,15 @@ static void aggregate_power_update(struct msm_cvp_core *core,
 	struct msm_cvp_inst *inst;
 	int i;
 	unsigned long fdu_sum[2] = {0}, od_sum[2] = {0}, mpu_sum[2] = {0};
-	unsigned long ica_sum[2] = {0}, fw_sum[2] = {0};
+	unsigned long ica_sum[2] = {0}, fw_sum[2] = {0}, xra_sum[2] = {0};
 	unsigned long op_fdu_max[2] = {0}, op_od_max[2] = {0};
 	unsigned long op_mpu_max[2] = {0}, op_ica_max[2] = {0};
-	unsigned long op_fw_max[2] = {0}, bw_sum[2] = {0}, op_bw_max[2] = {0};
+	unsigned long op_fw_max[2] = {0}, bw_sum[2] = {0}, op_bw_max[2] = {0},op_xra_max[2] = {0};
 	core->dyn_clk.sum_fps[HFI_HW_FDU] = 0;
 	core->dyn_clk.sum_fps[HFI_HW_MPU] = 0;
 	core->dyn_clk.sum_fps[HFI_HW_OD]  = 0;
 	core->dyn_clk.sum_fps[HFI_HW_ICA] = 0;
+	core->dyn_clk.sum_fps[HFI_HW_XRA] = 0;
 
 	list_for_each_entry(inst, &core->instances, list) {
 		if (inst->state == MSM_CVP_CORE_INVALID ||
@@ -1025,17 +1000,19 @@ static void aggregate_power_update(struct msm_cvp_core *core,
 		} else {
 			i = 1;
 		}
-		dprintk(CVP_PROF, "pwrUpdate fdu %u od %u mpu %u ica %u\n",
+		dprintk(CVP_PROF, "pwrUpdate fdu %u od %u mpu %u ica %u xra %u\n",
 			inst->prop.fdu_cycles,
 			inst->prop.od_cycles,
 			inst->prop.mpu_cycles,
-			inst->prop.ica_cycles);
+			inst->prop.ica_cycles,
+			inst->prop.xra_cycles);
 
-		dprintk(CVP_PROF, "pwrUpdate fw %u fdu_o %u od_o %u mpu_o %u\n",
+		dprintk(CVP_PROF, "pwrUpdate fw %u fdu_o %u od_o %u mpu_o %u xra_o\n",
 			inst->prop.fw_cycles,
 			inst->prop.fdu_op_cycles,
 			inst->prop.od_op_cycles,
-			inst->prop.mpu_op_cycles);
+			inst->prop.mpu_op_cycles,
+			inst->prop.xra_op_cycles);
 
 		dprintk(CVP_PROF, "pwrUpdate ica_o %u fw_o %u bw %u bw_o %u\n",
 			inst->prop.ica_op_cycles,
@@ -1048,6 +1025,7 @@ static void aggregate_power_update(struct msm_cvp_core *core,
 		mpu_sum[i] += inst->prop.mpu_cycles;
 		ica_sum[i] += inst->prop.ica_cycles;
 		fw_sum[i] += inst->prop.fw_cycles;
+		xra_sum[i] += inst->prop.xra_cycles;
 		op_fdu_max[i] =
 			(op_fdu_max[i] >= inst->prop.fdu_op_cycles) ?
 			op_fdu_max[i] : inst->prop.fdu_op_cycles;
@@ -1063,35 +1041,43 @@ static void aggregate_power_update(struct msm_cvp_core *core,
 		op_fw_max[i] =
 			(op_fw_max[i] >= inst->prop.fw_op_cycles) ?
 			op_fw_max[i] : inst->prop.fw_op_cycles;
+		op_xra_max[i] =
+			(op_xra_max[i] >= inst->prop.xra_op_cycles) ?
+			op_xra_max[i] : inst->prop.xra_op_cycles;
 		bw_sum[i] += inst->prop.ddr_bw;
 		op_bw_max[i] =
 			(op_bw_max[i] >= inst->prop.ddr_op_bw) ?
 			op_bw_max[i] : inst->prop.ddr_op_bw;
 
-		dprintk(CVP_PWR, "%s:%d - fps fdu %d mpu %d od %d ica %d\n",
+		dprintk(CVP_PWR, "%s:%d - fps fdu %d mpu %d od %d ica %d xra %d\n",
 			__func__, __LINE__,
 			inst->prop.fps[HFI_HW_FDU], inst->prop.fps[HFI_HW_MPU],
-			inst->prop.fps[HFI_HW_OD], inst->prop.fps[HFI_HW_ICA]);
+			inst->prop.fps[HFI_HW_OD], inst->prop.fps[HFI_HW_ICA],  inst->prop.fps[HFI_HW_XRA]);
 		core->dyn_clk.sum_fps[HFI_HW_FDU] += inst->prop.fps[HFI_HW_FDU];
 		core->dyn_clk.sum_fps[HFI_HW_MPU] += inst->prop.fps[HFI_HW_MPU];
 		core->dyn_clk.sum_fps[HFI_HW_OD] += inst->prop.fps[HFI_HW_OD];
 		core->dyn_clk.sum_fps[HFI_HW_ICA] += inst->prop.fps[HFI_HW_ICA];
-		dprintk(CVP_PWR, "%s:%d - sum_fps fdu %d mpu %d od %d ica %d\n",
+		core->dyn_clk.sum_fps[HFI_HW_XRA] += inst->prop.fps[HFI_HW_XRA];
+		dprintk(CVP_PWR, "%s:%d - sum_fps fdu %d mpu %d od %d ica %d xra %d\n",
 			__func__, __LINE__,
 			core->dyn_clk.sum_fps[HFI_HW_FDU],
 			core->dyn_clk.sum_fps[HFI_HW_MPU],
 			core->dyn_clk.sum_fps[HFI_HW_OD],
-			core->dyn_clk.sum_fps[HFI_HW_ICA]);
+			core->dyn_clk.sum_fps[HFI_HW_ICA],
+			core->dyn_clk.sum_fps[HFI_HW_XRA]);
 	}
 
 	for (i = 0; i < 2; i++) {
 		fdu_sum[i] = max_3(fdu_sum[i], od_sum[i], mpu_sum[i]);
 		fdu_sum[i] = max_3(fdu_sum[i], ica_sum[i], fw_sum[i]);
+		fdu_sum[i] = max_3(fdu_sum[i], xra_sum[i], fw_sum[i]);
 
 		op_fdu_max[i] = max_3(op_fdu_max[i], op_od_max[i],
 			op_mpu_max[i]);
 		op_fdu_max[i] = max_3(op_fdu_max[i],
 			op_ica_max[i], op_fw_max[i]);
+		op_fdu_max[i] = max_3(op_fdu_max[i],
+			op_xra_max[i], op_fw_max[i]);
 		op_fdu_max[i] =
 			(op_fdu_max[i] > max_clk_rate) ?
 			max_clk_rate : op_fdu_max[i];
@@ -1517,7 +1503,6 @@ static int msm_cvp_session_ctrl(struct msm_cvp_inst *inst,
 		dprintk(CVP_ERR, "%s invalid session\n", __func__);
 		return -EINVAL;
 	}
-
 	switch (ctrl_type) {
 	case SESSION_STOP:
 		rc = msm_cvp_session_stop(inst, arg);
@@ -1578,6 +1563,11 @@ static unsigned int msm_cvp_get_hw_aggregate_cycles(enum hw_block hwblk)
 		case CVP_OD:
 		{
 			cycles_sum += inst->prop.od_cycles;
+			break;
+		}
+		case CVP_XRA:
+		{
+			cycles_sum += inst->prop.xra_cycles;
 			break;
 		}
 		default:
@@ -1657,6 +1647,12 @@ static int msm_cvp_get_sysprop(struct msm_cvp_inst *inst,
 		{
 			props->prop_data[i].data =
 				msm_cvp_get_hw_aggregate_cycles(CVP_MPU);
+			break;
+		}
+                case EVA_KMD_PROP_PWR_XRA:
+		{
+			props->prop_data[i].data =
+				msm_cvp_get_hw_aggregate_cycles(CVP_XRA);
 			break;
 		}
 		default:
@@ -1748,6 +1744,9 @@ static int msm_cvp_set_sysprop(struct msm_cvp_inst *inst,
 			session_prop->fw_cycles =
 				div_by_1dot5(prop_array[i].data);
 			break;
+		case EVA_KMD_PROP_PWR_XRA:
+			session_prop->xra_cycles = prop_array[i].data;
+			break;
 		case EVA_KMD_PROP_PWR_DDR:
 			session_prop->ddr_bw = prop_array[i].data;
 			break;
@@ -1771,6 +1770,9 @@ static int msm_cvp_set_sysprop(struct msm_cvp_inst *inst,
 			session_prop->fw_op_cycles =
 				div_by_1dot5(prop_array[i].data);
 			break;
+		case EVA_KMD_PROP_PWR_XRA_OP:
+			session_prop->xra_op_cycles = prop_array[i].data;
+			break;
 		case EVA_KMD_PROP_PWR_DDR_OP:
 			session_prop->ddr_op_bw = prop_array[i].data;
 			break;
@@ -1788,6 +1790,9 @@ static int msm_cvp_set_sysprop(struct msm_cvp_inst *inst,
 			break;
 		case EVA_KMD_PROP_PWR_FPS_ICA:
 			session_prop->fps[HFI_HW_ICA] = prop_array[i].data;
+			break;
+		case EVA_KMD_PROP_PWR_FPS_XRA:
+			session_prop->fps[HFI_HW_XRA] = prop_array[i].data;
 			break;
 		case EVA_KMD_PROP_SESSION_DUMPOFFSET:
 			session_prop->dump_offset = prop_array[i].data;
@@ -2063,8 +2068,16 @@ int msm_cvp_handle_syscall(struct msm_cvp_inst *inst, struct eva_kmd_arg *arg)
 		break;
 	}
 	case EVA_KMD_SESSION_CONTROL:
+	{
+		struct eva_kmd_session_control *ctrl = &arg->data.session_ctrl;
+		unsigned int ctrl_type = ctrl->ctrl_type;
+		pr_info(CVP_DBG_TAG "Before: msm_cvp_session_ctrl ,ctrl_type = %d inst %pK pid = %u tgid = %u\n",
+			"ctrl",ctrl_type,inst,current->pid, current->tgid);
 		rc = msm_cvp_session_ctrl(inst, arg);
+		pr_info(CVP_DBG_TAG "After: msm_cvp_session_ctrl ,ctrl_type = %d inst %pK pid = %u tgid = %u\n",
+			"ctrl",ctrl_type,inst,current->pid, current->tgid);
 		break;
+	}
 	case EVA_KMD_GET_SYS_PROPERTY:
 		rc = msm_cvp_get_sysprop(inst, arg);
 		break;

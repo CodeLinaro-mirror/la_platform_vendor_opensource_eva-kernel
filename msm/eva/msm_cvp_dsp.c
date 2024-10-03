@@ -1642,6 +1642,7 @@ static void __dsp_cvp_power_req(struct cvp_dsp_cmd_msg *cmd)
 	inst->prop.od_cycles =	dsp2cpu_cmd->power_req.clock_od;
 	inst->prop.mpu_cycles =	dsp2cpu_cmd->power_req.clock_mpu;
 	inst->prop.fw_cycles = dsp2cpu_cmd->power_req.clock_fw;
+	//inst->prop.xra_cycles = dsp2cpu_cmd->power_req.clock_xra;
 	inst->prop.ddr_bw = dsp2cpu_cmd->power_req.bw_ddr;
 	inst->prop.ddr_cache = dsp2cpu_cmd->power_req.bw_sys_cache;
 	inst->prop.fdu_op_cycles = dsp2cpu_cmd->power_req.op_clock_fdu;
@@ -1649,6 +1650,7 @@ static void __dsp_cvp_power_req(struct cvp_dsp_cmd_msg *cmd)
 	inst->prop.od_op_cycles = dsp2cpu_cmd->power_req.op_clock_od;
 	inst->prop.mpu_op_cycles = dsp2cpu_cmd->power_req.op_clock_mpu;
 	inst->prop.fw_op_cycles = dsp2cpu_cmd->power_req.op_clock_fw;
+	//inst->prop.xra_op_cycles = dsp2cpu_cmd->power_req.op_clock_xra;
 	inst->prop.ddr_op_bw = dsp2cpu_cmd->power_req.op_bw_ddr;
 	inst->prop.ddr_op_cache = dsp2cpu_cmd->power_req.op_bw_sys_cache;
 

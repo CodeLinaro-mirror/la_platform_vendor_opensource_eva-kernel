@@ -58,6 +58,8 @@ int cvp_create_pkt_cmd_sys_debug_config(
 	hfi = (struct cvp_hfi_debug_config *) &pkt->rg_property_data[1];
 	hfi->debug_config = mode;
 	hfi->debug_mode = HFI_DEBUG_MODE_QUEUE;
+	hfi->ftrace_logN = msm_cvp_logN;
+	dprintk(CVP_INFO, "In %s(), ftrace_logN = %d\n", __func__, hfi->ftrace_logN);
 	if (msm_cvp_fw_debug_mode
 			<= (HFI_DEBUG_MODE_QUEUE | HFI_DEBUG_MODE_QDSS))
 		hfi->debug_mode = msm_cvp_fw_debug_mode;
