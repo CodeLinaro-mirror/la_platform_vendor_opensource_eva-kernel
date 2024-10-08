@@ -362,12 +362,12 @@ wait:
 		inst->core->resources.pm_qos.off_vote_cnt);
 	}
 
+	spin_unlock(&inst->core->resources.pm_qos.lock);
 	if(!inst->core->resources.pm_qos.off_vote_cnt){
 		hdev = inst->core->device;
 		call_hfi_op(hdev, pm_qos_update, hdev->hfi_device_data,
 				PM_QOS_RESUME_LATENCY_DEFAULT_VALUE);
 	}
-	spin_unlock(&inst->core->resources.pm_qos.lock);
 }
 
 int msm_cvp_destroy(struct msm_cvp_inst *inst)
