@@ -1076,11 +1076,11 @@ int msm_cvp_session_create(struct msm_cvp_inst *inst)
 	inst->core->resources.pm_qos.off_vote_cnt++;
 	hdev = inst->core->device;
 	dev = hdev->hfi_device_data;
+	spin_unlock(&inst->core->resources.pm_qos.lock);
 	//vote only if off_vote_cnt == 1, i.e no need to vote for next sessions.
 	if(inst->core->resources.pm_qos.off_vote_cnt == 1){
 		call_hfi_op(hdev, pm_qos_update, hdev->hfi_device_data, dev->res->pm_qos.latency_us);
 	}
-	spin_unlock(&inst->core->resources.pm_qos.lock);
 fail_init:
 	return rc;
 }
