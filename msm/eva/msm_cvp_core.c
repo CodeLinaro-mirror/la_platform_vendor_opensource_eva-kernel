@@ -334,19 +334,20 @@ wait:
 	if (cvp_release_arp_buffers(inst))
 		dprintk(CVP_ERR,
 			"Failed to release persist buffers\n");
+	spin_lock(&inst->core->resources.pm_qos.lock);
+	if (inst->core->resources.pm_qos.off_vote_cnt > 0){
+		inst->core->resources.pm_qos.off_vote_cnt--;
+	}
+	else{
+		dprintk(CVP_INFO, "%s Unexpected pm_qos off vote %d\n",
+			__func__,
+		inst->core->resources.pm_qos.off_vote_cnt);
+	}
 
-	if (inst->prop.type == HFI_SESSION_FD
-		|| inst->prop.type == HFI_SESSION_DMM) {
-		spin_lock(&inst->core->resources.pm_qos.lock);
-		if (inst->core->resources.pm_qos.off_vote_cnt > 0)
-			inst->core->resources.pm_qos.off_vote_cnt--;
-		else
-			dprintk(CVP_WARN, "%s Unexpected pm_qos off vote %d\n",
-				__func__,
-				inst->core->resources.pm_qos.off_vote_cnt);
-		spin_unlock(&inst->core->resources.pm_qos.lock);
+	spin_unlock(&inst->core->resources.pm_qos.lock);
+	if(!inst->core->resources.pm_qos.off_vote_cnt){
 		hdev = inst->core->device;
-		call_hfi_op(hdev, pm_qos_update, hdev->hfi_device_data);
+		call_hfi_op(hdev, pm_qos_update, hdev->hfi_device_data,PM_QOS_RESUME_LATENCY_DEFAULT_VALUE);
 	}
 }
 
