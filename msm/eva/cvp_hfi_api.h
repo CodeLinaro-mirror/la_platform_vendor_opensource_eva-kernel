@@ -265,7 +265,7 @@ struct cvp_hfi_device {
 	int (*flush_debug_queue)(void *dev);
 	int (*noc_error_info)(void *dev);
 	int (*validate_session)(void *sess, const char *func);
-	int (*pm_qos_update)(void *device);
+	int (*pm_qos_update)(void *device, u32 latency);
 };
 
 typedef void (*hfi_cmd_response_callback) (enum hal_command_response cmd,
