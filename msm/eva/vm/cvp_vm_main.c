@@ -169,7 +169,7 @@ static int msm_cvp_vm_init_reg_and_irq(struct iris_hfi_device *device,
 
 	disable_irq_nosync(res->irq);
 	dprintk(CVP_INFO,
-		"firmware_base = %pa, register_base = %pa, register_size = %d\n",
+		"firmware_base = %llx, register_base = %llx, register_size = %d\n",
 		&res->firmware_base, &res->register_base,
 		res->register_size);
 	return rc;

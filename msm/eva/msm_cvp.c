@@ -536,7 +536,6 @@ static int cvp_populate_fences( struct eva_kmd_hfi_packet *in_pkt,
 	f->num_fences = 0;
 	f->output_index = 0;
 	buf_offset = offset;
-
 	if (cvp_kernel_fence_enabled == 0)
 	{
 		goto soc_fence;
@@ -1689,7 +1688,7 @@ int msm_cvp_session_init(struct msm_cvp_inst *inst)
 		return -EINVAL;
 	}
 
-	dprintk(CVP_SESS, "%s: inst %pK (%#x)\n", __func__,
+	dprintk(CVP_SESS, "%s: inst %llx (%#x)\n", __func__,
 		inst, hash32_ptr(inst->session));
 
 	/* set default frequency */

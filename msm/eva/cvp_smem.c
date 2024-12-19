@@ -177,7 +177,7 @@ static int msm_dma_put_device_address(u32 flags,
 	dprintk(CVP_MEM, "%s: CB dev_name: %s, attach dev_name: %s, attach: 0x%lx, dbuf: 0x%lx",
 		__func__, dev_name(cb->dev), dev_name(attach->dev), attach, dbuf);
 	dprintk(CVP_MEM, "%s: sg-table: 0x%lx, table->sgl->dma_address: 0x%lx",
-		__func__, table, dbuf, table->sgl->dma_address);
+		__func__, table, table->sgl->dma_address);
 
 	dma_buf_unmap_attachment(mapping_info->attach,
 		mapping_info->table, DMA_BIDIRECTIONAL);
@@ -443,7 +443,7 @@ static int alloc_dma_mem(size_t size, u32 align, int map_kernel,
 	}
 
 	dprintk(CVP_MEM,
-		"%s: dma_buf=%pK,iova=%x,size=%d,kvaddr=%pK,flags=%#lx\n",
+		"%s: dma_buf=%llx,iova=%x,size=%d,kvaddr=%llx,flags=%#lx\n",
 		__func__, mem->dma_buf, mem->device_addr, mem->size,
 		mem->kvaddr, mem->flags);
 	return rc;
@@ -460,7 +460,7 @@ fail_shared_mem_alloc:
 static int free_dma_mem(struct msm_cvp_smem *mem)
 {
 	dprintk(CVP_MEM,
-		"%s: dma_buf = %pK, device_addr = %x, size = %d, kvaddr = %pK\n",
+		"%s: dma_buf = %llx, device_addr = %x, size = %d, kvaddr = %llx\n",
 		__func__, mem->dma_buf, mem->device_addr, mem->size, mem->kvaddr);
 
 	if (mem->device_addr) {
