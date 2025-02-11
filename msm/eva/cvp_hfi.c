@@ -480,7 +480,7 @@ static int __read_queue(struct cvp_iface_q_info *qinfo, u8 *packet,
 		u32 *pb_tx_req_is_set)
 {
 	struct cvp_hfi_queue_header *queue;
-	u32 packet_size_in_words, new_read_idx;
+	u32 packet_size_in_words, new_read_idx, packet_size_in_bytes;
 	u32 *read_ptr;
 	u32 receive_request = 0;
 	u32 read_idx, write_idx;
@@ -553,6 +553,7 @@ static int __read_queue(struct cvp_iface_q_info *qinfo, u8 *packet,
 	}
 
 	packet_size_in_words = (*read_ptr) >> 2;
+	packet_size_in_bytes = *read_ptr;
 	if (!packet_size_in_words) {
 		spin_unlock(&qinfo->hfi_lock);
 		dprintk(CVP_ERR, "Zero packet size\n");
@@ -579,7 +580,7 @@ static int __read_queue(struct cvp_iface_q_info *qinfo, u8 *packet,
 		 * the packet from a shared queue, there is a possibility that the
 		 * packet->size data gets corrupted by malicious firmware.
 		 */
-		*((u32 *) packet) = packet_size_in_words << 2;
+		*((u32 *) packet) = packet_size_in_bytes;
 	} else {
 		dprintk(CVP_WARN,
 			"BAD packet received, read_idx: %#x, pkt_size: %d\n",
