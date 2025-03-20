@@ -1,4 +1,4 @@
-load("//build/kernel/kleaf:kernel.bzl", "ddk_headers")
+load("//build/kernel/kleaf:kernel.bzl", "ddk_headers", "ddk_uapi_headers")
 
 package(
     default_visibility = [
@@ -12,13 +12,22 @@ ddk_headers(
     ],
     includes = ["config"]
 )
+
+filegroup(
+    name = "_eva_uapi_headers",
+    srcs = glob([
+        "include/uapi/eva/media/*.h",
+    ]),
+)
+
 ddk_headers(
     name = "uapi_headers",
-    hdrs = glob([
-      "include/uapi/eva/media/*.h",
-    ]),
-    includes = ["include/uapi/eva"]
+    hdrs = [
+        ":_eva_uapi_headers",
+    ],
+    includes = ["include/uapi/eva"],
 )
+
 ddk_headers(
     name = "msm_headers",
     hdrs = glob([
@@ -32,6 +41,14 @@ ddk_headers(
     hdrs = [":eva_drivers_configs", ":uapi_headers", ":msm_headers"]
 )
 
+ddk_uapi_headers(
+    name = "msm_eva_ddk_uapi_headers",
+    srcs = [
+        ":_eva_uapi_headers",
+    ],
+    out = "eva-uapi-headers.tar.gz",
+    kernel_build = "//:target_kernel_build",
+)
 
 load(":neo61.bzl", "define_neo61")
 define_neo61()
