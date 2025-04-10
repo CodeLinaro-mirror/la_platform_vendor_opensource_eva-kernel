@@ -2,6 +2,7 @@
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
  * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2025 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/pid.h>
@@ -450,6 +451,10 @@ static int msm_cvp_session_add_smem(struct msm_cvp_inst *inst,
 			SET_USE_BITMAP(i, inst);
 		} else {
 			dprintk(CVP_WARN, "%s: not enough memory\n", __func__);
+			dprintk(CVP_WARN, "%s: reached limit, fallback to buf mapping list\n",
+				__func__);
+			dprintk(CVP_WARN, "%s:, dma_buf %#llx, smem->refcount %d\n",
+				__func__, smem->dma_buf, atomic_read(&smem->refcount));
 			mutex_unlock(&inst->dma_cache.lock);
 			return -ENOMEM;
 		}
@@ -457,7 +462,9 @@ static int msm_cvp_session_add_smem(struct msm_cvp_inst *inst,
 
 	atomic_inc(&smem->refcount);
 	mutex_unlock(&inst->dma_cache.lock);
-	dprintk(CVP_MEM, "Add entry %d into cache\n", i);
+	dprintk(CVP_MEM, "%s: Added entry %d into cache\n", __func__, i);
+	dprintk(CVP_MEM, "%s: dma_buf %#llx, smem->refcount %d\n",
+		__func__, smem->dma_buf, atomic_read(&smem->refcount));
 
 	return 0;
 }
@@ -735,8 +742,11 @@ int msm_cvp_mark_user_persist(struct msm_cvp_inst *inst,
 	struct cvp_buf_type *buf;
 	int i, rc = 0;
 
-	if (!offset || !buf_num)
-		return 0;
+	if (!offset || !buf_num) {
+		dprintk(CVP_ERR,"%s: NULL check Failed. offset: %d, buf_num : %d\n",
+				__func__, offset, buf_num);
+		return -EINVAL;
+	}
 
 	cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)in_pkt;
 	ktid = atomic64_inc_return(&inst->core->kernel_trans_id);
@@ -776,7 +786,7 @@ int msm_cvp_mark_user_persist(struct msm_cvp_inst *inst,
 
 int msm_cvp_map_user_persist(struct msm_cvp_inst *inst,
 			struct eva_kmd_hfi_packet *in_pkt,
-			unsigned int offset, unsigned int buf_num)
+			unsigned int offset, unsigned int buf_num, uint32_t *fd_arr)
 {
 	struct cvp_buf_type *buf;
 	int i;
@@ -789,9 +799,11 @@ int msm_cvp_map_user_persist(struct msm_cvp_inst *inst,
 		buf = (struct cvp_buf_type *)&in_pkt->pkt_data[offset];
 		offset += sizeof(*buf) >> 2;
 
-		if (buf->fd < 0 || !buf->size)
+		if (buf->fd < 0 || !buf->size) {
+			dprintk(CVP_ERR, "%s: fd = %d, Size = %d, in_buf_num = %d\n",
+				__func__, buf->fd, buf->size, buf_num);
 			continue;
-
+		}
 		iova = msm_cvp_map_user_persist_buf(inst, buf);
 		if (!iova) {
 			dprintk(CVP_ERR,
@@ -800,6 +812,7 @@ int msm_cvp_map_user_persist(struct msm_cvp_inst *inst,
 
 			return -EINVAL;
 		}
+		fd_arr[i] = buf->fd;
 		buf->fd = iova;
 	}
 	return 0;
