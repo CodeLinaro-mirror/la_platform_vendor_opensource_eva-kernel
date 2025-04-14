@@ -220,7 +220,7 @@ enum cvp_status cvp_hfi_process_sys_init_done_prop_read(
 	data_ptr = (u8 *) &pkt->rg_property_data[0];
 	num_properties = pkt->num_properties;
 	dprintk(CVP_HFI,
-		"%s: data_start %llx, num_properties %#x\n",
+		"%s: data_start %pK, num_properties %#x\n",
 		__func__, data_ptr, num_properties);
 
 	sys_init_done->capabilities = NULL;
@@ -564,6 +564,7 @@ static int hfi_process_session_cvp_msg(u32 device_id,
 	struct msm_cvp_core *core;
 	unsigned int session_id;
 	struct cvp_session_queue *sq;
+
 	if (!pkt) {
 		dprintk(CVP_ERR, "%s: invalid param\n", __func__);
 		return -EINVAL;

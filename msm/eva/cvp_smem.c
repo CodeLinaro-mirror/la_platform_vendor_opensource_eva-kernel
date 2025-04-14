@@ -443,7 +443,7 @@ static int alloc_dma_mem(size_t size, u32 align, int map_kernel,
 	}
 
 	dprintk(CVP_MEM,
-		"%s: dma_buf=%llx,iova=%x,size=%d,kvaddr=%llx,flags=%#lx\n",
+		"%s: dma_buf=%pK,iova=%x,size=%d,kvaddr=%pK,flags=%#lx\n",
 		__func__, mem->dma_buf, mem->device_addr, mem->size,
 		mem->kvaddr, mem->flags);
 	return rc;
@@ -460,7 +460,7 @@ fail_shared_mem_alloc:
 static int free_dma_mem(struct msm_cvp_smem *mem)
 {
 	dprintk(CVP_MEM,
-		"%s: dma_buf = %llx, device_addr = %x, size = %d, kvaddr = %llx\n",
+		"%s: dma_buf = %pK, device_addr = %x, size = %d, kvaddr = %pK\n",
 		__func__, mem->dma_buf, mem->device_addr, mem->size, mem->kvaddr);
 
 	if (mem->device_addr) {

@@ -994,7 +994,7 @@ int cvp_read_platform_resources_from_dt(
 				&firmware_base);
 		res->firmware_base = (phys_addr_t)firmware_base;
 		dprintk(CVP_CORE,
-				"Using fw-bias : %llx", &res->firmware_base);
+				"Using fw-bias : %pa", &res->firmware_base);
 	}
 
 return rc;
@@ -1044,7 +1044,7 @@ static int msm_cvp_setup_context_bank(struct msm_cvp_platform_resources *res,
 
 	dprintk(CVP_CORE, "Attached %s and created mapping\n", dev_name(dev));
 	dprintk(CVP_CORE,
-		"Context bank name:%s, buffer_type: %#x, is_secure: %d, address range start: %#x, size: %#x, dev: %llx",
+		"Context bank name:%s, buffer_type: %#x, is_secure: %d, address range start: %#x, size: %#x, dev: %pK",
 		cb->name, cb->buffer_type, cb->is_secure, cb->addr_range.start,
 		cb->addr_range.size, cb->dev);
 
