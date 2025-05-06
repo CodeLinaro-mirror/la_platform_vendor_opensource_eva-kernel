@@ -1688,7 +1688,7 @@ int msm_cvp_session_init(struct msm_cvp_inst *inst)
 		return -EINVAL;
 	}
 
-	dprintk(CVP_SESS, "%s: inst %llx (%#x)\n", __func__,
+	dprintk(CVP_SESS, "%s: inst %pK (%#x)\n", __func__,
 		inst, hash32_ptr(inst->session));
 
 	/* set default frequency */

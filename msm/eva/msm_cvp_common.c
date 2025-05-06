@@ -319,11 +319,11 @@ void change_cvp_inst_state(struct msm_cvp_inst *inst, enum instance_state state)
 	mutex_lock(&inst->lock);
 	if (inst->state == MSM_CVP_CORE_INVALID) {
 		dprintk(CVP_SESS,
-			"Inst: %llx is in bad state can't change state to %d\n",
+			"Inst: %pK is in bad state can't change state to %d\n",
 			inst, state);
 		goto exit;
 	}
-	dprintk(CVP_SESS, "Moved inst: %llx from state: %d to state: %d\n",
+	dprintk(CVP_SESS, "Moved inst: %pK from state: %d to state: %d\n",
 		   inst, inst->state, state);
 	inst->state = state;
 exit:
@@ -334,7 +334,7 @@ static int signal_session_msg_receipt(enum hal_command_response cmd,
 		struct msm_cvp_inst *inst)
 {
 	if (!inst) {
-		dprintk(CVP_ERR, "Invalid(%llx) instance id\n", inst);
+		dprintk(CVP_ERR, "Invalid(%pK) instance id\n", inst);
 		return -EINVAL;
 	}
 	if (IS_HAL_SESSION_CMD(cmd)) {
@@ -385,7 +385,7 @@ static int wait_for_state(struct msm_cvp_inst *inst,
 	int rc = 0;
 
 	if (IS_ALREADY_IN_STATE(flipped_state, desired_state)) {
-		dprintk(CVP_INFO, "inst: %llx is already in state: %d\n",
+		dprintk(CVP_INFO, "inst: %pK is already in state: %d\n",
 						inst, inst->state);
 		goto err_same_state;
 	}
@@ -538,7 +538,7 @@ static void handle_session_error(enum hal_command_response cmd, void *data)
 	}
 
 	ops_tbl = inst->core->dev_ops;
-	dprintk(CVP_ERR, "Sess error 0x%x received for inst %llx sess %x\n",
+	dprintk(CVP_ERR, "Sess error 0x%x received for inst %pK sess %x\n",
 		response->status, inst, hash32_ptr(inst->session));
 	cvp_print_inst(CVP_WARN, inst);
 
@@ -588,7 +588,7 @@ void handle_sys_error(enum hal_command_response cmd, void *data)
 	core->ssr_count++;
 	if (core->state == CVP_CORE_UNINIT) {
 		dprintk(CVP_ERR,
-			"%s: Core %llx already moved to state %d\n",
+			"%s: Core %pK already moved to state %d\n",
 			 __func__, core, core->state);
 		mutex_unlock(&core->lock);
 		return;
@@ -596,7 +596,7 @@ void handle_sys_error(enum hal_command_response cmd, void *data)
 
 	cur_state = core->state;
 	core->state = CVP_CORE_UNINIT;
-	dprintk(CVP_WARN, "SYS_ERROR from core %llx cmd %x total: %d\n",
+	dprintk(CVP_WARN, "SYS_ERROR from core %pK cmd %x total: %d\n",
 			core, cmd, core->ssr_count);
 	mutex_lock(&core->clk_lock);
 	hfi_device = ops_tbl->hfi_device_data;
@@ -654,19 +654,19 @@ void msm_cvp_comm_session_clean(struct msm_cvp_inst *inst)
 		return;
 	}
 	if (!inst->session || inst->session == (void *)0xdeadbeef) {
-		dprintk(CVP_SESS, "%s: inst %llx session already cleaned\n",
+		dprintk(CVP_SESS, "%s: inst %pK session already cleaned\n",
 			__func__, inst);
 		return;
 	}
 
 	ops_tbl = inst->core->dev_ops;
 	mutex_lock(&inst->lock);
-	dprintk(CVP_SESS, "%s: inst %llx\n", __func__, inst);
+	dprintk(CVP_SESS, "%s: inst %pK\n", __func__, inst);
 	rc = call_hfi_op(ops_tbl, session_clean,
 			(void *)inst->session);
 	if (rc) {
 		dprintk(CVP_ERR,
-			"Session clean failed :%llx\n", inst);
+			"Session clean failed :%pK\n", inst);
 	}
 	inst->session = NULL;
 	mutex_unlock(&inst->lock);
@@ -789,7 +789,7 @@ static int msm_comm_session_abort(struct msm_cvp_inst *inst)
 	/* Activate code below for Watchdog timeout testing */
 	abort_completion = SESSION_MSG_INDEX(HAL_SESSION_ABORT_DONE);
 
-	dprintk(CVP_WARN, "%s: inst %llx session %x\n", __func__,
+	dprintk(CVP_WARN, "%s: inst %pK session %x\n", __func__,
 		inst, hash32_ptr(inst->session));
 	rc = call_hfi_op(ops_tbl, session_abort, (void *)inst->session);
 	if (rc) {
@@ -802,7 +802,7 @@ static int msm_comm_session_abort(struct msm_cvp_inst *inst)
 			msecs_to_jiffies(
 				inst->core->resources.msm_cvp_hw_rsp_timeout));
 	if (!rc) {
-		dprintk(CVP_ERR, "%s: inst %llx session %x abort timed out\n",
+		dprintk(CVP_ERR, "%s: inst %pK session %x abort timed out\n",
 				__func__, inst, hash32_ptr(inst->session));
 		print_hfi_queue_info(ops_tbl);
 		msm_cvp_comm_generate_sys_error(inst);
@@ -897,7 +897,7 @@ static int msm_comm_init_core(struct msm_cvp_inst *inst)
 			"%s: capabilities memory is expected to be freed\n",
 			__func__);
 	}
-	dprintk(CVP_CORE, "%s: core %llx\n", __func__, core);
+	dprintk(CVP_CORE, "%s: core %pK\n", __func__, core);
 	rc = call_hfi_op(ops_tbl, core_init, ops_tbl->hfi_device_data);
 	if (rc) {
 		dprintk(CVP_ERR, "Failed to init core\n");
@@ -945,11 +945,11 @@ static int msm_comm_session_init_done(int flipped_state,
 {
 	int rc;
 
-	dprintk(CVP_SESS, "inst %llx: waiting for session init done\n", inst);
+	dprintk(CVP_SESS, "inst %pK: waiting for session init done\n", inst);
 	rc = wait_for_state(inst, flipped_state, MSM_CVP_OPEN_DONE,
 			HAL_SESSION_INIT_DONE);
 	if (rc) {
-		dprintk(CVP_ERR, "Session init failed for inst %llx\n", inst);
+		dprintk(CVP_ERR, "Session init failed for inst %pK\n", inst);
 		return rc;
 	}
 
@@ -969,18 +969,18 @@ static int msm_comm_session_init(int flipped_state,
 	ops_tbl = inst->core->dev_ops;
 
 	if (IS_ALREADY_IN_STATE(flipped_state, MSM_CVP_OPEN)) {
-		dprintk(CVP_INFO, "inst: %llx is already in state: %d\n",
+		dprintk(CVP_INFO, "inst: %pK is already in state: %d\n",
 						inst, inst->state);
 		goto exit;
 	}
 
-	dprintk(CVP_SESS, "%s: inst %llx\n", __func__, inst);
+	dprintk(CVP_SESS, "%s: inst %pK\n", __func__, inst);
 	rc = call_hfi_op(ops_tbl, session_init, ops_tbl->hfi_device_data,
 			inst, &inst->session);
 
 	if (rc || !inst->session) {
 		dprintk(CVP_ERR,
-			"Failed to call session init for: %llx, %llx, %d\n",
+			"Failed to call session init for: %pK, %pK, %d\n",
 			inst->core->dev_ops, inst, inst->session_type);
 		rc = -EINVAL;
 		goto exit;
@@ -1003,12 +1003,12 @@ static int msm_comm_session_close(int flipped_state,
 	}
 	if (IS_ALREADY_IN_STATE(flipped_state, MSM_CVP_CLOSE)) {
 		dprintk(CVP_INFO,
-			"inst: %llx is already in state: %d\n",
+			"inst: %pK is already in state: %d\n",
 						inst, inst->state);
 		goto exit;
 	}
 	ops_tbl = inst->core->dev_ops;
-	dprintk(CVP_SESS, "%s: inst %llx\n", __func__, inst);
+	dprintk(CVP_SESS, "%s: inst %pK\n", __func__, inst);
 	rc = call_hfi_op(ops_tbl, session_end, (void *) inst->session);
 	if (rc) {
 		dprintk(CVP_ERR,
@@ -1080,14 +1080,14 @@ int msm_cvp_comm_try_state(struct msm_cvp_inst *inst, int state)
 	core = cvp_driver->cvp_core;
 
 	if (!inst) {
-		dprintk(CVP_ERR, "%s: invalid params %llx", __func__, inst);
+		dprintk(CVP_ERR, "%s: invalid params %pK", __func__, inst);
 		return -EINVAL;
 	}
 
 	mutex_lock(&inst->sync_lock);
 	if (inst->state == MSM_CVP_CORE_INVALID &&
 				core->state == CVP_CORE_UNINIT) {
-		dprintk(CVP_ERR, "%s: inst %llx & core are in invalid\n",
+		dprintk(CVP_ERR, "%s: inst %pK & core are in invalid\n",
 			__func__, inst);
 		mutex_unlock(&inst->sync_lock);
 		return -EINVAL;
@@ -1095,7 +1095,7 @@ int msm_cvp_comm_try_state(struct msm_cvp_inst *inst, int state)
 
 	flipped_state = get_flipped_state(inst->state, state);
 	dprintk(CVP_SESS,
-		"inst: %llx (%#x) cur_state %s dest_state %s flipped_state = %s\n",
+		"inst: %pK (%#x) cur_state %s dest_state %s flipped_state = %s\n",
 		inst, hash32_ptr(inst->session), state_names[inst->state],
 		state_names[state], state_names[flipped_state]);
 
@@ -1168,7 +1168,7 @@ int msm_cvp_noc_error_info(struct msm_cvp_core *core)
 	static u32 last_fault_count = 0;
 
 	if (!core || !core->dev_ops) {
-		dprintk(CVP_WARN, "%s: Invalid parameters: %llx\n",
+		dprintk(CVP_WARN, "%s: Invalid parameters: %pK\n",
 			__func__, core);
 		return -EINVAL;
 	}
@@ -1269,7 +1269,7 @@ send_again:
 			core->trigger_ssr = false;
 		}
 	} else {
-		dprintk(CVP_WARN, "%s: cvp core %llx not initialized\n",
+		dprintk(CVP_WARN, "%s: cvp core %pK not initialized\n",
 			__func__, core);
 	}
 	mutex_unlock(&core->lock);
@@ -1285,7 +1285,7 @@ void msm_cvp_comm_generate_sys_error(struct msm_cvp_inst *inst)
 		dprintk(CVP_ERR, "%s: invalid input parameters\n", __func__);
 		return;
 	}
-	dprintk(CVP_WARN, "%s: inst %llx\n", __func__, inst);
+	dprintk(CVP_WARN, "%s: inst %pK\n", __func__, inst);
 	core = inst->core;
 	handle_sys_error(cmd, (void *) &response);
 
@@ -1300,11 +1300,11 @@ int msm_cvp_comm_kill_session(struct msm_cvp_inst *inst)
 		dprintk(CVP_ERR, "%s: invalid input parameters\n", __func__);
 		return -EINVAL;
 	} else if (!inst->session || inst->session == (void *)0xdeadbeef) {
-		dprintk(CVP_ERR, "%s: no session to kill for inst %llx\n",
+		dprintk(CVP_ERR, "%s: no session to kill for inst %pK\n",
 			__func__, inst);
 		return 0;
 	}
-	dprintk(CVP_WARN, "%s: inst %llx, session %x state %d\n", __func__,
+	dprintk(CVP_WARN, "%s: inst %pK, session %x state %d\n", __func__,
 		inst, hash32_ptr(inst->session), inst->state);
 	/*
 	 * We're internally forcibly killing the session, if fw is aware of
@@ -1417,11 +1417,11 @@ bool is_cvp_inst_valid(struct msm_cvp_inst *inst)
 int cvp_print_inst(u32 tag, struct msm_cvp_inst *inst)
 {
 	if (!inst) {
-		dprintk(CVP_ERR, "%s invalid inst %llx\n", __func__, inst);
+		dprintk(CVP_ERR, "%s invalid inst %pK\n", __func__, inst);
 		return -EINVAL;
 	}
 
-	dprintk(tag, "%s inst stype %d %llx id = %#x ptype %#x prio %#x secure %#x kmask %#x dmask %#x, kref %#x state %#x\n",
+	dprintk(tag, "%s inst stype %d %pK id = %#x ptype %#x prio %#x secure %#x kmask %#x dmask %#x, kref %#x state %#x\n",
 		inst->proc_name, inst->session_type, inst, hash32_ptr(inst->session),
 		inst->prop.type, inst->prop.priority, inst->prop.is_secure,
 		inst->prop.kernel_mask, inst->prop.dsp_mask,

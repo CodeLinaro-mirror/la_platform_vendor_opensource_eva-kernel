@@ -187,7 +187,7 @@ struct msm_cvp_inst *msm_cvp_open(int session_type, struct task_struct *task)
 		goto err_invalid_core;
 	}
 
-	pr_info(CVP_DBG_TAG "%s opening cvp instance: %llx type %d cnt %d\n",
+	pr_info(CVP_DBG_TAG "%s opening cvp instance: %pK type %d cnt %d\n",
 		"sess", task->comm, inst, session_type, instance_count);
 	mutex_init(&inst->sync_lock);
 	mutex_init(&inst->lock);
@@ -329,7 +329,7 @@ wait_dsp:
 	mutex_unlock(&inst->cvpdspbufs.lock);
 
 	if (!empty) {
-		dprintk(CVP_WARN, "Failed sess %llx DSP frame pending\n", inst);
+		dprintk(CVP_WARN, "Failed sess %pK DSP frame pending\n", inst);
 		/*
 		 * A session is either DSP session or CPU session, cannot have both
 		 * DSP and frame buffers
@@ -353,7 +353,7 @@ wait_frame:
 
 	if (!empty) {
 		dprintk(CVP_WARN,
-			"Failed to process frames before session %llx close\n",
+			"Failed to process frames before session %pK close\n",
 			inst);
 		mutex_lock(&inst->frames.lock);
 		list_for_each_entry(frame, &inst->frames.list, list)
@@ -469,7 +469,7 @@ int msm_cvp_destroy(struct msm_cvp_inst *inst)
 	core->synx_ftbl->cvp_sess_deinit_synx(inst);
 
 	pr_info(CVP_DBG_TAG
-		"closed cvp instance: %llx session_id = %d type %d %d\n",
+		"closed cvp instance: %pK session_id = %d type %d %d\n",
 		inst->proc_name, inst, hash32_ptr(inst->session),
 		inst->session_type, core->smem_leak_count);
 	inst->session = (void *)0xdeadbeef;
@@ -512,7 +512,7 @@ int msm_cvp_close(void *instance)
 	}
 
 	pr_info(CVP_DBG_TAG
-		"to close instance: %llx session_id = %d type %d state %d\n",
+		"to close instance: %pK session_id = %d type %d state %d\n",
 		inst->proc_name, inst, hash32_ptr(inst->session),
 		inst->session_type, inst->state);
 
@@ -537,7 +537,7 @@ int msm_cvp_close(void *instance)
 	rc = msm_cvp_comm_try_state(inst, MSM_CVP_CORE_UNINIT);
 	if (rc) {
 		dprintk(CVP_ERR,
-			"Failed to move inst %llx to uninit state\n", inst);
+			"Failed to move inst %pK to uninit state\n", inst);
 		rc = msm_cvp_deinit_core(inst);
 	}
 

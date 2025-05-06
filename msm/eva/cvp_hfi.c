@@ -483,7 +483,7 @@ static int __write_queue(struct cvp_iface_q_info *qinfo, u8 *packet,
 			cmd_pkt->packet_type, cmd_pkt->session_id);
 
 	if (msm_cvp_debug & CVP_PKT) {
-		dprintk(CVP_PKT, "%s: %llx\n", __func__, qinfo);
+		dprintk(CVP_PKT, "%s: %pK\n", __func__, qinfo);
 		__dump_packet(packet, CVP_PKT);
 	}
 
@@ -691,7 +691,7 @@ static int __read_queue(struct cvp_iface_q_info *qinfo, u8 *packet,
 
 	if ((msm_cvp_debug & CVP_PKT) &&
 		!(queue->qhdr_type & HFI_Q_ID_CTRL_TO_HOST_DEBUG_Q)) {
-		dprintk(CVP_PKT, "%s: %llx\n", __func__, qinfo);
+		dprintk(CVP_PKT, "%s: %pK\n", __func__, qinfo);
 		__dump_packet(packet, CVP_PKT);
 	}
 
@@ -718,7 +718,7 @@ static int __smem_alloc(struct iris_hfi_device *dev, struct cvp_mem_addr *mem,
 		goto fail_smem_alloc;
 	}
 
-	dprintk(CVP_MEM, "%s: ptr = %llx, size = %d\n", __func__,
+	dprintk(CVP_MEM, "%s: ptr = %pK, size = %d\n", __func__,
 			alloc->kvaddr, size);
 
 	mem->mem_size = alloc->size;
@@ -763,7 +763,7 @@ static void __write_register(struct iris_hfi_device *device,
 	}
 
 	base_addr = device->cvp_hal_data->register_base;
-	dprintk(CVP_REG, "Base addr: %llx, written to: %#x, Value: %#x...\n",
+	dprintk(CVP_REG, "Base addr: %pK, written to: %#x, Value: %#x...\n",
 		base_addr, hwiosymaddr, value);
 	base_addr += hwiosymaddr;
 	writel_relaxed(value, base_addr);
@@ -803,7 +803,7 @@ static int __read_gcc_register(struct iris_hfi_device *device, u32 reg)
 	 */
 	rmb();
 	dprintk(CVP_REG,
-		"GCC Base addr: %llx, read from: %#x, value: %#x...\n",
+		"GCC Base addr: %pK, read from: %#x, value: %#x...\n",
 		base_addr, reg, rc);
 
 	return rc;
@@ -837,7 +837,7 @@ static int __read_register(struct iris_hfi_device *device, u32 reg)
 	 * register.
 	 */
 	rmb();
-	dprintk(CVP_REG, "Base addr: %llx, read from: %#x, value: %#x...\n",
+	dprintk(CVP_REG, "Base addr: %pK, read from: %#x, value: %#x...\n",
 		base_addr, reg, rc);
 
 	return rc;
@@ -2358,7 +2358,7 @@ static int iris_hfi_core_init(void *device)
 	__set_state(dev, IRIS_STATE_INIT);
 	dev->reg_dumped = false;
 
-	dprintk(CVP_CORE, "Dev_Virt: %llx, Reg_Virt: %llx\n",
+	dprintk(CVP_CORE, "Dev_Virt: %pa, Reg_Virt: %pK\n",
 		&dev->cvp_hal_data->firmware_base,
 		dev->cvp_hal_data->register_base);
 
@@ -2565,7 +2565,7 @@ static void __core_clear_interrupt(struct iris_hfi_device *device)
 		device->intr_status |= intr_status;
 		device->reg_count++;
 		dprintk(CVP_CORE,
-			"INTERRUPT for device: %llx: times: %d status: %d\n",
+			"INTERRUPT for device: %pK: times: %d status: %d\n",
 			device, device->reg_count, intr_status);
 	} else {
 		device->spur_count++;
@@ -2625,7 +2625,7 @@ static void __session_clean(struct cvp_hal_session *session)
 		return;
 	}
 	device = session->device;
-	dprintk(CVP_SESS, "deleted the session: %llx\n", session);
+	dprintk(CVP_SESS, "deleted the session: %pK\n", session);
 	/*
 	 * session might have been removed from the device list in
 	 * core_release, so check and remove if it is in the list
@@ -2803,7 +2803,7 @@ static int iris_hfi_session_init(void *device, void *session_id,
 	s->session_id = session_id;
 	s->device = dev;
 	dprintk(CVP_SESS,
-		"%s: inst %llx, session %llx\n", __func__, session_id, s);
+		"%s: inst %pK, session %pK\n", __func__, session_id, s);
 
 	list_add_tail(&s->list, &dev->sess_head);
 
@@ -3721,7 +3721,7 @@ static int __init_reset_clk(struct msm_cvp_platform_resources *res,
 
 	rst_info = &rst_set->reset_tbl[reset_index];
 	rst = rst_info->rst;
-	dprintk(CVP_PWR, "reset_clk: name %s rst %llx required_stage=%d\n",
+	dprintk(CVP_PWR, "reset_clk: name %s rst %pK required_stage=%d\n",
 		rst_set->reset_tbl[reset_index].name, rst, rst_info->required_stage);
 
 	if (rst)
