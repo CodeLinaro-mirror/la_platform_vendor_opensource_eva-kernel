@@ -383,7 +383,7 @@ struct msm_cvp_inst {
 	struct mutex sync_lock, lock;
 	struct msm_cvp_core *core;
 	enum session_type session_type;
-	u32 process_id;
+	u32 frpc_handle;
 	struct task_struct *task;
 	struct cvp_session_queue session_queue;
 	struct cvp_session_queue session_queue_fence;
