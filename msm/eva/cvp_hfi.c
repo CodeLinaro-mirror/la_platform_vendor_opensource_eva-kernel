@@ -4304,6 +4304,11 @@ static int __register_for_MMCX(struct iris_hfi_device *device)
 		device->mmcx_PC_nb.notifier_call = eva_mmcx_cb;
 		rc = regulator_register_notifier(device->rpmh_mmcx_reg,
 				&device->mmcx_PC_nb);
+		if(rc == -EEXIST)
+		{
+			dprintk(CVP_WARN, "double registeration of cb for MMCX-PC, rc %d \n", rc);
+			rc = 0;
+		}
 		if (rc) {
 			dprintk(CVP_ERR, "Failed to register cb for MMCX-PC, rc %d \n", rc);
 		}
