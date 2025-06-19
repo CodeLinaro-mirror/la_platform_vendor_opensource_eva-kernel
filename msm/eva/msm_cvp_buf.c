@@ -197,8 +197,10 @@ static struct file *msm_cvp_fget(unsigned int fd, struct task_struct *task,
 	struct files_struct *files = task->files;
 	struct file *file;
 
-	if (!files)
+	if (!files) {
+		dprintk(CVP_ERR, "files is NULL, task 0x%x", task);
 		return NULL;
+	}
 
 	rcu_read_lock();
 loop:
@@ -212,10 +214,15 @@ loop:
 		 * dup2() atomicity guarantee is the reason
 		 * we loop to catch the new file (or NULL pointer)
 		 */
-		if (file->f_mode & mask)
+		if (file->f_mode & mask) {
+			dprintk(CVP_ERR, "f_mode is %d, mask is %d", file->f_mode, mask);
 			file = NULL;
+		}
 		else if (!get_file_rcu_many(file, refs))
 			goto loop;
+	}
+	else {
+		dprintk(CVP_ERR, "files_lookup_fd_rcu() returned NULL, fd %d", fd);
 	}
 	rcu_read_unlock();
 
@@ -249,7 +256,7 @@ int msm_cvp_map_buf_dsp(struct msm_cvp_inst *inst, struct eva_kmd_buffer *buf)
 
 	file = msm_cvp_fget(buf->fd, inst->task, FMODE_PATH, 1);
 	if (file == NULL) {
-		dprintk(CVP_WARN, "%s fail to get file from fd\n", __func__);
+		dprintk(CVP_WARN, "%s fail to get file from fd %d \n", __func__, buf->fd);
 		return -EINVAL;
 	}
 
@@ -1336,6 +1343,10 @@ int msm_cvp_register_buffer(struct msm_cvp_inst *inst,
 	rc = msm_cvp_map_buf_dsp(inst, buf);
 	dprintk(CVP_DSP, "%s: fd %d, iova 0x%x\n", __func__,
 			buf->fd, buf->reserved[0]);
+	if (rc) {
+		dprintk(CVP_ERR, "%s: inst 0x%x, fd %d, iova 0x%x\n", __func__,
+			inst, buf->fd, buf->reserved[0]);
+	}
 exit:
 	cvp_put_inst(s);
 	return rc;
