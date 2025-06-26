@@ -197,9 +197,8 @@ static int msm_cvp_session_receive_hfi(struct msm_cvp_inst *inst,
 			(struct cvp_hfi_msg_session_hdr_ext *)out_pkt);
 	}
 	msg_hdr = (struct cvp_hfi_msg_session_hdr *)out_pkt;
-	if(msg_hdr->client_data.transaction_id % msm_cvp_logN == 0){
-		msm_cvp_msg_tracing_from_sw(msg_hdr, "EVA_KMD_REV_END");
-	}
+
+	msm_cvp_msg_tracing_from_sw(msg_hdr, "EVA_KMD_REV_END");
 	cvp_put_inst(inst);
 
 	return rc;
@@ -273,9 +272,7 @@ static int msm_cvp_session_process_hfi(
 		goto exit;
 	}
 	cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)in_pkt;
-	if(cmd_hdr->client_data.transaction_id % msm_cvp_logN == 0){
-		msm_cvp_cmd_tracing_from_sw(cmd_hdr, "EVA_KMD_FWD_BEGIN");
-	}
+	msm_cvp_cmd_tracing_from_sw(cmd_hdr, "EVA_KMD_FWD_BEGIN");
 	cvp_enqueue_pkt(inst, in_pkt, offset, buf_num);
 
 exit:

@@ -1328,10 +1328,10 @@ static int __iface_cmdq_write(struct iris_hfi_device *device, void *pkt)
 		dprintk(CVP_PROF, "wr_no_intr at_time = 0x%llx \n",
 					 __read_aon_time(device));
 	}
-        cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)pkt;
-	if(cmd_hdr->client_data.transaction_id % msm_cvp_logN == 0){
-		msm_cvp_cmd_tracing_from_sw(cmd_hdr, "EVA_KMD_FWD_END");
-	}
+	cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)pkt;
+
+	msm_cvp_cmd_tracing_from_sw(cmd_hdr, "EVA_KMD_FWD_END");
+
 	return rc;
 }
 
