@@ -2781,7 +2781,7 @@ static void __process_sys_error(struct iris_hfi_device *device)
 	if (vsfr) {
 		u32 sfr_buf_size = 0;
 		sfr_buf_size = vsfr->bufSize;
-		if (sfr_buf_size < ALIGNED_SFR_SIZE) {
+		if (sfr_buf_size <= ALIGNED_SFR_SIZE) {
 			void *p = memchr(vsfr->rg_data, '\0', sfr_buf_size);
 			/*
 			* SFR isn't guaranteed to be NULL terminated
