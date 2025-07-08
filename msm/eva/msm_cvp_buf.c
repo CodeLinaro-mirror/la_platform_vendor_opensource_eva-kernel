@@ -50,7 +50,7 @@ int print_smem(u32 tag, const char *str, struct msm_cvp_inst *inst,
 	if (smem->dma_buf) {
 		dprintk(tag,
 			"%s: %x : %s size %d flags %#x iova %#x idx %d ref %d",
-			str, hash32_ptr(inst->session), smem->dma_buf->name,
+			str, inst->sess_id, smem->dma_buf->name,
 			smem->size, smem->flags, smem->device_addr,
 			smem->bitmap_index, smem->refcount);
 	}
@@ -72,7 +72,7 @@ static void print_internal_buffer(u32 tag, const char *str,
 	} else {
 		dprintk(tag,
 		"%s: %x : idx %2d fd %d off %d size %d iova %#x",
-		str, hash32_ptr(inst->session), cbuf->fd,
+		str, inst->sess_id, cbuf->fd,
 		cbuf->offset, cbuf->size, cbuf->smem->device_addr);
 	}
 }
@@ -139,7 +139,7 @@ void print_client_buffer(u32 tag, const char *str,
 
 	dprintk(tag,
 		"%s: %x : idx %2d fd %d off %d size %d type %d flags 0x%x\n",
-		str, hash32_ptr(inst->session), cbuf->index, cbuf->fd,
+		str, inst->sess_id, cbuf->index, cbuf->fd,
 		cbuf->offset, cbuf->size, cbuf->type, cbuf->flags);
 }
 
@@ -669,7 +669,7 @@ void msm_cvp_unmap_frame(struct msm_cvp_inst *inst, u64 ktid)
 
 	ktid &= (FENCE_BIT - 1);
 	dprintk(CVP_MEM, "%s: (%#x) unmap frame %llu\n",
-			__func__, hash32_ptr(inst->session), ktid);
+			__func__, inst->sess_id, ktid);
 
 	found = false;
 	mutex_lock(&inst->frames.lock);
@@ -1190,8 +1190,8 @@ int cvp_release_arp_buffers(struct msm_cvp_inst *inst)
 
 		if (buf->ownership == DRIVER) {
 			dprintk(CVP_MEM,
-			"%s: %x : fd %d %s size %d",
-			"free arp", hash32_ptr(inst->session), buf->fd,
+			"%s: sess_id%x : fd %d %s size %d",
+			"free arp", inst->sess_id, buf->fd,
 			smem->dma_buf->name, buf->size);
 			msm_cvp_smem_free(smem);
 			kmem_cache_free(cvp_driver->smem_cache, smem);
@@ -1296,15 +1296,15 @@ int cvp_release_dsp_buffers(struct msm_cvp_inst *inst,
 	if (buf->ownership == DSP) {
 		dprintk(CVP_MEM,
 			"%s: %x : fd %x %s size %d",
-			__func__, hash32_ptr(inst->session), buf->fd,
+			__func__, inst->sess_id, buf->fd,
 			smem->dma_buf->name, buf->size);
 		atomic_dec(&smem->refcount);
 		msm_cvp_smem_free(smem);
 		kmem_cache_free(cvp_driver->smem_cache, smem);
 	} else {
 		dprintk(CVP_ERR,
-			"%s: wrong owner %d %x : fd %x %s size %d",
-			__func__, buf->ownership, hash32_ptr(inst->session),
+			"%s: wrong owner %d, sess_id %x : fd %x %s size %d",
+			__func__, buf->ownership, inst->sess_id,
 			buf->fd, smem->dma_buf->name, buf->size);
 	}
 
