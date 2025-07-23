@@ -2090,6 +2090,7 @@ err_core_init:
 err_load_fw:
 err_no_mem:
 	dprintk(CVP_ERR, "Core init failed\n");
+	__dev_regspace_unmap(device);
 	mutex_unlock(&dev->lock);
 	pm_relax(dev->res->pdev->dev.parent);
 	return rc;
