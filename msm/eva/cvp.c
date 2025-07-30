@@ -140,6 +140,8 @@ static int msm_cvp_initialize_core(struct platform_device *pdev,
 	INIT_LIST_HEAD(&core->instances);
 	mutex_init(&core->lock);
 	mutex_init(&core->clk_lock);
+	mutex_init(&core->idr_mtx);
+	idr_init(&core->sess_idr);
 
 	core->state = CVP_CORE_UNINIT;
 	for (i = SYS_MSG_INDEX(SYS_MSG_START);
@@ -148,7 +150,7 @@ static int msm_cvp_initialize_core(struct platform_device *pdev,
 	}
 #ifdef CONFIG_HIBERNATION /* part of Hibernation FR */
 	init_completion(&core->ssr_completion);
-#endif	
+#endif
 	INIT_DELAYED_WORK(&core->fw_unload_work, msm_cvp_fw_unload_handler);
 	INIT_WORK(&core->ssr_work, msm_cvp_ssr_handler);
 	init_cycle_info(&core->dyn_clk);
@@ -547,6 +549,8 @@ static int msm_cvp_remove(struct platform_device *pdev)
 	dev_set_drvdata(&pdev->dev, NULL);
 	mutex_destroy(&core->lock);
 	mutex_destroy(&core->clk_lock);
+	idr_destroy(&core->sess_idr);
+	mutex_destroy(&core->idr_mtx);
 	kfree(core);
 	return rc;
 }
