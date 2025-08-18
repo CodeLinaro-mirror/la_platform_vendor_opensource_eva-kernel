@@ -1329,10 +1329,10 @@ static int __iface_cmdq_write(struct iris_hfi_device *device, void *pkt)
 		dprintk(CVP_PROF, "wr_no_intr at_time = 0x%llx \n",
 					 __read_aon_time(device));
 	}
-        cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)pkt;
-	if(cmd_hdr->client_data.transaction_id % msm_cvp_logN == 0){
-		msm_cvp_cmd_tracing_from_sw(cmd_hdr, "EVA_KMD_FWD_END");
-	}
+	cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)pkt;
+
+	msm_cvp_cmd_tracing_from_sw(cmd_hdr, "EVA_KMD_FWD_END");
+
 	return rc;
 }
 
@@ -2090,6 +2090,7 @@ err_core_init:
 err_load_fw:
 err_no_mem:
 	dprintk(CVP_ERR, "Core init failed\n");
+	__dev_regspace_unmap(device);
 	mutex_unlock(&dev->lock);
 	pm_relax(dev->res->pdev->dev.parent);
 	return rc;
@@ -2824,7 +2825,7 @@ static void __process_sys_error(struct iris_hfi_device *device)
 	if (vsfr) {
 		u32 sfr_buf_size = 0;
 		sfr_buf_size = vsfr->bufSize;
-		if (sfr_buf_size < ALIGNED_SFR_SIZE) {
+		if (sfr_buf_size <= ALIGNED_SFR_SIZE) {
 			void *p = memchr(vsfr->rg_data, '\0', sfr_buf_size);
 			/*
 			* SFR isn't guaranteed to be NULL terminated
