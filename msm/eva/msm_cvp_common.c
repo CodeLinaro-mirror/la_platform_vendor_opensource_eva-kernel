@@ -1399,9 +1399,11 @@ void msm_cvp_ssr_handler(struct work_struct *work)
 		}
 
 		if (inst != NULL) {
-			s = cvp_get_inst_validate(inst->core, inst);
-			if (!s)
-				return;
+			s = cvp_get_inst_validate(core, inst);
+				if (!s) {
+					dprintk(CVP_WARN, "%s: Session is not valid\n", __func__);
+					return;
+				}
 
 			call_hfi_op(hdev, flush_debug_queue,
 				hdev->hfi_device_data);
