@@ -367,6 +367,8 @@ struct msm_cvp_core {
 	unsigned long bw_sum;
 	atomic64_t kernel_trans_id;
 	struct cvp_debug_log log;
+	struct idr sess_idr;
+	struct mutex idr_mtx;
 };
 
 struct msm_cvp_inst {
@@ -382,6 +384,7 @@ struct msm_cvp_inst {
 	struct cvp_session_queue session_queue_fence;
 	struct cvp_session_event event_handler;
 	void *session;
+	u32 sess_id;
 	enum instance_state state;
 	struct msm_cvp_list freqs;
 	struct msm_cvp_list persistbufs;
