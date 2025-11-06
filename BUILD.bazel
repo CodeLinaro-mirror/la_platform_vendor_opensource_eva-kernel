@@ -24,6 +24,7 @@ ddk_headers(
     hdrs = glob([
       "msm/eva/*.h",
       "msm/eva/vm/*.h",
+      "msm/eva/target/*.h",
     ]),
     includes = ["msm","msm/eva"]
 )
@@ -33,12 +34,14 @@ ddk_headers(
     hdrs = [":eva_drivers_configs", ":uapi_headers", ":msm_headers"]
 )
 
+load(":canoe.bzl", "define_canoe")
+define_canoe()
+
+load(":alor.bzl", "define_alor")
+define_alor()
 
 load(":sun.bzl", "define_sun")
 define_sun()
-
-load(":tuna.bzl", "define_tuna")
-define_tuna()
 
 load(":pineapple.bzl", "define_pineapple")
 define_pineapple()

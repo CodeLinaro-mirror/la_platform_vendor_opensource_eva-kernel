@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.​
  */
 
 #include "hfi_packetization.h"
@@ -154,8 +154,8 @@ int cvp_create_pkt_cmd_sys_set_resource(
 
 		for (i = 0; i < hfi_sc_info->num_entries; i++) {
 			hfi_sc[i] = res_sc[i];
-		dprintk(CVP_PKT, "entry hfi#%d, sc_id %d, size %d\n",
-				 i, hfi_sc[i].sc_id, hfi_sc[i].size);
+		dprintk(CVP_PKT, "entry hfi#%d, sc_id %d, target_hw %d\n",
+				 i, hfi_sc[i].sc_id, hfi_sc[i].target_hw);
 		}
 		break;
 	}
@@ -207,6 +207,10 @@ inline int cvp_create_pkt_cmd_sys_session_init(
 		struct cvp_hal_session *session)
 {
 	int rc = 0;
+
+	if (!session)
+		return -EINVAL;
+
 	struct msm_cvp_inst *inst = session->session_id;
 
 	if (!pkt || !inst)
@@ -272,6 +276,10 @@ int cvp_create_pkt_cmd_session_cmd(struct cvp_hal_session_cmd_pkt *pkt,
 			int pkt_type, struct cvp_hal_session *session)
 {
 	int rc = 0;
+
+	if (!session)
+		return -EINVAL;
+
 	struct msm_cvp_inst *inst = session->session_id;
 
 	if (!pkt || !inst)
@@ -289,15 +297,19 @@ int cvp_session_cmd_ktid(struct cvp_hfi_cmd_session_hdr *pkt,
 			u64 ktid)
 {
 	int rc = 0;
+
+	if (!session)
+		return -EINVAL;
+
 	struct msm_cvp_inst *inst = session->session_id;
 
 	if (!pkt || !inst)
 		return -EINVAL;
 
-	pkt->size = sizeof(struct cvp_hfi_cmd_session_hdr);
-	pkt->packet_type = pkt_type;
-	pkt->session_id = inst->sess_id;
-	pkt->client_data.kdata = ktid;
+	pkt->header.size = sizeof(struct cvp_hfi_cmd_session_hdr);
+	pkt->header.packet_type = pkt_type;
+	pkt->header.session_id = inst->sess_id;
+	pkt->header.client_data.kdata = ktid;
 
 	return rc;
 }
@@ -330,9 +342,14 @@ int cvp_create_pkt_cmd_session_set_buffers(
 {
 	int rc = 0;
 	struct cvp_hfi_cmd_session_set_buffers_packet *pkt;
-	struct msm_cvp_inst *inst = session->session_id;
+	struct msm_cvp_inst *inst;
 
-	if (!cmd || !session || !inst)
+	if (!session)
+		return -EINVAL;
+
+	inst = session->session_id;
+
+	if (!cmd || !inst)
 		return -EINVAL;
 
 	pkt = (struct cvp_hfi_cmd_session_set_buffers_packet *)cmd;
@@ -358,9 +375,14 @@ int cvp_create_pkt_cmd_session_release_buffers(
 		struct cvp_hal_session *session)
 {
 	struct cvp_session_release_buffers_packet *pkt;
-	struct msm_cvp_inst *inst = session->session_id;
+	struct msm_cvp_inst *inst;
 
-	if (!cmd || !session || !inst)
+	if (!session)
+		return -EINVAL;
+
+	inst = session->session_id;
+
+	if (!cmd || !inst)
 		return -EINVAL;
 
 	pkt = (struct cvp_session_release_buffers_packet *)cmd;
@@ -375,16 +397,20 @@ int cvp_create_pkt_cmd_session_release_buffers(
 }
 
 int cvp_create_pkt_cmd_session_send(
-		struct eva_kmd_hfi_packet *out_pkt,
 		struct cvp_hal_session *session,
 		struct eva_kmd_hfi_packet *in_pkt)
 {
 	int def_idx;
 	struct cvp_hal_session_cmd_pkt *ptr =
 		(struct cvp_hal_session_cmd_pkt *)in_pkt;
-	struct msm_cvp_inst *inst = session->session_id;
+	struct msm_cvp_inst *inst;
 
-	if (!out_pkt || !in_pkt || !session)
+	if (!session)
+		return -EINVAL;
+
+	inst = session->session_id;
+
+	if (!in_pkt || !inst)
 		return -EINVAL;
 
 	if (ptr->size > MAX_HFI_PKT_SIZE * sizeof(unsigned int))
@@ -395,14 +421,11 @@ int cvp_create_pkt_cmd_session_send(
 
 	def_idx = get_pkt_index(ptr);
 	if (def_idx < 0) {
-		memcpy(out_pkt, in_pkt, ptr->size);
-		return 0;
+		goto error_hfi_packet;
 	}
 
 	if (cvp_hfi_defs[def_idx].type != ptr->packet_type)
 		goto error_hfi_packet;
-
-	memcpy(out_pkt, in_pkt, ptr->size);
 
 	return 0;
 
@@ -467,7 +490,11 @@ int cvp_create_pkt_cmd_sys_image_version(
 	pkt->size = sizeof(struct cvp_hfi_cmd_sys_get_property_packet) + sizeof(u32);
 	pkt->packet_type = HFI_CMD_SYS_GET_PROPERTY;
 	pkt->num_properties = 1;
+#ifdef CONFIG_SUN_HFI
 	pkt->rg_property_data[0] = HFI_PROPERTY_SYS_IMAGE_VERSION;
+#else
+	pkt->rg_property_data[0] = HFI_PROPERTY_SYS_EVA_FW_VERSION;
+#endif
 	return 0;
 }
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.​
  */
 
 #include <linux/dma-buf.h>
@@ -145,7 +145,12 @@ static int msm_dma_put_device_address(u32 flags,
 	if (!mapping_info->dev || !mapping_info->table ||
 		!mapping_info->buf || !mapping_info->attach ||
 		!mapping_info->cb_info) {
-		dprintk(CVP_WARN, "Invalid params\n");
+		dprintk(CVP_WARN,
+			"Invalid params mapping_info: dev %x,table %x buf %x",
+			mapping_info->dev, mapping_info->table, mapping_info->buf);
+
+		dprintk(CVP_WARN, "attach %x cb_info %x\n",
+			mapping_info->attach, mapping_info->cb_info);
 		return -EINVAL;
 	}
 
@@ -188,14 +193,12 @@ void msm_cvp_smem_put_dma_buf(void *dma_buf)
 	dma_heap_buffer_free((struct dma_buf *)dma_buf);
 }
 
-int msm_cvp_map_smem(struct msm_cvp_inst *inst,
-			struct msm_cvp_smem *smem,
-			const char *str)
+static int msm_cvp_map_smem_helper(struct msm_cvp_smem *smem, struct msm_cvp_inst *inst)
 {
-	int *vmid_list;
-	int *perms_list;
 	int nelems = 0;
 	int i, rc = 0;
+	int *vmid_list;
+	int *perms_list;
 
 	dma_addr_t iova = 0;
 	u32 temp = 0, checksum = 0;
@@ -204,15 +207,12 @@ int msm_cvp_map_smem(struct msm_cvp_inst *inst,
 	bool is_config_pkt = false;
 	struct cvp_dma_buf_vmap vmap = {0};
 
-	if (!inst || !smem) {
-		dprintk(CVP_ERR, "%s: Invalid params: %pK %pK\n",
-				__func__, inst, smem);
-		return -EINVAL;
-	}
-
 	dma_buf = smem->dma_buf;
+/*Symbol not yet defined for canoe*/
+
 	rc = mem_buf_dma_buf_copy_vmperm(dma_buf,
 			&vmid_list, &perms_list, &nelems);
+
 	if (rc) {
 		dprintk(CVP_ERR, "%s fail to get vmid and perms %d\n",
 			__func__, rc);
@@ -233,7 +233,7 @@ int msm_cvp_map_smem(struct msm_cvp_inst *inst,
 	}
 
 	rc = msm_dma_get_device_address(dma_buf, align, &iova, smem->flags,
-			&(inst->core->resources), &smem->mapping_info);
+			&(cvp_driver->cvp_core->resources), &smem->mapping_info);
 	if (rc) {
 		dprintk(CVP_ERR, "Failed to get device address: %d\n", rc);
 		goto exit;
@@ -251,6 +251,7 @@ int msm_cvp_map_smem(struct msm_cvp_inst *inst,
 	if (i > 0 && smem->pkt_type != HFI_CMD_SESSION_CVP_SET_PERSIST_BUFFERS
 		&& smem->pkt_type != HFI_CMD_SESSION_CVP_SET_MODEL_BUFFERS
 		&& smem->pkt_type != HFI_CMD_SESSION_EVA_DLFL_CONFIG)
+
 		/* User persist buffer has no feature config info */
 		is_config_pkt = cvp_hfi_defs[i].is_config_pkt;
 
@@ -269,8 +270,7 @@ int msm_cvp_map_smem(struct msm_cvp_inst *inst,
 				checksum, smem->fd);
 		}
 	}
-	print_smem(CVP_MEM, str, inst, smem);
-	atomic_inc(&inst->smem_count);
+
 	goto success;
 exit:
 	smem->device_addr = 0x0;
@@ -280,22 +280,39 @@ success:
 	return rc;
 }
 
-int msm_cvp_unmap_smem(struct msm_cvp_inst *inst,
-		struct msm_cvp_smem *smem,
-		const char *str)
+int msm_cvp_map_smem(struct msm_cvp_inst *inst,
+			struct msm_cvp_smem *smem,
+			const char *str)
+{
+	int rc = 0;
+
+	if (!inst || !smem) {
+		dprintk(CVP_ERR, "%s: Invalid params: %pK %pK\n",
+				__func__, inst, smem);
+		return -EINVAL;
+	}
+
+	rc = msm_cvp_map_smem_helper(smem, inst);
+
+	if (!rc) {
+		print_smem(CVP_MEM, str, inst, smem);
+		atomic_inc(&inst->smem_count);
+	}
+#ifdef CVP_SW_DBG_BUF_ENABLED
+	if (msm_cvp_sw_dbg_buf_dump & BIT(1))
+		eva_kmd_buf_dump(inst, smem, 0);
+#endif
+
+	return rc;
+}
+
+static int msm_cvp_unmap_smem_helper(struct msm_cvp_smem *smem)
 {
 	int i, rc = 0;
 	u32 checksum = 0;
 	struct dma_buf *dma_buf;
 	struct cvp_dma_buf_vmap vmap = {0};
 
-	if (!smem) {
-		dprintk(CVP_ERR, "%s: Invalid params: %pK\n", __func__, smem);
-		rc = -EINVAL;
-		goto exit;
-	}
-
-	print_smem(CVP_MEM, str, inst, smem);
 	dma_buf = smem->dma_buf;
 	i = get_pkt_index_from_type(smem->pkt_type);
 	if (i > 0 && cvp_hfi_defs[i].checksum_enabled) {
@@ -317,18 +334,64 @@ int msm_cvp_unmap_smem(struct msm_cvp_inst *inst,
 	rc = msm_dma_put_device_address(smem->flags, &smem->mapping_info);
 	if (rc) {
 		dprintk(CVP_ERR, "Failed to put device address: %d\n", rc);
-		goto exit;
+		WARN_ON(true);
+		return rc;
 	}
 
 	smem->device_addr = 0x0;
-	atomic_dec(&inst->smem_count);
+	return rc;
+}
 
-exit:
+int msm_cvp_unmap_smem(struct msm_cvp_inst *inst,
+		struct msm_cvp_smem *smem,
+		const char *str)
+{
+	int rc = 0;
+
+	if (!smem) {
+		dprintk(CVP_ERR, "%s: Invalid params: %pK\n", __func__, smem);
+		rc = -EINVAL;
+		return rc;
+	}
+
+	print_smem(CVP_MEM, str, inst, smem);
+	rc = msm_cvp_unmap_smem_helper(smem);
+
+	if (!rc)
+		atomic_dec(&inst->smem_count);
+
+#ifdef CVP_SW_DBG_BUF_ENABLED
+	if (msm_cvp_sw_dbg_buf_dump & BIT(1))
+		eva_kmd_buf_dump(inst, smem, 1);
+#endif
+
+	return rc;
+}
+
+int msm_cvp_unmap_smem_frpc(struct cvp_dsp_fastrpc_driver_entry *frpc_node,
+		struct msm_cvp_smem *smem,
+		const char *str)
+{
+	int rc = 0;
+
+	if (!smem) {
+		dprintk(CVP_ERR, "%s: Invalid params: %pK\n", __func__, smem);
+		rc = -EINVAL;
+		return rc;
+	}
+
+	print_smem_no_instance(CVP_MEM, str, smem);
+	rc = msm_cvp_unmap_smem_helper(smem);
+
+	if (!rc)
+		atomic_dec(&frpc_node->smem_count);
+
 	return rc;
 }
 
 static int alloc_dma_mem(size_t size, u32 align, int map_kernel,
-	struct msm_cvp_platform_resources *res, struct msm_cvp_smem *mem)
+	struct msm_cvp_platform_resources *res, struct msm_cvp_smem *mem,
+	int user_access)
 {
 	dma_addr_t iova = 0;
 	int rc = 0;
@@ -357,7 +420,14 @@ static int alloc_dma_mem(size_t size, u32 align, int map_kernel,
 		size, align);
 	}
 
-	dbuf = dma_heap_buffer_alloc(heap, size, 0, 0);
+	if (!heap) {
+		dprintk(CVP_ERR, "%s: Failed to find heap for qcom,system",
+		__func__);
+		rc = -ENOMEM;
+		goto fail_shared_mem_alloc;
+	}
+
+	dbuf = dma_heap_buffer_alloc(heap, size, user_access, 0);
 	if (IS_ERR_OR_NULL(dbuf)) {
 		dprintk(CVP_ERR,
 			"Failed to allocate shared memory = %x bytes, %x %x\n",
@@ -373,10 +443,15 @@ static int alloc_dma_mem(size_t size, u32 align, int map_kernel,
 
 	if (mem->flags & SMEM_NON_PIXEL) {
 		vmids[0] = VMID_CP_NON_PIXEL;
+/*Symbol not yet defined for canoe*/
+
 		rc = mem_buf_lend(dbuf, &arg);
+
 	} else if (mem->flags & SMEM_PIXEL) {
 		vmids[0] = VMID_CP_PIXEL;
+
 		rc = mem_buf_lend(dbuf, &arg);
+
 	}
 
 	if (rc) {
@@ -461,7 +536,7 @@ static int free_dma_mem(struct msm_cvp_smem *mem)
 }
 
 int msm_cvp_smem_alloc(size_t size, u32 align, int map_kernel,
-		void *res, struct msm_cvp_smem *smem)
+		void *res, struct msm_cvp_smem *smem, int user_access)
 {
 	int rc = 0;
 
@@ -472,7 +547,7 @@ int msm_cvp_smem_alloc(size_t size, u32 align, int map_kernel,
 	}
 
 	rc = alloc_dma_mem(size, align, map_kernel,
-		(struct msm_cvp_platform_resources *)res, smem);
+		(struct msm_cvp_platform_resources *)res, smem, user_access);
 
 	return rc;
 }

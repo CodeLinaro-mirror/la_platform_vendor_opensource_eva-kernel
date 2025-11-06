@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023-2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 #ifndef __MSM_EVA_PRIVATE_H__
 #define __MSM_EVA_PRIVATE_H__
@@ -66,6 +66,16 @@
 #define EVA_KMD_BUFTYPE_INTERNAL_1		0x00000003
 #define EVA_KMD_BUFTYPE_INTERNAL_2		0x00000004
 
+#define SW_DBG_BUF_SIZE				5242880
+#define SW_DBG_UMD_KMD_SIZE			1048576
+#define SW_DBG_CMD_Q_IDX            SW_DBG_UMD_KMD_SIZE
+#define SW_DBG_MSG_Q_IDX            (SW_DBG_UMD_KMD_SIZE * 2)
+#define SW_DBG_DSP_CMD_Q_IDX        (SW_DBG_UMD_KMD_SIZE * 3)
+#define SW_DBG_DSP_MSG_Q_IDX        (SW_DBG_UMD_KMD_SIZE * 4)
+#define EVA_SW_DBG_BUF_UMD_OFFSET	(SW_DBG_UMD_KMD_SIZE / 2)
+#define EVA_SW_DBG_OFFLINE_DUMP_IDX	(EVA_SW_DBG_BUF_UMD_OFFSET / 2)
+#define EVA_SW_DBG_KMD_OFFLINE_DUMP_IDX	EVA_SW_DBG_OFFLINE_DUMP_IDX
+#define EVA_SW_DBG_UMD_OFFLINE_DUMP_IDX	(EVA_SW_DBG_BUF_UMD_OFFSET + EVA_SW_DBG_OFFLINE_DUMP_IDX)
 
 /**
  * struct eva_kmd_session_info - session information
@@ -125,7 +135,7 @@ struct eva_kmd_client_data {
  * Structures and macros for KMD arg data
  */
 
-#define	MAX_HFI_PKT_SIZE	490
+#define	MAX_HFI_PKT_SIZE	600
 
 struct eva_kmd_hfi_packet {
 	__u32 pkt_data[MAX_HFI_PKT_SIZE];
@@ -142,6 +152,10 @@ struct eva_kmd_hfi_packet {
 #define EVA_KMD_PROP_SESSION_DUMPSIZE	8
 #define EVA_KMD_PROP_SESSION_ERROR	9
 #define EVA_KMD_PROP_SESSION_STATE	10
+#define EVA_KMD_PROP_SW_DBG_BUF		11
+#define EVA_KMD_PROP_SW_DBG_BUF_IDX	12
+#define EVA_KMD_PROP_SESSION_LATENCY	13
+#define EVA_KMD_PROP_PKT_CONCURRENCY	14
 
 #define EVA_KMD_PROP_PWR_FDU	0x10
 #define EVA_KMD_PROP_PWR_ICA	0x11

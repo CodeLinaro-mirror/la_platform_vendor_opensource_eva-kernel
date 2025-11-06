@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023-2025, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries..
  */
 
 #include <linux/jiffies.h>
@@ -17,6 +17,7 @@
 #include "msm_cvp.h"
 #include "cvp_core_hfi.h"
 #include "msm_cvp_events.h"
+#include "cvp_hfi.h"
 
 #define IS_ALREADY_IN_STATE(__p, __d) (\
 	(__p >= __d)\
@@ -195,23 +196,23 @@ struct msm_cvp_inst *cvp_get_inst_validate(struct msm_cvp_core *core,
 	int rc = 0;
 	struct cvp_hfi_ops *ops_tbl;
 	struct msm_cvp_inst *inst;
-	void *sessObj = NULL;
+	void *sess = NULL;
 
 	inst = cvp_get_inst(core, session_id);
 	if (!inst) {
-		dprintk(CVP_WARN, "%s Inst doesn't exit\n", __func__);
+		dprintk(CVP_WARN, "%s Inst doesn't exist\n", __func__);
 		return NULL;
 	}
 
-	sessObj = get_sessObj_from_idr(inst);
-	if (!sessObj || sessObj != inst->session) {
+	sess = get_sess_from_idr(inst);
+	if (!sess || sess != inst->session) {
 		dprintk(CVP_ERR,
 			"Either sessionObj is null or not matching with inst->session\n");
 		return NULL;
 	}
 
 	ops_tbl = inst->core->dev_ops;
-	rc = call_hfi_op(ops_tbl, validate_session, sessObj, __func__);
+	rc = call_hfi_op(ops_tbl, validate_session, sess, __func__);
 	if (rc) {
 		cvp_put_inst(inst);
 		inst = NULL;
@@ -363,6 +364,8 @@ int wait_for_sess_signal_receipt(struct msm_cvp_inst *inst,
 	int rc = 0;
 	struct cvp_hfi_ops *ops_tbl;
 
+	CVPKERNEL_ATRACE_BEGIN("wait_for_sess_signal_receipt");
+
 	if (!IS_HAL_SESSION_CMD(cmd)) {
 		dprintk(CVP_ERR, "Invalid inst cmd response: %d\n", cmd);
 		return -EINVAL;
@@ -393,6 +396,7 @@ int wait_for_sess_signal_receipt(struct msm_cvp_inst *inst,
 		inst->prev_hfi_error_code = inst->hfi_error_code;
 		inst->hfi_error_code = CVP_ERR_NONE;
 	}
+	CVPKERNEL_ATRACE_END("wait_for_sess_signal_receipt");
 	return rc;
 }
 
@@ -433,8 +437,12 @@ static void handle_session_init_done(enum hal_command_response cmd, void *data)
 	if (!inst) {
 		dprintk(CVP_WARN, "%s:Got a response for an inactive session %#x\n",
 				__func__, response->session_id);
-		list_for_each_entry(inst, &core->instances, list)
-			cvp_print_inst(CVP_WARN, inst);
+		list_for_each_entry(inst, &core->instances, list) {
+			if (kref_get_unless_zero(&inst->kref)) {
+				cvp_print_inst(CVP_WARN, inst);
+				cvp_put_inst(inst);
+			}
+		}
 		return;
 	}
 
@@ -541,9 +549,11 @@ void handle_session_error(enum hal_command_response cmd, void *data)
 	struct msm_cvp_inst *inst = NULL;
 	struct cvp_session_queue *sq;
 	unsigned long flags = 0;
-	int i;
 	enum cvp_session_state s_state;
 	enum cvp_session_errorcode s_ecode;
+#ifdef CVP_SW_DBG_BUF_ENABLED
+	struct msm_cvp_core *core = NULL;
+#endif
 
 	if (!response) {
 		dprintk(CVP_ERR,
@@ -559,8 +569,8 @@ void handle_session_error(enum hal_command_response cmd, void *data)
 	}
 
 	ops_tbl = inst->core->dev_ops;
-	dprintk(CVP_ERR, "Sess error 0x%x received for inst %pK sess %x\n",
-		response->status, inst, inst->sess_id);
+	dprintk(CVP_ERR, "%s: Session error 0x%x received for inst %pK sess %x\n",
+			__func__, response->status, inst, inst->sess_id);
 
 	sq = &inst->session_queue;
 	spin_lock(&sq->lock);
@@ -576,11 +586,20 @@ void handle_session_error(enum hal_command_response cmd, void *data)
 	cvp_print_inst(CVP_WARN, inst);
 
 	if (inst->state != MSM_CVP_CORE_INVALID) {
-		change_cvp_inst_state(inst, MSM_CVP_CORE_INVALID);
-		if (cvp_clean_session_queues(inst))
-			dprintk(CVP_WARN, "Failed to clean sess queues\n");
-		for (i = 0; i < ARRAY_SIZE(inst->completions); i++)
-			complete(&inst->completions[i]);
+#ifdef CVP_SW_DBG_BUF_ENABLED
+		if (msm_cvp_sw_dbg_buf_dump & BIT(0)) {
+			eva_kmd_session_dump(inst);
+			eva_kmd_debug_log_dump();
+			core = cvp_driver->cvp_core;
+			if (core) {
+				if (core->kmd_dbg.kmd_queue_dump_cnt == 0) {
+					eva_cmd_msg_queue_dump();
+					core->kmd_dbg.kmd_queue_dump_cnt++;
+				}
+			}
+		}
+#endif
+
 		spin_lock_irqsave(&inst->event_handler.lock, flags);
 		inst->event_handler.event = EVA_EVENT;
 		spin_unlock_irqrestore(
@@ -598,11 +617,76 @@ void handle_session_timeout(struct msm_cvp_inst *inst, bool stop_required)
 	unsigned long flags = 0;
 	enum cvp_session_state s_state;
 	enum cvp_session_errorcode s_ecode;
+	struct msm_cvp_inst *s;
+	struct msm_cvp_core *core = NULL;
+	u64 fw_resp_ts = 0, fw_cmd_fetch_ts = 0;
+	ktime_t curr_time = 0;
+	struct msm_cvp_cb_cmd_done response  = {0};
+	enum hal_command_response cmd = HAL_SYS_WATCHDOG_TIMEOUT;
+	struct cvp_hfi_ops *ops_tbl = NULL;
+	struct iris_hfi_device *hfi_device = NULL;
+	struct cvp_iface_q_info *q_info = NULL;
+	struct cvp_hfi_queue_header *queue = NULL;
 
-	dprintk(CVP_ERR,
-		"timeout occurred for inst %pK sess %x\n", inst, inst->sess_id);
+	core = cvp_driver->cvp_core;
+	if (!core) {
+		dprintk(CVP_ERR, "%s: core is NULL", __func__);
+		return;
+	}
+	ops_tbl = core->dev_ops;
+	if (!ops_tbl) {
+		dprintk(CVP_ERR, "%s: ops_tbl is NULL\n", __func__);
+		return;
+	}
+
+	s = cvp_get_inst_validate(core, inst);
+	if (!s) {
+		dprintk(CVP_WARN, "%s: Session is not a valid session\n",
+				__func__);
+		return;
+	}
+
+	dprintk(CVP_ERR, "%s: Session timeout occurred for inst %pK sess %x\n",
+			__func__, inst, inst->sess_id);
 
 	sq = &inst->session_queue;
+	spin_lock(&sq->lock);
+	s_state = (0xF0000000 & inst->session_error_code) >> 28;
+	s_ecode = (0x0FFF0000 & inst->session_error_code) >> 16;
+	spin_unlock(&sq->lock);
+	if (s_state == SESSION_ERROR && s_ecode == EVA_SYS_ERROR) {
+		dprintk(CVP_ERR, "%s: Invalid session, error code %d\n", __func__, s_ecode);
+		cvp_put_inst(inst);
+		return;
+	}
+	curr_time = ktime_get();
+
+	hfi_device = ops_tbl->hfi_device_data;
+	if (hfi_device) {
+		q_info = &hfi_device->iface_queues[CVP_IFACEQ_CMDQ_IDX];
+		if (q_info) {
+			queue = (struct cvp_hfi_queue_header *) q_info->q_hdr;
+			if (queue) {
+				spin_lock(&q_info->hfi_lock);
+				core->cur_cmd_q_read_offset = queue->qhdr_read_idx;
+				fw_cmd_fetch_ts = (u64)ktime_to_ms(curr_time) -
+					(u64)ktime_to_ms(core->last_fw_fetch_ts);
+				spin_unlock(&q_info->hfi_lock);
+			}
+		}
+	}
+	fw_resp_ts = (u64)ktime_to_ms(curr_time) - (u64)ktime_to_ms(core->last_msg_ts);
+
+	if (fw_resp_ts > 500 || (fw_cmd_fetch_ts > 500
+				&& core->cur_cmd_q_read_offset == core->prev_cmd_q_read_offset)) {
+		dprintk(CVP_ERR, "%s: FW hanged, cleaning up. %llu ms %llu ms",
+				__func__, fw_resp_ts, fw_cmd_fetch_ts);
+		response.device_id = 0;
+		handle_sys_error(cmd, (void *) &response);
+		cvp_put_inst(inst);
+		return;
+	}
+
 	spin_lock(&sq->lock);
 	s_state = SESSION_ERROR;
 	s_ecode = EVA_SESSION_TIMEOUT;
@@ -614,7 +698,16 @@ void handle_session_timeout(struct msm_cvp_inst *inst, bool stop_required)
 	inst->session_error_code = (s_state << 28) | (s_ecode << 16) |
 				atomic_read(&cvp_error_count);
 	cvp_print_inst(CVP_WARN, inst);
-
+#ifdef CVP_SW_DBG_BUF_ENABLED
+	if (msm_cvp_sw_dbg_buf_dump & BIT(0)) {
+		eva_kmd_session_dump(inst);
+		eva_kmd_debug_log_dump();
+		if (core->kmd_dbg.kmd_queue_dump_cnt == 0) {
+			eva_cmd_msg_queue_dump();
+			core->kmd_dbg.kmd_queue_dump_cnt++;
+		}
+	}
+#endif
 	spin_lock_irqsave(&inst->event_handler.lock, flags);
 	inst->event_handler.event = EVA_EVENT;
 	spin_unlock_irqrestore(
@@ -624,6 +717,8 @@ void handle_session_timeout(struct msm_cvp_inst *inst, bool stop_required)
 	BUG_ON(!msm_cvp_session_error_recovery);
 	if (stop_required)
 		msm_cvp_session_flush_stop(inst);
+
+	cvp_put_inst(inst);
 }
 
 void handle_sys_error(enum hal_command_response cmd, void *data)
@@ -634,6 +729,8 @@ void handle_sys_error(enum hal_command_response cmd, void *data)
 	struct iris_hfi_device *hfi_device;
 	struct msm_cvp_inst *inst = NULL;
 	struct cvp_session_queue *sq;
+	struct cvp_dsp_apps *me = &gfa_cv;
+	struct cvp_dsp_fastrpc_driver_entry *frpc_node = NULL;
 	int i, rc = 0;
 	unsigned long flags = 0;
 	enum cvp_core_state cur_state;
@@ -655,7 +752,6 @@ void handle_sys_error(enum hal_command_response cmd, void *data)
 	ops_tbl = core->dev_ops;
 
 	mutex_lock(&core->lock);
-	core->ssr_count++;
 	if (core->state == CVP_CORE_UNINIT) {
 		dprintk(CVP_ERR,
 			"%s: Core %pK already moved to state %d\n",
@@ -664,17 +760,41 @@ void handle_sys_error(enum hal_command_response cmd, void *data)
 		return;
 	}
 
+	core->ssr_count++;
 	cur_state = core->state;
 	core->state = CVP_CORE_UNINIT;
-	dprintk(CVP_WARN, "SYS_ERROR from core %pK cmd %x total: %d\n",
-			core, cmd, core->ssr_count);
+	dprintk(CVP_WARN, "%s: SYS_ERROR from core %pK cmd %x total: %d\n",
+			__func__, core, cmd, core->ssr_count);
 	mutex_lock(&core->clk_lock);
 	hfi_device = ops_tbl->hfi_device_data;
+	if (!hfi_device) {
+		dprintk(CVP_WARN, "%s: Invalid device\n", __func__);
+		mutex_unlock(&core->lock);
+		return;
+	}
+
+	__print_sfr_msg(hfi_device);
 	call_hfi_op(ops_tbl, flush_debug_queue, ops_tbl->hfi_device_data);
+
+	if ((atomic_read(&cvp_error_count)) < MAX_CVP_ERROR_COUNT)
+		atomic_inc(&cvp_error_count);
+
 	if (hfi_device->error == CVP_ERR_NOC_ERROR) {
 		dprintk(CVP_WARN, "Got NOC error");
 		msm_cvp_noc_error_info(core);
 	}
+#ifdef CVP_SW_DBG_BUF_ENABLED
+	else {
+		list_for_each_entry(inst, &core->instances, list) {
+			msm_cvp_print_inst_bufs(inst, true);
+		}
+	}
+
+	if (msm_cvp_sw_dbg_buf_dump & BIT(0)) {
+		eva_kmd_debug_log_dump();
+		eva_cmd_msg_queue_dump();
+	}
+#endif
 	list_for_each_entry(inst, &core->instances, list) {
 		cvp_print_inst(CVP_ERR, inst);
 		if (inst->state != MSM_CVP_CORE_INVALID) {
@@ -682,13 +802,15 @@ void handle_sys_error(enum hal_command_response cmd, void *data)
 			spin_lock(&sq->lock);
 			s_state = SESSION_ERROR;
 			s_ecode = EVA_SYS_ERROR;
-			if ((atomic_read(&cvp_error_count)) < MAX_CVP_ERROR_COUNT)
-				atomic_inc(&cvp_error_count);
-
 			inst->session_error_code = (s_state << 28) | (s_ecode << 16) |
 				atomic_read(&cvp_error_count);
 			spin_unlock(&sq->lock);
 			change_cvp_inst_state(inst, MSM_CVP_CORE_INVALID);
+#ifdef CVP_SW_DBG_BUF_ENABLED
+			if (msm_cvp_sw_dbg_buf_dump & BIT(0))
+				eva_kmd_session_dump(inst);
+#endif
+
 			if (cvp_clean_session_queues(inst))
 				dprintk(CVP_ERR, "Failed to clean fences\n");
 			for (i = 0; i < ARRAY_SIZE(inst->completions); i++)
@@ -703,6 +825,12 @@ void handle_sys_error(enum hal_command_response cmd, void *data)
 		if (!core->trigger_ssr)
 			if (hfi_device->error != CVP_ERR_NOC_ERROR)
 				msm_cvp_print_inst_bufs(inst, false);
+	}
+
+	list_for_each_entry(frpc_node, &me->fastrpc_driver_list.list, list) {
+		if (!core->trigger_ssr)
+			if (hfi_device->error != CVP_ERR_NOC_ERROR)
+				msm_cvp_print_frpc_bufs(frpc_node, CVP_ERR, false);
 	}
 
 	/* handle the hw error before core released to get full debug info */
@@ -1140,6 +1268,15 @@ static int get_flipped_state(int present_state, int desired_state)
 {
 	int flipped_state;
 
+	if (present_state < 0 ||
+			present_state > MSM_CVP_CORE_INVALID ||
+			desired_state < 0 ||
+			desired_state > MSM_CVP_CORE_INVALID) {
+		dprintk(CVP_ERR, "%s: Invalid inst curr:%d req:%d\n",
+		__func__, present_state, desired_state);
+		return -EINVAL;
+	}
+
 	if (present_state == MSM_CVP_CORE_INIT_DONE && desired_state > MSM_CVP_CLOSE)
 		flipped_state = MSM_CVP_CORE_UNINIT;
 	else if (present_state == MSM_CVP_CORE_INVALID)
@@ -1183,6 +1320,160 @@ int msm_cvp_state_result_check(struct msm_cvp_inst *inst, int input, int state)
 	return 0;
 }
 
+static int cvp_invalid_handler(struct msm_cvp_inst *inst, int state, int flipped_state)
+{
+	int rc = 0;
+
+	if (!inst) {
+		rc = -EINVAL;
+		return rc;
+	}
+
+	rc = msm_cvp_deinit_core(inst);
+
+	if (rc || state <= get_flipped_state(inst->state, state))
+		return rc;
+	else
+		return -EINVAL;
+}
+
+static int cvp_uninit_handler(struct msm_cvp_inst *inst, int state, int flipped_state)
+{
+	int rc = 0;
+
+	if (!inst) {
+		rc = -EINVAL;
+		return rc;
+	}
+
+	return cvp_invalid_handler(inst, state, flipped_state);
+}
+
+static int cvp_close_done_handler(struct msm_cvp_inst *inst, int state, int flipped_state)
+{
+	int rc = 0;
+
+	if (!inst) {
+		rc = -EINVAL;
+		return rc;
+	}
+
+	rc = wait_for_state(inst, flipped_state, MSM_CVP_CLOSE_DONE,
+				HAL_SESSION_END_DONE);
+
+	if (rc || state <= get_flipped_state(inst->state, state))
+		return rc;
+
+	msm_cvp_comm_session_clean(inst);
+	return cvp_uninit_handler(inst, state, flipped_state);
+
+}
+
+static int cvp_close_handler(struct msm_cvp_inst *inst, int state, int flipped_state)
+{
+	int rc = 0;
+
+	if (!inst) {
+		rc = -EINVAL;
+		return rc;
+	}
+
+	rc = msm_comm_session_close(flipped_state, inst);
+	if (rc || state <= get_flipped_state(inst->state, state))
+		return rc;
+	else
+		return cvp_close_done_handler(inst, state, flipped_state);
+}
+
+static int cvp_open_done_handler(struct msm_cvp_inst *inst, int state, int flipped_state)
+{
+	int rc = 0;
+
+	if (!inst) {
+		rc = -EINVAL;
+		return rc;
+	}
+
+	rc = msm_comm_session_init_done(flipped_state, inst);
+	if (rc || state <= get_flipped_state(inst->state, state))
+		return rc;
+	else
+		return cvp_close_handler(inst, state, flipped_state);
+}
+
+static int cvp_open_handler(struct msm_cvp_inst *inst, int state, int flipped_state)
+{
+	int rc = 0;
+
+	if (!inst) {
+		rc = -EINVAL;
+		return rc;
+	}
+
+	rc = msm_comm_session_init(flipped_state, inst);
+	if (rc || state <= get_flipped_state(inst->state, state))
+		return rc;
+	else
+		return cvp_open_done_handler(inst, state, flipped_state);
+}
+
+static int cvp_init_done_handler(struct msm_cvp_inst *inst, int state, int flipped_state)
+{
+	int rc = 0;
+
+	if (!inst) {
+		rc = -EINVAL;
+		return rc;
+	}
+
+	rc = msm_comm_init_core_done(inst);
+	if (rc || state <= get_flipped_state(inst->state, state))
+		return rc;
+	else
+		return cvp_open_handler(inst, state, flipped_state);
+}
+
+static int cvp_init_handler(struct msm_cvp_inst *inst, int state, int flipped_state)
+{
+	int rc = 0;
+
+	if (!inst) {
+		rc = -EINVAL;
+		return rc;
+	}
+
+	rc = msm_comm_init_core(inst);
+	if (rc || state <= get_flipped_state(inst->state, state))
+		return rc;
+	else
+		return cvp_init_done_handler(inst, state, flipped_state);
+}
+
+static int cvp_uninit_done_handler(struct msm_cvp_inst *inst, int state, int flipped_state)
+{
+	int rc = 0;
+
+	if (!inst) {
+		rc = -EINVAL;
+		return rc;
+	}
+
+	return cvp_init_handler(inst, state, flipped_state);
+}
+
+int (*cvp_state_handler[MSM_CVP_CORE_INVALID + 1])
+		(struct msm_cvp_inst *inst, int state, int flipped_state) = {
+	 cvp_uninit_done_handler,
+	 cvp_init_handler,
+	 cvp_init_done_handler,
+	 cvp_open_handler,
+	 cvp_open_done_handler,
+	 cvp_close_handler,
+	 cvp_close_done_handler,
+	 cvp_uninit_handler,
+	 cvp_invalid_handler
+};
+
 int msm_cvp_comm_try_state(struct msm_cvp_inst *inst, int state)
 {
 	int rc = 0;
@@ -1199,7 +1490,7 @@ int msm_cvp_comm_try_state(struct msm_cvp_inst *inst, int state)
 
 	mutex_lock(&inst->sync_lock);
 	if (inst->state == MSM_CVP_CORE_INVALID &&
-				core->state == CVP_CORE_UNINIT) {
+			core->state == CVP_CORE_UNINIT) {
 		dprintk(CVP_ERR, "%s: inst %pK & core are in invalid\n",
 			__func__, inst);
 		mutex_unlock(&inst->sync_lock);
@@ -1207,60 +1498,21 @@ int msm_cvp_comm_try_state(struct msm_cvp_inst *inst, int state)
 	}
 
 	flipped_state = get_flipped_state(inst->state, state);
-	dprintk(CVP_SESS,
-		"inst: %pK (%#x) cur_state %s dest_state %s flipped_state = %s\n",
-		inst, inst->sess_id, state_names[inst->state],
-		state_names[state], state_names[flipped_state]);
 
-	switch (flipped_state) {
-	case MSM_CVP_CORE_UNINIT_DONE:
-	case MSM_CVP_CORE_INIT:
-		rc = msm_comm_init_core(inst);
-		if (rc || state <= get_flipped_state(inst->state, state))
-			break;
-		/* defined in linux/compiler_attributes.h */
-		fallthrough;
-	case MSM_CVP_CORE_INIT_DONE:
-		rc = msm_comm_init_core_done(inst);
-		if (rc || state <= get_flipped_state(inst->state, state))
-			break;
-		fallthrough;
-	case MSM_CVP_OPEN:
-		rc = msm_comm_session_init(flipped_state, inst);
-		if (rc || state <= get_flipped_state(inst->state, state))
-			break;
-		fallthrough;
-	case MSM_CVP_OPEN_DONE:
-		rc = msm_comm_session_init_done(flipped_state, inst);
-		if (rc || state <= get_flipped_state(inst->state, state))
-			break;
-		fallthrough;
-	case MSM_CVP_CLOSE:
-		dprintk(CVP_INFO, "to CVP_CLOSE state\n");
-		rc = msm_comm_session_close(flipped_state, inst);
-		if (rc || state <= get_flipped_state(inst->state, state))
-			break;
-		fallthrough;
-	case MSM_CVP_CLOSE_DONE:
-		dprintk(CVP_INFO, "to CVP_CLOSE_DONE state\n");
-		rc = wait_for_state(inst, flipped_state, MSM_CVP_CLOSE_DONE,
-				HAL_SESSION_END_DONE);
-		if (rc || state <= get_flipped_state(inst->state, state))
-			break;
-		msm_cvp_comm_session_clean(inst);
-		fallthrough;
-	case MSM_CVP_CORE_UNINIT:
-	case MSM_CVP_CORE_INVALID:
-		dprintk(CVP_INFO, "Sending core uninit\n");
-		rc = msm_cvp_deinit_core(inst);
-		if (rc || state <= get_flipped_state(inst->state, state))
-			break;
-		fallthrough;
-	default:
-		dprintk(CVP_ERR, "State not recognized\n");
-		rc = -EINVAL;
-		break;
+	if (flipped_state < 0 || flipped_state > MSM_CVP_CORE_INVALID) {
+		dprintk(CVP_ERR, "%s: Invalid inst flipped state:%d\n",
+		__func__, flipped_state);
+		mutex_unlock(&inst->sync_lock);
+		return -EINVAL;
 	}
+
+	dprintk(CVP_SESS,
+	"inst: %pK (%#x) cur_state %s dest_state %s flipped_state = %s\n",
+	inst, inst->sess_id, state_names[inst->state],
+	state_names[state], state_names[flipped_state]);
+
+	if (cvp_state_handler[flipped_state](inst, state, flipped_state) < 0)
+		dprintk(CVP_ERR, "State not recognized\n");
 
 	mutex_unlock(&inst->sync_lock);
 
@@ -1293,7 +1545,7 @@ int msm_cvp_noc_error_info(struct msm_cvp_core *core)
 	call_hfi_op(ops_tbl, noc_error_info, ops_tbl->hfi_device_data);
 
 	if (core->smmu_fault_count >= core->resources.max_ssr_allowed) {
-		dprintk(CVP_WARN, "msm_cvp_smmu_fault_recovery %d\n",
+		dprintk(CVP_INFO, "msm_cvp_smmu_fault_recovery %d\n",
 				msm_cvp_smmu_fault_recovery);
 		if (msm_cvp_smmu_fault_recovery)
 			core->resources.non_fatal_pagefaults = 1;
@@ -1338,16 +1590,16 @@ void msm_cvp_ssr_handler(struct work_struct *work)
 		dprintk(CVP_ERR, "Session abort triggered\n");
 		mutex_lock(&core->lock);
 		list_for_each_entry_safe(inst, inst_temp, &core->instances, list) {
-			dprintk(CVP_WARN,
-				"Session to abort: inst %#x ref %x\n",
-				inst, kref_read(&inst->kref));
 			if (inst != NULL) {
-				s = cvp_get_inst_validate(inst->core, inst);
+				s = cvp_get_inst_validate(core, inst);
 				if (!s) {
-					dprintk(CVP_WARN, "%s: Session is not a valid session\n",
+					dprintk(CVP_WARN, "%s: Session is not valid\n",
 						__func__);
 					continue;
 				}
+				dprintk(CVP_WARN,
+					"Session to abort: inst %#x ref %x\n",
+					inst, kref_read(&inst->kref));
 				print_hfi_queue_info(ops_tbl);
 				cvp_put_inst(s);
 			} else {
@@ -1365,7 +1617,7 @@ void msm_cvp_ssr_handler(struct work_struct *work)
 		dprintk(CVP_ERR, "Session error triggered\n");
 		mutex_lock(&core->lock);
 		list_for_each_entry_safe(inst, inst_t, &core->instances, list) {
-			if (inst != NULL) {
+			if (inst != NULL && inst->state != MSM_CVP_CORE_INVALID) {
 				dprintk(CVP_INFO, "Session to be taken for session error 0x%x\n",
 					inst);
 				response.session_id = inst;
@@ -1388,7 +1640,6 @@ void msm_cvp_ssr_handler(struct work_struct *work)
 		struct msm_cvp_inst *inst = NULL, *inst_t;
 
 		dprintk(CVP_ERR, "Session timeout triggered\n");
-		mutex_lock(&core->lock);
 		list_for_each_entry_safe(inst, inst_t,  &core->instances, list) {
 			if (inst != NULL) {
 				dprintk(CVP_INFO, "Session to be taken for session timeout 0x%x\n",
@@ -1397,7 +1648,7 @@ void msm_cvp_ssr_handler(struct work_struct *work)
 				break;
 				}
 		}
-		mutex_unlock(&core->lock);
+
 		return;
 	}
 	if (core->ssr_type == SSR_CORE_SMMU_FAULT) {
@@ -1524,14 +1775,33 @@ static int set_internal_buf_on_fw(struct msm_cvp_inst *inst,
 int cvp_comm_set_arp_buffers(struct msm_cvp_inst *inst)
 {
 	int rc = 0;
+	u32 pkt_concurrency;
 	struct cvp_internal_buf *buf;
+	struct cvp_session_prop *session_prop;
+	CVPKERNEL_ATRACE_BEGIN("cvp_comm_set_arp_buffers");
 
 	if (!inst || !inst->core || !inst->core->dev_ops) {
 		dprintk(CVP_ERR, "%s invalid parameters\n", __func__);
 		return -EINVAL;
 	}
 
-	buf = cvp_allocate_arp_bufs(inst, ARP_BUF_SIZE);
+	session_prop = &inst->prop;
+
+	if (!session_prop) {
+		dprintk(CVP_WARN, "Incorrect Props in inst %pK sess %x\n",
+			inst, inst->sess_id);
+		return -EINVAL;
+	}
+
+	pkt_concurrency = session_prop->pkt_concurrency;
+
+	if ((pkt_concurrency == 0) || (pkt_concurrency > 16)) {
+		dprintk(CVP_WARN, "Incorrect concurrency in inst %pK sess %x: %d\n",
+			inst, inst->sess_id, pkt_concurrency);
+		return -EINVAL;
+	}
+
+	buf = cvp_allocate_arp_bufs(inst, ALIGN(ARP_CHUNK_SIZE, SZ_4K) * pkt_concurrency);
 	if (!buf) {
 		rc = -ENOMEM;
 		goto error;
@@ -1546,12 +1816,13 @@ int cvp_comm_set_arp_buffers(struct msm_cvp_inst *inst)
 		dprintk(CVP_ERR, "set_buffer_done failed %d\n", rc);
 		goto error;
 	}
-
+	CVPKERNEL_ATRACE_END("cvp_comm_set_arp_buffers");
 	return rc;
 
 error:
 	if (rc != -ENOMEM)
 		cvp_release_arp_buffers(inst);
+	CVPKERNEL_ATRACE_END("cvp_comm_set_arp_buffers");
 	return rc;
 }
 
@@ -1597,6 +1868,21 @@ int cvp_print_inst(u32 tag, struct msm_cvp_inst *inst)
 		inst->prop.dsp_mask, kref_read(&inst->kref), inst->state,
 		inst->session_error_code);
 	dprintk(tag, "session name %s", session_prop->session_name);
+
+	return 0;
+}
+
+int cvp_print_frpc_node(u32 tag, struct cvp_dsp_fastrpc_driver_entry *frpc_node)
+{
+	if (!frpc_node) {
+		dprintk(CVP_ERR, "%s invalid frpc node %pK\n", __func__, frpc_node);
+		return -EINVAL;
+	}
+
+	dprintk(tag,
+		"%s frpc handle %#x session count %d refcount %d smem_count %d",
+		frpc_node->handle, frpc_node->session_cnt, atomic_read(&frpc_node->refcount),
+		atomic_read(&frpc_node->smem_count));
 
 	return 0;
 }

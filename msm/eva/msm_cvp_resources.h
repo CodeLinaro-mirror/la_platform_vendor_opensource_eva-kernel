@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #ifndef __MSM_CVP_RESOURCES_H__
@@ -41,6 +41,17 @@ struct context_bank_info {
 	struct addr_range addr_range;
 	struct device *dev;
 	struct iommu_domain *domain;
+};
+
+struct power_domain_info {
+	struct device *pd_device;
+	bool has_hw_power_collapse;
+	const char *name;
+};
+
+struct power_domain_set {
+	struct power_domain_info *pd_tbl;
+	u32 count;
 };
 
 struct regulator_info {
@@ -147,8 +158,6 @@ struct msm_cvp_mem_cdsp {
 struct cvp_pm_qos {
 	u32 silver_count;
 	u32 latency_us;
-	u32 off_vote_cnt;
-	spinlock_t lock;
 	int silver_cores[MAX_SILVER_CORE_NUM];
 	struct dev_pm_qos_request *pm_qos_hdls;
 };
@@ -208,6 +217,8 @@ struct msm_cvp_platform_resources {
 	uint32_t max_secure_inst_count;
 	int msm_cvp_hw_rsp_timeout;
 	int msm_cvp_dsp_rsp_timeout;
+	int qos_noc_urgency_low_a_bitmask;
+	int qos_noc_urgency_low_b_bitmask;
 	uint32_t msm_cvp_pwr_collapse_delay;
 	bool non_fatal_pagefaults;
 	bool fatal_ssr;
@@ -215,7 +226,8 @@ struct msm_cvp_platform_resources {
 	uint32_t vpu_ver;
 	uint32_t fw_cycles;
 	struct msm_cvp_ubwc_config_data *ubwc_config;
-	uint32_t rcg_vnoc_clk_en_low;
+	uint32_t gdsc_framework_type;
+	struct power_domain_set pd_set;
 };
 
 static inline bool is_iommu_present(struct msm_cvp_platform_resources *res)

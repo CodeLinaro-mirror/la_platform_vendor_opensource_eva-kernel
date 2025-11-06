@@ -37,13 +37,6 @@ ccflags-y += -I$(EVA_ROOT)/../synx-kernel/msm/synx/ \
     -I$(EVA_ROOT)/../synx-kernel/include/uapi/synx/media/
 endif
 
-ifeq ($(CONFIG_ARCH_SUN), y)
-$(info within KBUILD file CONFIG_ARCH_SUN = $(CONFIG_ARCH_SUN))
-KBUILD_CPPFLAGS += -DCONFIG_EVA_SUN=1 -DCVP_CONFIG_SYNX_V2=1
-KBUILD_CPPFLAGS += $(KERNEL_HEADER)
-KBUILD_CFLAGS += -Wno-format
-ccflags-y += -DCONFIG_EVA_SUN=1 -DCVP_CONFIG_SYNX_V2=1
-endif
 
 ifeq ($(CONFIG_EVA_LE), 1)
 ccflags-y += -DCONFIG_EVA_TVM=1

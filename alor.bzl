@@ -1,9 +1,9 @@
 load(":eva_modules.bzl", "eva_modules")
 load(":eva_module_build.bzl", "define_consolidate_gki_perf_modules")
 
-def define_tuna():
+def define_alor():
     define_consolidate_gki_perf_modules(
-        target = "tuna",
+        target = "alor",
         registry = eva_modules,
         modules = [
             "msm-eva",
@@ -13,7 +13,7 @@ def define_tuna():
             "TARGET_SYNX_ENABLE",
             "TARGET_DSP_ENABLE",
             "TARGET_MMRM_ENABLE",
-            "CONFIG_EVA_SUN",
+            "CONFIG_EVA_CANOE",
             #"TARGET_PRESIL_ENABLE",
             "CONFIG_MSM_MMRM"
         ],

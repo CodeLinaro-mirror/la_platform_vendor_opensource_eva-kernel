@@ -3,6 +3,8 @@ ifeq ($(TARGET_KERNEL_DLKM_DISABLE), true)
 ifeq ($(TARGET_KERNEL_DLKM_EVA_OVERRIDE), true)
 ENABLE_EVA_KERNEL := true
 endif
+else
+ENABLE_EVA_KERNEL := true
 endif
 
 ifeq ($(ENABLE_EVA_KERNEL), true)
@@ -15,6 +17,12 @@ LOCAL_PATH := $(call my-dir)
 # For DDK 		
 LOCAL_MODULE_DDK_BUILD := true		
 LOCAL_MODULE_KO_DIRS := msm/msm-eva.ko
+
+ifeq ($(CONFIG_CAM_PRESIL), y)
+ifneq ($(TARGET_BOARD_PLATFORM),)
+LOCAL_MODULE_DDK_EXTRA_ARGS := "--//vendor/qcom/opensource/camera-kernel:project_name=$(TARGET_BOARD_PLATFORM)"
+endif
+endif
 
 include $(CLEAR_VARS)
 # For incremental compilation
