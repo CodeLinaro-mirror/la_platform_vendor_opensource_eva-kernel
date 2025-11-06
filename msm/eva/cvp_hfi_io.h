@@ -326,5 +326,6 @@
 #endif
 #define CVP_CORE_POWER_STATUS	(CVP_WRAPPER_BASE_OFFS + 0x80)
 
-#define CVP_GCC_VIDEO_AXI1_CBCR		(0x142020)
+#define CVP_GCC_VIDEO_AXI1_CBCR		(0x32020)     /* Offset from GCC base (0x110000) */
+
 #endif
