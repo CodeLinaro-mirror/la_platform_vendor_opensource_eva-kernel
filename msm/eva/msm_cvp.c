@@ -22,46 +22,6 @@ static int cvp_enqueue_pkt(struct msm_cvp_inst* inst,
 	unsigned int in_offset,
 	unsigned int in_buf_num);
 
-void *get_sessObj_from_idr(struct msm_cvp_inst *inst)
-{
-	void *sessObj = NULL;
-	struct msm_cvp_core *core = NULL;
-
-	if (!inst || !inst->core) {
-		dprintk(CVP_ERR, "%s: invalid params\n", __func__);
-		return NULL;
-	}
-
-	core = inst->core;
-	mutex_lock(&core->idr_mtx);
-	sessObj = idr_find(&core->sess_idr, inst->sess_id);
-	mutex_unlock(&core->idr_mtx);
-	if (!sessObj)
-		dprintk(CVP_ERR, "%s: Could not find the sess obj for given idr id\n",
-				__func__);
-
-	return sessObj;
-}
-
-u32 get_sessId_from_idr(void *session)
-{
-	void *ptr = NULL;
-	u32 sess_id = 0;
-	struct msm_cvp_core *core = NULL;
-
-	core = list_first_entry(&cvp_driver->cores, struct msm_cvp_core, list);
-	if(!session || !core)
-		return -EINVAL;
-	mutex_lock(&core->idr_mtx);
-	idr_for_each_entry(&core->sess_idr, ptr, sess_id) {
-		if (ptr == session) {
-			mutex_unlock(&core->idr_mtx);
-			return sess_id;
-		}
-	}
-	mutex_unlock(&core->idr_mtx);
-	return -1;
-}
 static int cvp_check_clock(struct msm_cvp_inst *inst,
 		struct cvp_hfi_msg_session_hdr_ext *hdr);
 
@@ -79,7 +39,7 @@ int msm_cvp_get_session_info(struct msm_cvp_inst *inst, u32 *session)
 	if (!s)
 		return -ECONNRESET;
 
-	*session = inst->sess_id;
+	*session = hash32_ptr(inst->session);
 	dprintk(CVP_SESS, "%s: id 0x%x\n", __func__, *session);
 
 	cvp_put_inst(s);
@@ -1470,7 +1430,7 @@ static int msm_cvp_session_stop(struct msm_cvp_inst *inst,
 	sq->state = QUEUE_STOP;
 
 	dprintk(CVP_SESS, "Stop session: %pK session_id = %d\n",
-			inst, inst->sess_id);
+			inst, hash32_ptr(inst->session));
 	spin_unlock(&sq->lock);
 
 	wake_up_all(&inst->session_queue.wq);
@@ -1494,7 +1454,7 @@ int msm_cvp_session_queue_stop(struct msm_cvp_inst *inst)
 	sq->state = QUEUE_STOP;
 
 	dprintk(CVP_SESS, "Stop session queue: %pK session_id = %d\n",
-			inst, inst->sess_id);
+			inst, hash32_ptr(inst->session));
 	spin_unlock(&sq->lock);
 
 	wake_up_all(&inst->session_queue.wq);
@@ -1869,7 +1829,7 @@ static void cvp_clean_fence_queue(struct msm_cvp_inst *inst, int synx_state)
 		ktid = f->pkt->client_data.kdata & (FENCE_BIT - 1);
 
 		dprintk(CVP_SYNX, "%s: (%#x) flush frame %llu %llu wait_list\n",
-			__func__, inst->sess_id, ktid, f->frame_id);
+			__func__, hash32_ptr(inst->session), ktid, f->frame_id);
 
 		list_del_init(&f->list);
 		msm_cvp_unmap_frame(inst, f->pkt->client_data.kdata);
@@ -1883,7 +1843,7 @@ static void cvp_clean_fence_queue(struct msm_cvp_inst *inst, int synx_state)
 		ktid = f->pkt->client_data.kdata & (FENCE_BIT - 1);
 
 		dprintk(CVP_SYNX, "%s: (%#x)flush frame %llu %llu sched_list\n",
-			__func__, inst->sess_id, ktid, f->frame_id);
+			__func__, hash32_ptr(inst->session), ktid, f->frame_id);
 		inst->core->synx_ftbl->cvp_cancel_synx(inst, CVP_INPUT_SYNX,
 			f, synx_state);
 	}
@@ -1956,7 +1916,7 @@ static int cvp_flush_all(struct msm_cvp_inst *inst)
 	cvp_clean_fence_queue(inst, SYNX_STATE_SIGNALED_CANCEL);
 
 	dprintk(CVP_SESS, "%s: (%#x) send flush to fw\n",
-			__func__, inst->sess_id);
+			__func__, hash32_ptr(inst->session));
 
 	/* Send flush to FW */
 	rc = call_hfi_op(hdev, session_flush, (void *)inst->session);
@@ -1973,7 +1933,7 @@ static int cvp_flush_all(struct msm_cvp_inst *inst)
 		__func__, rc);
 
 	dprintk(CVP_SESS, "%s: (%#x) received flush from fw\n",
-			__func__, inst->sess_id);
+			__func__, hash32_ptr(inst->session));
 
 exit:
 	rc = cvp_drain_fence_sched_list(inst);
@@ -2096,11 +2056,11 @@ int msm_cvp_session_deinit(struct msm_cvp_inst *inst)
 		return -EINVAL;
 	}
 	dprintk(CVP_SESS, "%s: inst %pK (%#x)\n", __func__,
-		inst, inst->sess_id);
+		inst, hash32_ptr(inst->session));
 
-	session = (struct cvp_hal_session *)get_sessObj_from_idr(inst);
-	if (!session || session != inst->session)
-		return -EINVAL;
+	session = (struct cvp_hal_session *)inst->session;
+	if (!session)
+		return rc;
 
 	rc = msm_cvp_comm_try_state(inst, MSM_CVP_CLOSE_DONE);
 	if (rc)
@@ -2120,7 +2080,7 @@ int msm_cvp_session_init(struct msm_cvp_inst *inst)
 	}
 
 	dprintk(CVP_SESS, "%s: inst %pK (%#x)\n", __func__,
-		inst, inst->sess_id);
+		inst, hash32_ptr(inst->session));
 
 	/* set default frequency */
 	inst->clk_data.core_id = 0;
