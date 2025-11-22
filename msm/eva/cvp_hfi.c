@@ -1798,8 +1798,8 @@ static void cvp_pm_qos_update(struct iris_hfi_device *device, u32 latency)
 				latency);
 			if (err < 0) {
 					dprintk(CVP_WARN,
-					"pm qos on failed err %d for \
-					latency\n", err,latency);
+					"pm qos on failed with err %d for \
+					latency %u\n", err, latency);
 				}
 			else {
 				dprintk(CVP_PWR,
