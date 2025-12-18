@@ -37,6 +37,7 @@
 #include "msm_gpu_eva.h"
 #endif
 
+#include "msm_cvp_events.h"
 #define FIRMWARE_SIZE			0X00A00000
 #define REG_ADDR_OFFSET_BITMASK	0x000FFFFF
 #define QDSS_IOVA_START 0x80001000
@@ -146,6 +147,12 @@ static inline bool is_sys_cache_present(struct iris_hfi_device *device)
 
 #define ROW_SIZE 32
 
+unsigned long long get_aon_time(void)
+{
+	unsigned long long val;
+	asm volatile("mrs %0, cntvct_el0" : "=r" (val));
+	return val;
+}
 int get_hfi_version(void)
 {
 	struct msm_cvp_core *core;
@@ -689,7 +696,7 @@ static void __write_register(struct iris_hfi_device *device,
 	wmb();
 }
 
-static uint64_t __read_aon_time(struct iris_hfi_device *device)
+uint64_t __read_aon_time(struct iris_hfi_device *device)
 {
 	u8 *base_addr;
 	u32 lower_word = 0;
@@ -1307,6 +1314,7 @@ err_q_null:
 static int __iface_cmdq_write(struct iris_hfi_device *device, void *pkt)
 {
 	bool needs_interrupt = false;
+	struct cvp_hfi_cmd_session_hdr *cmd_hdr = NULL;
 	int rc = __iface_cmdq_write_relaxed(device, pkt, &needs_interrupt);
 
 	if (!rc && needs_interrupt) {
@@ -1320,7 +1328,23 @@ static int __iface_cmdq_write(struct iris_hfi_device *device, void *pkt)
 		dprintk(CVP_PROF, "wr_no_intr at_time = 0x%llx \n",
 					 __read_aon_time(device));
 	}
-
+        cmd_hdr = (struct cvp_hfi_cmd_session_hdr *)pkt;
+	if(( (msm_cvp_debug & CVP_TRACE) == CVP_TRACE ) &&
+			cmd_hdr->packet_type > HFI_CMD_SESSION_CVP_START &&
+			cmd_hdr->size >= sizeof(struct cvp_hfi_cmd_session_hdr))
+	{
+		u64 aon_cycles = 0;
+		u32 sess_id = 0;
+		u32 pkt_id = 0;
+		u32 stream_id = 0;
+		u32 t_id =0;
+		sess_id = cmd_hdr->session_id;
+		pkt_id  = cmd_hdr->packet_type;
+		stream_id = cmd_hdr->stream_idx;
+		t_id    = cmd_hdr->client_data.transaction_id;
+		aon_cycles  = get_aon_time();
+		trace_tracing_eva_frame_from_sw(aon_cycles, "EVA_KMD_FWD_END", sess_id, stream_id, pkt_id, t_id);
+	}
 	return rc;
 }
 
@@ -2867,6 +2891,8 @@ static void __flush_debug_queue(struct iris_hfi_device *device, u8 *packet)
 			 */
 			pkt->rg_msg_data[pkt->msg_size-1] = '\0';
 			dprintk(log_level, "%s", &pkt->rg_msg_data[1]);
+                        if((log_level & CVP_FW) && (pkt->msg_type == HFI_DEBUG_MSG_TIME))
+				trace_tracing_eva_frame_from_fw(&pkt->rg_msg_data[1]);
 		}
 	}
 #undef SKIP_INVALID_PKT
