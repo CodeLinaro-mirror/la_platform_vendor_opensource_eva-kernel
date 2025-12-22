@@ -4422,7 +4422,7 @@ static int __power_off_core(struct iris_hfi_device *device)
 	 */
 	do {
 		value = __read_register(device, CVP_SS_IDLE_STATUS);
-		if (value & 0x400000)
+		if (value & CVP_SS_IDLE_STATUS__DMA_NOC_IDLE___M)
 			break;
 		else
 			usleep_range(1000, 2000);
@@ -4435,11 +4435,12 @@ static int __power_off_core(struct iris_hfi_device *device)
 	}
 
 	/* Apply partial reset on MSF interface and wait for ACK */
-	__write_register(device, CVP_NOC_RESET_REQ, 0x7);
+	__write_register(device, CVP_NOC_RESET_REQ, AON_WRAPPER_CVP_NOC_RESET_REQ___M);
 	count = 0;
 	do {
 		value = __read_register(device, CVP_NOC_RESET_ACK);
-		if ((value & 0x7) == 0x7)
+		if ((value & AON_WRAPPER_CVP_NOC_RESET_ACK___M) ==
+						AON_WRAPPER_CVP_NOC_RESET_ACK___M)
 			break;
 		else
 			usleep_range(100, 200);
@@ -4451,8 +4452,36 @@ static int __power_off_core(struct iris_hfi_device *device)
 		warn_flag = 1;
 	}
 
+	/* Apply partial reset pulse to core to clear the pending transactions from core and wait for the ack*/
+
+	__write_register(device, CVP_WRAPPER_CORE_SW_RESET_H,
+				(CVP_VPU_WRAPPER_CORE_SW_RESET_H___M  & ~CVP_VPU_WRAPPER_CORE_SW_RESET_H__ARES_TOP_RIF___M));
+	__write_register(device, CVP_WRAPPER_CORE_SW_RESET_L,
+				CVP_VPU_WRAPPER_CORE_SW_RESET_L___M);
+	__write_register(device, CVP_WRAPPER_CORE_SW_RESET_TRIGGER, 0x1);
+
+	count = 0;
+	do {
+		value = __read_register(device, CVP_WRAPPER_CORE_SW_RESET_REQ_ACK);
+		if ((value & CVP_VPU_WRAPPER_CORE_SW_RESET_H__ARES_TOP_RIF___M) ==
+						CVP_VPU_WRAPPER_CORE_SW_RESET_H__ARES_TOP_RIF___M)
+			break;
+		else
+			usleep_range(100, 200);
+		count++;
+	} while (count < max_count);
+
+	if (count == max_count) {
+		dprintk(CVP_WARN, "Core SW reset failed\n");
+		warn_flag = 1;
+	}
+
+	__write_register(device, CVP_WRAPPER_CORE_SW_RESET_H, 0x00000000);
+	__write_register(device, CVP_WRAPPER_CORE_SW_RESET_L, 0x00000000);
+	__write_register(device, CVP_WRAPPER_CORE_SW_RESET_TRIGGER, 0x00000000);
+
 	/* De-assert partial reset on MSF interface and wait for ACK */
-	__write_register(device, CVP_NOC_RESET_REQ, 0x0);
+	__write_register(device, CVP_NOC_RESET_REQ, 0x1C0);
 	count = 0;
 	do {
 		value = __read_register(device, CVP_NOC_RESET_ACK);
@@ -4467,6 +4496,10 @@ static int __power_off_core(struct iris_hfi_device *device)
 		dprintk(CVP_WARN, "Core NoC reset de-assert failed\n");
 		warn_flag = 1;
 	}
+
+        /* Reset Ack Sel */
+	__write_register(device, CVP_NOC_RESET_REQ, 0x0);
+         /* End CVP NoC Partial Reset*/
 
 	if (warn_flag)
 		__print_sidebandmanager_regs(device);
