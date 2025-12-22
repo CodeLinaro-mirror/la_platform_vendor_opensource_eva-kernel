@@ -412,12 +412,24 @@ retry:
 	} else {
 		if (core->state == CVP_CORE_UNINIT)
 			return NULL;
-		usleep_range(100, 200);
+		// When count crosses 1000 increase the sleep to ~2ms and retry for another 100 loops
+		// This helps in giving more time for NRT thread to complete task and release the lock
 		count++;
-		if (count < 1000)
-			goto retry;
-		else
+		if (count == 1001)
+			dprintk(CVP_WARN, "retries count crossed 1000\n");
+
+		if (count <= 1000) {
+			usleep_range(100, 200);
+		}
+		else if (count <= 1100) {
+			usleep_range(2000, 3000);
+		}
+		else {
 			dprintk(CVP_ERR, "timeout locking core mutex\n");
+			return NULL;
+		}
+
+		goto retry;
 	}
 
 	return inst;
