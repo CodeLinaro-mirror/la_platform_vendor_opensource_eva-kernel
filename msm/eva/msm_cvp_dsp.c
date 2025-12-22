@@ -1726,6 +1726,8 @@ static void __dsp_cvp_buf_register(struct cvp_dsp_cmd_msg *cmd)
 	rc = msm_cvp_register_buffer(inst, kmd_buf);
 	if (rc) {
 		dprintk(CVP_ERR, "%s Failed to register buffer\n", __func__);
+		dprintk(CVP_ERR, "%s kmd_buf 0x%x, fd %d, size %d, offset %d \n",
+			__func__, kmd_buf, kmd_buf->fd, kmd_buf->size, kmd_buf->offset);
 		cmd->ret = -1;
 		goto dsp_fail_buf_reg;
 	}
