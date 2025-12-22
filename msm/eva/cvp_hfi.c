@@ -1890,38 +1890,25 @@ static int __sys_set_power_control(struct iris_hfi_device *device,
 	return 0;
 }
 
-static void cvp_pm_qos_update(struct iris_hfi_device *device, bool vote_on)
+static void cvp_pm_qos_update(struct iris_hfi_device *device, u32 latency)
 {
-	u32 latency, off_vote_cnt;
 	int i, err = 0;
-
-	spin_lock(&device->res->pm_qos.lock);
-	off_vote_cnt = device->res->pm_qos.off_vote_cnt;
-	spin_unlock(&device->res->pm_qos.lock);
-
-	if (vote_on && off_vote_cnt)
-		return;
-
-	latency = vote_on ? device->res->pm_qos.latency_us :
-			PM_QOS_RESUME_LATENCY_DEFAULT_VALUE;
-
-	if (device->res->pm_qos.latency_us && device->res->pm_qos.pm_qos_hdls)
+	if (device->res->pm_qos.latency_us && device->res->pm_qos.pm_qos_hdls){
 		for (i = 0; i < device->res->pm_qos.silver_count; i++) {
 			err = dev_pm_qos_update_request(
 				&device->res->pm_qos.pm_qos_hdls[i],
 				latency);
 			if (err < 0) {
-				if (vote_on) {
-					dprintk(CVP_WARN,
-						"pm qos on failed %d\n", err);
-				} else {
-					dprintk(CVP_WARN,
-						"pm qos off failed %d\n", err);
-				}
+				dprintk(CVP_WARN,"pm qos on failed with err %d for \
+					latency\n", err,latency);
+			} else {
+				dprintk(CVP_PWR,"pm qos update with  latency = %d \
+					on core %d\n", latency,i);
 			}
 		}
+	}
 }
-static int iris_pm_qos_update(void *device)
+static int iris_pm_qos_update(void *device, u32 latency)
 {
 	struct iris_hfi_device *dev;
 
@@ -1933,7 +1920,7 @@ static int iris_pm_qos_update(void *device)
 	dev = device;
 
 	mutex_lock(&dev->lock);
-	cvp_pm_qos_update(dev, true);
+	cvp_pm_qos_update(dev,latency);
 	mutex_unlock(&dev->lock);
 
 	return 0;
@@ -4165,7 +4152,7 @@ static inline int __suspend(struct iris_hfi_device *device)
 	call_iris_op(device, power_off, device);
 
 	if (device->res->pm_qos.latency_us && device->res->pm_qos.pm_qos_hdls)
-		cvp_pm_qos_update(device, false);
+		cvp_pm_qos_update(device, PM_QOS_RESUME_LATENCY_DEFAULT_VALUE);
 
 	return rc;
 
@@ -4533,7 +4520,7 @@ static inline int __resume(struct iris_hfi_device *device)
 	__set_threshold_registers(device);
 
 	if (device->res->pm_qos.latency_us && device->res->pm_qos.pm_qos_hdls)
-		cvp_pm_qos_update(device, true);
+		cvp_pm_qos_update(device,device->res->pm_qos.latency_us);
 
 	__sys_set_debug(device, msm_cvp_fw_debug);
 
