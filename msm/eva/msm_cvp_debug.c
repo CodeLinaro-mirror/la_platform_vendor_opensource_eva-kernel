@@ -52,7 +52,7 @@ bool msm_cvp_dcvs_disable = !true;
 int msm_cvp_minidump_enable = !1;
 int cvp_kernel_fence_enabled = 2;
 int msm_cvp_hw_wd_recovery = 1;
-int msm_cvp_smmu_fault_recovery = !1;
+int msm_cvp_smmu_fault_recovery = 1;
 int msm_cvp_session_error_recovery = 1;
 int msm_cvp_hw_hang_recovery = 1;
 #ifdef CVP_SW_DBG_BUF_ENABLED
