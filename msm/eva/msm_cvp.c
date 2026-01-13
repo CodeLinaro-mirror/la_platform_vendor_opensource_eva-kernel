@@ -1517,11 +1517,12 @@ stop_thread:
 	call_hfi_op(ops_tbl, pm_qos_update, ops_tbl->hfi_device_data);
 
 exit:
-	cvp_put_inst(s);
-	CVPKERNEL_ATRACE_END("msm_cvp_session_stop");
 	pr_info_ratelimited(CVP_PID_TAG "Stop session done for session_id = %#x\n",
 			current->pid, current->tgid, "sess",
 			inst->sess_id);
+
+	cvp_put_inst(s);
+	CVPKERNEL_ATRACE_END("msm_cvp_session_stop");
 	return rc;
 }
 
