@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.​
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #ifndef __H_CVP_HFI_H__
@@ -26,6 +26,12 @@ enum core_gdsc_dest {
 	TO_SW_CTRL = 0x0,
 	TO_HW_CTRL = 0x1
 };
+enum enter_noc_lpi_caller {
+	IRIS_POWER_ON = 1,
+	POWER_OFF_CORE,
+	POWER_OFF_CNTRL,
+};
+
 struct iris_hfi_device;
 int __tzbsp_set_cvp_state(enum tzbsp_subsys_state state);
 int __resume(struct iris_hfi_device *device);

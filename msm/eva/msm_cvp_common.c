@@ -786,6 +786,7 @@ void handle_sys_error(enum hal_command_response cmd, void *data)
 	hfi_device = ops_tbl->hfi_device_data;
 	if (!hfi_device) {
 		dprintk(CVP_WARN, "%s: Invalid device\n", __func__);
+		mutex_unlock(&core->clk_lock);
 		mutex_unlock(&core->lock);
 		return;
 	}

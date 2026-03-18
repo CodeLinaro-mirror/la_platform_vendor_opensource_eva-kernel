@@ -978,14 +978,22 @@ static int cvp_fastrpc_probe(struct fastrpc_device *rpc_dev)
 {
 	struct cvp_dsp_fastrpc_driver_entry *frpc_node = NULL;
 
-	dprintk(CVP_DSP, "%s fastrpc probe handle 0x%x\n",
+	if (rpc_dev) {
+		dprintk(CVP_DSP, "%s fastrpc probe handle 0x%x\n",
 		__func__, rpc_dev->handle);
 
-	frpc_node = cvp_get_fastrpc_node_with_handle(rpc_dev->handle);
-	if (frpc_node) {
-		frpc_node->cvp_fastrpc_device = rpc_dev;
-		complete(&frpc_node->fastrpc_probe_completion);
-		cvp_put_fastrpc_node(frpc_node);
+		frpc_node = cvp_get_fastrpc_node_with_handle(rpc_dev->handle);
+		if (frpc_node) {
+			frpc_node->cvp_fastrpc_device = rpc_dev;
+			complete(&frpc_node->fastrpc_probe_completion);
+			cvp_put_fastrpc_node(frpc_node);
+		}
+	} else {
+		/*
+		 * Race condition between fastRPC register and fastRPC unregister.
+		 * Need to find the root cause and fix it.
+		 */
+		dprintk(CVP_ERR, "%s : fastrpc_dev is NULL", __func__);
 	}
 
 	return 0;
