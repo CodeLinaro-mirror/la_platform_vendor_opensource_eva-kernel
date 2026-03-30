@@ -1754,6 +1754,7 @@ fail_msm_cvp_open:
 	put_task_struct(task);
 fail_pid:
 	cvp_put_fastrpc_node(frpc_node);
+	cmd->ret = -1;
 	return;
 fail_lookup:
 	/* unregister fastrpc driver */
