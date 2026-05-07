@@ -2447,8 +2447,6 @@ static int iris_hfi_session_send(void *sess,
 err_send_pkt:
 	mutex_unlock(&device->lock);
 	return rc;
-
-	return rc;
 }
 
 static int iris_hfi_session_flush(void *sess)
@@ -2713,22 +2711,31 @@ skip_power_off:
 static void __process_sys_error(struct iris_hfi_device *device)
 {
 	struct cvp_hfi_sfr_struct *vsfr = NULL;
-	u32 sfr_buf_size = 0;
 
 	vsfr = (struct cvp_hfi_sfr_struct *)device->sfr.align_virtual_addr;
-	sfr_buf_size = vsfr->bufSize;
-	if (vsfr && sfr_buf_size < ALIGNED_SFR_SIZE) {
-		void *p = memchr(vsfr->rg_data, '\0', sfr_buf_size);
-		/*
-		 * SFR isn't guaranteed to be NULL terminated
-		 * since SYS_ERROR indicates that Iris is in the
-		 * process of crashing.
-		 */
-		if (p == NULL)
-			vsfr->rg_data[sfr_buf_size - 1] = '\0';
+	if (vsfr) {
+		u32 sfr_buf_size = vsfr->bufSize;
 
-		dprintk(CVP_ERR, "SFR Message from FW: %s\n",
-				vsfr->rg_data);
+		if (sfr_buf_size > 0 && sfr_buf_size <= ALIGNED_SFR_SIZE) {
+			void *p = memchr(vsfr->rg_data, '\0', sfr_buf_size);
+			/*
+			 * SFR isn't guaranteed to be NULL terminated
+			 * since SYS_ERROR indicates that Iris is in the
+			 * process of crashing.
+			 */
+			if (p == NULL)
+				vsfr->rg_data[sfr_buf_size - 1] = '\0';
+
+			dprintk(CVP_ERR, "SFR Message from FW: %s\n",
+					vsfr->rg_data);
+		}
+		else {
+			dprintk(CVP_ERR, "Invalid SFR buffer size: %u (max: %u, mem_size: %zu)\n",
+					sfr_buf_size, ALIGNED_SFR_SIZE, device->sfr.mem_size);
+		}
+	}
+	else {
+		dprintk(CVP_ERR, "Error: vsfr is NULL\n");
 	}
 }
 
