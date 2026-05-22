@@ -1039,8 +1039,11 @@ static int adjust_bw_freqs(void)
                if(!strcmp(core->resources.bus_set.bus_tbl[bus_count].name,"cvp-ddr")){
 			bus = &core->resources.bus_set.bus_tbl[bus_count];
 			max_bw = bus->range[1];
-			min_bw = max_bw/10;
-               }
+			min_bw = max_bw/100;
+			/* Ensure minimum bandwidth is at least 1 */
+			if (min_bw == 0)
+				min_bw = 1;
+	       }
 	}
 	if(!bus){
 		dprintk(CVP_ERR,"bus node is NULL for cvp-ddr\n");
