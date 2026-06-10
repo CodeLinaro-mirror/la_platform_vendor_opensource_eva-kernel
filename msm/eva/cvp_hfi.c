@@ -2709,12 +2709,20 @@ static void __session_clean(struct cvp_hal_session *session)
 	struct msm_cvp_inst *inst = NULL;
 	void *tmp = NULL;
 
-	if (!session || !session->device) {
+	if (!session) {
 		dprintk(CVP_WARN, "%s: invalid params\n", __func__);
 		return;
 	}
-	device = session->device;
 	core = cvp_driver->cvp_core;
+	if (!core || !core->dev_ops) {
+		dprintk(CVP_WARN, "%s: invalid core\n", __func__);
+		return;
+	}
+	device = (struct iris_hfi_device *)core->dev_ops->hfi_device_data;
+	if (!device) {
+		dprintk(CVP_ERR, "%s: invalid device\n", __func__);
+		return;
+	}
 	inst = (struct msm_cvp_inst *) session->session_id;
 	dprintk(CVP_SESS, "deleted the session: %pK, inst %pK, sess_id 0x%x\n",
 			session, inst, inst->sess_id);
@@ -2744,19 +2752,25 @@ static int iris_hfi_session_clean(void *session)
 {
 	struct cvp_hal_session *sess_close;
 	struct iris_hfi_device *device;
+	struct msm_cvp_core *core;
 
 	if (!session) {
 		dprintk(CVP_ERR, "Invalid Params %s\n", __func__);
 		return -EINVAL;
 	}
 
-	sess_close = session;
-	device = sess_close->device;
-
+	core = cvp_driver->cvp_core;
+	if (!core || !core->dev_ops) {
+		dprintk(CVP_ERR, "Invalid core handle %s\n", __func__);
+		return -EINVAL;
+	}
+	device = (struct iris_hfi_device *)core->dev_ops->hfi_device_data;
 	if (!device) {
 		dprintk(CVP_ERR, "Invalid device handle %s\n", __func__);
 		return -EINVAL;
 	}
+
+	sess_close = session;
 
 	mutex_lock(&device->lock);
 
@@ -2876,7 +2890,19 @@ static int __send_session_cmd(struct cvp_hal_session *session, int pkt_type)
 {
 	struct cvp_hal_session_cmd_pkt pkt;
 	int rc = 0;
-	struct iris_hfi_device *device = session->device;
+	struct msm_cvp_core *core;
+	struct iris_hfi_device *device;
+
+	core = cvp_driver->cvp_core;
+	if (!core || !core->dev_ops) {
+		dprintk(CVP_ERR, "%s: invalid core\n", __func__);
+		return -EINVAL;
+	}
+	device = (struct iris_hfi_device *)core->dev_ops->hfi_device_data;
+	if (!device) {
+		dprintk(CVP_ERR, "%s: invalid device\n", __func__);
+		return -EINVAL;
+	}
 
 	if (!__is_session_valid(device, session, __func__))
 		return -ECONNRESET;
@@ -2891,7 +2917,7 @@ static int __send_session_cmd(struct cvp_hal_session *session, int pkt_type)
 		goto err_create_pkt;
 	}
 
-	if (__iface_cmdq_write(session->device, &pkt))
+	if (__iface_cmdq_write(device, &pkt))
 		rc = -ENOTEMPTY;
 
 err_create_pkt:
@@ -2904,11 +2930,23 @@ static int __send_session_cmd_ktid(struct cvp_hal_session *session,
 {
 	struct cvp_hfi_cmd_session_hdr pkt;
 	int rc = 0;
-	if (!session || !session->device) {
+	struct msm_cvp_core *core;
+	struct iris_hfi_device *device;
+
+	if (!session) {
 		dprintk(CVP_ERR, "Invalid Params %s\n", __func__);
 		return -EINVAL;
 	}
-	struct iris_hfi_device *device = session->device;
+	core = cvp_driver->cvp_core;
+	if (!core || !core->dev_ops) {
+		dprintk(CVP_ERR, "%s: invalid core\n", __func__);
+		return -EINVAL;
+	}
+	device = (struct iris_hfi_device *)core->dev_ops->hfi_device_data;
+	if (!device) {
+		dprintk(CVP_ERR, "%s: invalid device\n", __func__);
+		return -EINVAL;
+	}
 
 	if (!__is_session_valid(device, session, __func__))
 		return -ECONNRESET;
@@ -2935,6 +2973,7 @@ static int iris_hfi_session_end(void *session)
 {
 	struct cvp_hal_session *sess;
 	struct iris_hfi_device *device;
+	struct msm_cvp_core *core;
 	int rc = 0;
 
 	if (!session) {
@@ -2942,17 +2981,23 @@ static int iris_hfi_session_end(void *session)
 		return -EINVAL;
 	}
 
-	sess = session;
-	device = sess->device;
-	if (!device) {
-		dprintk(CVP_ERR, "Invalid session %s\n", __func__);
+	core = cvp_driver->cvp_core;
+	if (!core || !core->dev_ops) {
+		dprintk(CVP_ERR, "%s: invalid core\n", __func__);
 		return -EINVAL;
 	}
+	device = (struct iris_hfi_device *)core->dev_ops->hfi_device_data;
+	if (!device) {
+		dprintk(CVP_ERR, "Invalid device handle %s\n", __func__);
+		return -EINVAL;
+	}
+
+	sess = session;
 
 	mutex_lock(&device->lock);
 
 	if (msm_cvp_fw_coverage) {
-		if (__sys_set_coverage(sess->device, msm_cvp_fw_coverage))
+		if (__sys_set_coverage(device, msm_cvp_fw_coverage))
 			dprintk(CVP_WARN, "Fw_coverage msg ON failed\n");
 	}
 
@@ -2967,14 +3012,24 @@ static int iris_hfi_session_abort(void *sess)
 {
 	struct cvp_hal_session *session = sess;
 	struct iris_hfi_device *device;
+	struct msm_cvp_core *core;
 	int rc = 0;
 
-	if (!session || !session->device) {
+	if (!session) {
 		dprintk(CVP_ERR, "Invalid Params %s\n", __func__);
 		return -EINVAL;
 	}
 
-	device = session->device;
+	core = cvp_driver->cvp_core;
+	if (!core || !core->dev_ops) {
+		dprintk(CVP_ERR, "%s: invalid core\n", __func__);
+		return -EINVAL;
+	}
+	device = (struct iris_hfi_device *)core->dev_ops->hfi_device_data;
+	if (!device) {
+		dprintk(CVP_ERR, "%s: invalid device\n", __func__);
+		return -EINVAL;
+	}
 
 	mutex_lock(&device->lock);
 
@@ -3031,12 +3086,21 @@ static int iris_hfi_session_set_buffers(void *sess, u32 iova, u32 size)
 	struct msm_cvp_inst *inst = NULL;
 	u32 session_id = 0;
 
-	if (!session || !session->device || !iova || !size) {
+	if (!session || !iova || !size) {
 		dprintk(CVP_ERR, "Invalid Params\n");
 		return -EINVAL;
 	}
 
-	device = session->device;
+	core = cvp_driver->cvp_core;
+	if (!core || !core->dev_ops) {
+		dprintk(CVP_ERR, "%s: invalid core\n", __func__);
+		return -EINVAL;
+	}
+	device = (struct iris_hfi_device *)core->dev_ops->hfi_device_data;
+	if (!device) {
+		dprintk(CVP_ERR, "%s: invalid device\n", __func__);
+		return -EINVAL;
+	}
 	mutex_lock(&device->lock);
 
 	if (!__is_session_valid(device, session, __func__)) {
@@ -3044,7 +3108,6 @@ static int iris_hfi_session_set_buffers(void *sess, u32 iova, u32 size)
 		goto err_create_pkt;
 	}
 
-	core = cvp_driver->cvp_core;
 	session_id = ((struct msm_cvp_inst *)(session->session_id))->sess_id;
 	inst = cvp_get_inst_from_id(core, session_id);
 	if (!inst) {
@@ -3064,7 +3127,7 @@ static int iris_hfi_session_set_buffers(void *sess, u32 iova, u32 size)
 		goto err_set_buf;
 	}
 
-	if (__iface_cmdq_write(session->device, &pkt))
+	if (__iface_cmdq_write(device, &pkt))
 		rc = -ENOTEMPTY;
 
 err_set_buf:
@@ -3085,12 +3148,21 @@ static int iris_hfi_session_release_buffers(void *sess)
 	struct msm_cvp_inst *inst = NULL;
 	u32 session_id = 0;
 
-	if (!session || !session->device) {
+	if (!session) {
 		dprintk(CVP_ERR, "Invalid Params\n");
 		return -EINVAL;
 	}
 
-	device = session->device;
+	core = cvp_driver->cvp_core;
+	if (!core || !core->dev_ops) {
+		dprintk(CVP_ERR, "%s: invalid core\n", __func__);
+		return -EINVAL;
+	}
+	device = (struct iris_hfi_device *)core->dev_ops->hfi_device_data;
+	if (!device) {
+		dprintk(CVP_ERR, "%s: invalid device\n", __func__);
+		return -EINVAL;
+	}
 	mutex_lock(&device->lock);
 
 	if (!__is_session_valid(device, session, __func__)) {
@@ -3098,7 +3170,6 @@ static int iris_hfi_session_release_buffers(void *sess)
 		goto err_create_pkt;
 	}
 
-	core = cvp_driver->cvp_core;
 	session_id = ((struct msm_cvp_inst *)(session->session_id))->sess_id;
 	inst = cvp_get_inst_from_id(core, session_id);
 	if (!inst) {
@@ -3117,7 +3188,7 @@ static int iris_hfi_session_release_buffers(void *sess)
 		goto err_release_buf;
 	}
 
-	if (__iface_cmdq_write(session->device, &pkt))
+	if (__iface_cmdq_write(device, &pkt))
 		rc = -ENOTEMPTY;
 
 err_release_buf:
@@ -3133,13 +3204,24 @@ static int iris_hfi_session_send(void *sess,
 	int rc = 0;
 	struct cvp_hal_session *session = sess;
 	struct iris_hfi_device *device;
+	struct msm_cvp_core *core;
 
-	if (!session || !session->device) {
+	if (!session) {
 		dprintk(CVP_ERR, "invalid session");
 		return -ENODEV;
 	}
 
-	device = session->device;
+	core = cvp_driver->cvp_core;
+	if (!core || !core->dev_ops) {
+		dprintk(CVP_ERR, "%s: invalid core\n", __func__);
+		return -EINVAL;
+	}
+	device = (struct iris_hfi_device *)core->dev_ops->hfi_device_data;
+	if (!device) {
+		dprintk(CVP_ERR, "%s: invalid device\n", __func__);
+		return -EINVAL;
+	}
+
 	mutex_lock(&device->lock);
 
 	if (!__is_session_valid(device, session, __func__)) {
@@ -3160,13 +3242,11 @@ static int iris_hfi_session_send(void *sess,
 		goto err_send_pkt;
 	}
 
-	if (__iface_cmdq_write(session->device, in_pkt))
+	if (__iface_cmdq_write(device, in_pkt))
 		rc = -ENOTEMPTY;
 
 err_send_pkt:
 	mutex_unlock(&device->lock);
-	return rc;
-
 	return rc;
 }
 
@@ -3174,14 +3254,24 @@ static int iris_hfi_session_flush(void *sess, u64 ktid)
 {
 	struct cvp_hal_session *session = sess;
 	struct iris_hfi_device *device;
+	struct msm_cvp_core *core;
 	int rc = 0;
 
-	if (!session || !session->device) {
+	if (!session) {
 		dprintk(CVP_ERR, "Invalid Params %s\n", __func__);
 		return -EINVAL;
 	}
 
-	device = session->device;
+	core = cvp_driver->cvp_core;
+	if (!core || !core->dev_ops) {
+		dprintk(CVP_ERR, "%s: invalid core\n", __func__);
+		return -EINVAL;
+	}
+	device = (struct iris_hfi_device *)core->dev_ops->hfi_device_data;
+	if (!device) {
+		dprintk(CVP_ERR, "%s: invalid device\n", __func__);
+		return -EINVAL;
+	}
 
 	mutex_lock(&device->lock);
 
@@ -3196,14 +3286,24 @@ static int iris_hfi_session_start(void *sess, u64 ktid)
 {
 	struct cvp_hal_session *session = sess;
 	struct iris_hfi_device *device;
+	struct msm_cvp_core *core;
 	int rc = 0;
 
-	if (!session || !session->device) {
+	if (!session) {
 		dprintk(CVP_ERR, "Invalid Params %s\n", __func__);
 		return -EINVAL;
 	}
 
-	device = session->device;
+	core = cvp_driver->cvp_core;
+	if (!core || !core->dev_ops) {
+		dprintk(CVP_ERR, "%s: invalid core\n", __func__);
+		return -EINVAL;
+	}
+	device = (struct iris_hfi_device *)core->dev_ops->hfi_device_data;
+	if (!device) {
+		dprintk(CVP_ERR, "%s: invalid device\n", __func__);
+		return -EINVAL;
+	}
 
 	mutex_lock(&device->lock);
 
@@ -3218,14 +3318,24 @@ static int iris_hfi_session_stop(void *sess, u64 ktid)
 {
 	struct cvp_hal_session *session = sess;
 	struct iris_hfi_device *device;
+	struct msm_cvp_core *core;
 	int rc = 0;
 
-	if (!session || !session->device) {
+	if (!session) {
 		dprintk(CVP_ERR, "Invalid Params %s\n", __func__);
 		return -EINVAL;
 	}
 
-	device = session->device;
+	core = cvp_driver->cvp_core;
+	if (!core || !core->dev_ops) {
+		dprintk(CVP_ERR, "%s: invalid core\n", __func__);
+		return -EINVAL;
+	}
+	device = (struct iris_hfi_device *)core->dev_ops->hfi_device_data;
+	if (!device) {
+		dprintk(CVP_ERR, "%s: invalid device\n", __func__);
+		return -EINVAL;
+	}
 
 	mutex_lock(&device->lock);
 
@@ -5400,13 +5510,24 @@ static int iris_hfi_validate_session(void *sess, const char *func)
 	struct cvp_hal_session *session = sess;
 	int rc = 0;
 	struct iris_hfi_device *device;
+	struct msm_cvp_core *core;
 
-	if (!session || !session->device) {
+	if (!session) {
 		dprintk(CVP_ERR, " %s Invalid Params %pK\n", __func__, session);
 		return -EINVAL;
 	}
 
-	device = session->device;
+	core = cvp_driver->cvp_core;
+	if (!core || !core->dev_ops) {
+		dprintk(CVP_ERR, "%s: invalid core\n", __func__);
+		return -EINVAL;
+	}
+	device = (struct iris_hfi_device *)core->dev_ops->hfi_device_data;
+	if (!device) {
+		dprintk(CVP_ERR, "%s: invalid device\n", __func__);
+		return -EINVAL;
+	}
+
 	mutex_lock(&device->lock);
 	if (!__is_session_valid(device, session, func))
 		rc = -ECONNRESET;
