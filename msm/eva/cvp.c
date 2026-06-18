@@ -31,7 +31,7 @@
 
 #define CLASS_NAME              "cvp"
 #define DRIVER_NAME             "cvp"
-
+#define MAX_SSR_COMPLETION_TIMEOUT  4000
 struct msm_cvp_drv *cvp_driver;
 
 static int cvp_open(struct inode *inode, struct file *filp)
@@ -583,11 +583,13 @@ static int finish_ssr(struct msm_cvp_core* core)
 	rc = msm_cvp_trigger_ssr(core, SSR_ERR_FATAL);
 	if(rc == 0) {
 		dprintk(CVP_WARN, "%s: SSR triggered\n", __func__);
-		rc = wait_for_completion_interruptible(&core->ssr_completion);
-		if(rc == -ERESTARTSYS) {
-			dprintk(CVP_ERR, "%s: Unable to complete SSR. Wait interrupted\n", __func__);
+		rc =  wait_for_completion_timeout(&core->ssr_completion,msecs_to_jiffies(MAX_SSR_COMPLETION_TIMEOUT));
+		if(rc ==0) {
+			dprintk(CVP_ERR, "%s: SSR completion timed out after %dms\n", __func__, MAX_SSR_COMPLETION_TIMEOUT);
+			rc = -ETIMEDOUT;
 		} else {
-		    dprintk(CVP_WARN, "%s: SSR completed successfully\n", __func__);
+			dprintk(CVP_WARN, "%s: SSR completed successfully\n", __func__);
+			rc = 0;
 		}
 	}
 	else {
