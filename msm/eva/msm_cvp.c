@@ -2365,7 +2365,7 @@ int msm_cvp_session_deinit(struct msm_cvp_inst *inst)
 	if (rc)
 		dprintk(CVP_ERR, "%s: close failed\n", __func__);
 
-	rc = msm_cvp_session_deinit_buffers(inst);
+	msm_cvp_session_deinit_buffers(inst);
 	return rc;
 }
 
