@@ -295,7 +295,7 @@ static void msm_cvp_cleanup_instance(struct msm_cvp_inst *inst)
 	if (!s){
 		dprintk(CVP_ERR, "%s: Session is not valid\n",
 						__func__);
-		return;
+		goto arp_release;
 	}
 	sqf = &inst->session_queue_fence;
 	sq = &inst->session_queue;
@@ -342,6 +342,7 @@ wait:
 		mutex_unlock(&inst->frames.lock);
 		cvp_dump_fence_queue(inst);
 	}
+arp_release:
 	if (inst) {
 		if (cvp_release_arp_buffers(inst))
 			dprintk(CVP_ERR,
@@ -361,7 +362,8 @@ wait:
 			call_hfi_op(hdev, pm_qos_update, hdev->hfi_device_data,PM_QOS_RESUME_LATENCY_DEFAULT_VALUE);
 		}
 	}
-	cvp_put_inst(inst);
+	if(s)
+		cvp_put_inst(s);
 }
 
 int msm_cvp_destroy(struct msm_cvp_inst *inst)
