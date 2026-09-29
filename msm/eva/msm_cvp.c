@@ -266,10 +266,6 @@ static int msm_cvp_session_process_hfi(
 			memset((void *)fd_arr, -1, sizeof(uint32_t) * buf_num);
 		}
 		rc = msm_cvp_map_user_persist(inst, in_pkt, offset, buf_num, fd_arr);
-		if (rc) {
-			vfree(fd_arr);
-			goto exit;
-		}
 	} else if (map_type == UNMAP_PERSIST) {
 		rc = msm_cvp_mark_user_persist(inst, in_pkt, offset, buf_num);
 		if (!rc) {
@@ -319,7 +315,7 @@ static int msm_cvp_session_process_hfi(
 
 exit:
 	cvp_put_inst(inst);
-	if (map_type == MAP_PERSIST)
+	if (map_type == MAP_PERSIST && fd_arr)
 		vfree(fd_arr);
 	return rc;
 }
