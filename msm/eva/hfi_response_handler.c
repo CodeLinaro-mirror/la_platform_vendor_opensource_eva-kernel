@@ -544,8 +544,8 @@ static void hfi_process_sys_get_prop_image_version(
 	u8 *str_image_version;
 	int req_bytes;
 
-	req_bytes = pkt->size - sizeof(*pkt);
-	if (req_bytes < version_string_size ||
+	req_bytes = pkt->size - sizeof(struct cvp_sys_property_packet_hdr);
+	if (req_bytes < (signed int)version_string_size ||
 			!pkt->rg_property_data[1] ||
 			pkt->num_properties > 1) {
 		dprintk(CVP_ERR, "%s: bad_pkt: %d\n", __func__, req_bytes);

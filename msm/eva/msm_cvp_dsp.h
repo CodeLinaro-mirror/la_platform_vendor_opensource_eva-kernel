@@ -12,7 +12,32 @@
 
 #include <linux/pid.h>
 #include <linux/sched.h>
-#include <linux/fastrpc.h>
+
+#ifdef CVP_FASTRPC_ENABLED
+#include <fastrpc.h>
+#else
+struct fastrpc_device {
+	int handle;
+};
+
+enum fastrpc_driver_status {
+	FASTRPC_CVP_B,
+};
+
+enum fastrpc_driver_invoke_nums {
+	FASTRPC_DEV_MAP_DMA = 1,
+	FASTRPC_DEV_UNMAP_DMA,
+	FASTRPC_DEV_GET_HLOS_PID,
+};
+
+struct fastrpc_driver {
+	struct device_driver driver;
+	int handle;
+	int (*probe)(struct fastrpc_device *dev);
+	int (*callback)(struct fastrpc_device *dev,
+			enum fastrpc_driver_status status);
+};
+#endif	/* End of CVP_FASTRPC_ENABLED */
 
 #define CVP_APPS_DSP_GLINK_GUID "cvp-glink-apps-dsp"
 #define CVP_APPS_DSP_SMD_GUID "cvp-smd-apps-dsp"

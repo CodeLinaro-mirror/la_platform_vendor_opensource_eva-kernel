@@ -24,9 +24,10 @@ struct cvp_hfi_device *cvp_hfi_initialize(enum msm_cvp_hfi_type hfi_type,
 	rc = cvp_iris_hfi_initialize(hdev, device_id, res, callback);
 
 	if (rc) {
-		if (rc != -EPROBE_DEFER)
+		if (rc != -EPROBE_DEFER){
 			dprintk(CVP_ERR, "%s device init failed rc = %d",
 				__func__, rc);
+		}
 		goto err_hfi_init;
 	}
 

@@ -27,7 +27,14 @@ enum queue_state {
 #define CVP_SYNX_ENABLED 1
 #define CVP_MMRM_ENABLED 1
 #define CVP_FASTRPC_ENABLED 1
+/*
+ * Enable EVA minidump paths only when providers are built-in.
+ * If minidump/va-minidump are modules, external modpost for msm-eva
+ * may not see their symbol versions, causing unresolved symbols.
+ */
+#if defined(CONFIG_QCOM_MINIDUMP) && defined(CONFIG_QCOM_VA_MINIDUMP)
 #define CVP_MINIDUMP_ENABLED 1
+#endif
 #endif
 
 #endif

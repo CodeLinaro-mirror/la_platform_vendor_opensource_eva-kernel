@@ -20,7 +20,13 @@
 #include <linux/workqueue.h>
 #include <linux/platform_device.h>
 #include <linux/soc/qcom/llcc-qcom.h>
+#include <linux/version.h>
+#include <linux/pm_domain.h>
+#if (KERNEL_VERSION(6, 3, 0) <= LINUX_VERSION_CODE)
+#include <linux/firmware/qcom/qcom_scm.h>
+#else
 #include <linux/qcom_scm.h>
+#endif
 #include <linux/soc/qcom/smem.h>
 #include <linux/dma-mapping.h>
 #include <linux/reset.h>
@@ -820,7 +826,7 @@ static int __unvote_buses(struct iris_hfi_device *device)
 	device->bus_vote.data_count = 0;
 
 	iris_hfi_for_each_bus(device, bus) {
-		rc = msm_cvp_set_bw(bus, 0);
+		rc = icc_set_bw(bus->client, 0, 0);
 		if (rc) {
 			dprintk(CVP_ERR,
 			"%s: Failed unvoting bus\n", __func__);
@@ -861,7 +867,7 @@ no_data_count:
 
 	iris_hfi_for_each_bus(device, bus) {
 		if (bus) {
-			rc = msm_cvp_set_bw(bus, bus->range[1]);
+			rc = icc_set_bw(bus->client, bus->range[1], 0);
 			if (rc)
 				dprintk(CVP_ERR,
 				"Failed voting bus %s to ab %u\n",
@@ -1483,7 +1489,7 @@ static int __get_qdss_iommu_virtual_addr(struct iris_hfi_device *dev,
 			rc = iommu_map(domain, iova,
 					qdss_addr_tbl[i].start,
 					qdss_addr_tbl[i].size,
-					IOMMU_READ | IOMMU_WRITE);
+					IOMMU_READ | IOMMU_WRITE,0);
 
 			if (rc) {
 				dprintk(CVP_ERR,
@@ -1617,7 +1623,7 @@ static int __interface_queues_init(struct iris_hfi_device *dev)
 			dev->iface_q_table.align_virtual_addr;
 	q_tbl_hdr->qtbl_version = 0;
 	q_tbl_hdr->device_addr = (void *)dev;
-	strlcpy(q_tbl_hdr->name, "msm_cvp", sizeof(q_tbl_hdr->name));
+	strscpy(q_tbl_hdr->name, "msm_cvp", sizeof(q_tbl_hdr->name));
 	q_tbl_hdr->qtbl_size = CVP_IFACEQ_TABLE_SIZE;
 	q_tbl_hdr->qtbl_qhdr0_offset =
 				sizeof(struct cvp_hfi_queue_table_header);
@@ -1878,6 +1884,7 @@ static int iris_hfi_core_init(void *device)
 		rc = -ENOMEM;
 		goto err_core_init;
 	}
+	cvp_register_va_md_region();
 
 	// Add node for dev struct
 	add_va_node_to_list(CVP_QUEUE_DUMP, dev,
@@ -3292,8 +3299,8 @@ static int __init_bus(struct iris_hfi_device *device)
 		WARN(dev_get_drvdata(bus->dev), "%s's drvdata already set\n",
 				dev_name(bus->dev));
 		dev_set_drvdata(bus->dev, device);
-		bus->client = icc_get(&device->res->pdev->dev,
-				bus->master, bus->slave);
+		bus->client = of_icc_get(bus->dev, bus->name);
+
 		if (IS_ERR_OR_NULL(bus->client)) {
 			rc = PTR_ERR(bus->client) ?: -EBADHANDLE;
 			dprintk(CVP_ERR, "Failed to register bus %s: %d\n",
@@ -4680,8 +4687,9 @@ static struct iris_hfi_device *__add_device(u32 device_id,
 	}
 
 	rc = __init_regs_and_interrupts(hdevice, res);
-	if (rc)
+	if (rc){
 		goto err_cleanup;
+	}
 
 	hdevice->res = res;
 	hdevice->device_id = device_id;

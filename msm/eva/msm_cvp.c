@@ -655,7 +655,6 @@ wait:
 exit:
 	dprintk(CVP_SYNX, "%s exit\n", current->comm);
 	cvp_put_inst(inst);
-	do_exit(rc);
 	return rc;
 }
 
@@ -1007,7 +1006,10 @@ static int adjust_bw_freqs(void)
 	}
 
 	hdev->clk_freq = core->curr_freq;
-	rc = msm_cvp_set_bw(bus, bw_sum);
+	rc = icc_set_bw(bus->client, bw_sum, 0);
+	if (rc)
+		dprintk(CVP_ERR, "Failed voting bus %s to ab %u\n",
+			bus->name, bw_sum);
 
 	return rc;
 }

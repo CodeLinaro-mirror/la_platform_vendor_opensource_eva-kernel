@@ -337,8 +337,9 @@ static int msm_probe_cvp_device(struct platform_device *pdev)
 	}
 
 	core = kzalloc(sizeof(*core), GFP_KERNEL);
-	if (!core)
+	if (!core){
 		return -ENOMEM;
+	}
 
 	core->platform_data = cvp_get_drv_data(&pdev->dev);
 	dev_set_drvdata(&pdev->dev, core);
@@ -357,7 +358,7 @@ static int msm_probe_cvp_device(struct platform_device *pdev)
 		goto err_alloc_chrdev;
 	}
 
-	core->class = class_create(THIS_MODULE, CLASS_NAME);
+	core->class = class_create(CLASS_NAME);
 	if (IS_ERR(core->class)) {
 		rc = PTR_ERR(core->class);
 		dprintk(CVP_ERR, "class_create failed: %d\n",
@@ -410,10 +411,12 @@ static int msm_probe_cvp_device(struct platform_device *pdev)
 		mutex_unlock(&cvp_driver->lock);
 
 		rc = PTR_ERR(core->device) ?: -EBADHANDLE;
-		if (rc != -EPROBE_DEFER)
+		if (rc != -EPROBE_DEFER){
 			dprintk(CVP_ERR, "Failed to create HFI device\n");
-		else
+		}
+		else{
 			dprintk(CVP_CORE, "msm_cvp: request probe defer\n");
+		}
 		goto err_hfi_initialize;
 	}
 
@@ -454,8 +457,7 @@ static int msm_probe_cvp_device(struct platform_device *pdev)
 		dprintk(CVP_DSP, "DSP interface not enabled\n");
 	}
 
-	// Registering EVA SS with minidump
-	cvp_register_va_md_region();
+
 
 	return rc;
 
@@ -519,20 +521,21 @@ static int msm_cvp_probe(struct platform_device *pdev)
 	return -EINVAL;
 }
 
-static int msm_cvp_remove(struct platform_device *pdev)
+static void  msm_cvp_remove(struct platform_device *pdev)
 {
-	int rc = 0;
 	struct msm_cvp_core *core;
 
 	if (!pdev) {
 		dprintk(CVP_ERR, "%s invalid input %pK", __func__, pdev);
-		return -EINVAL;
+		//return -EINVAL;
+                  return;
 	}
 
 	core = dev_get_drvdata(&pdev->dev);
 	if (!core) {
 		dprintk(CVP_ERR, "%s invalid core", __func__);
-		return -EINVAL;
+		//return -EINVAL;
+                return;
 	}
 
 	cvp_hfi_deinitialize(core->hfi_type, core->device);
@@ -542,7 +545,6 @@ static int msm_cvp_remove(struct platform_device *pdev)
 	mutex_destroy(&core->lock);
 	mutex_destroy(&core->clk_lock);
 	kfree(core);
-	return rc;
 }
 
 static int msm_cvp_pm_suspend(struct device *dev)
@@ -649,3 +651,4 @@ module_exit(msm_cvp_exit);
 
 MODULE_SOFTDEP("pre: msm-mmrm");
 MODULE_LICENSE("GPL v2");
+MODULE_IMPORT_NS(DMA_BUF);

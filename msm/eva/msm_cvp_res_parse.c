@@ -446,62 +446,61 @@ static int msm_cvp_populate_bus(struct device *dev,
 
 	memset(bus, 0x0, sizeof(struct bus_info));
 
-	rc = of_property_read_string(dev->of_node, "label", &temp_name);
-	if (rc) {
-		dprintk(CVP_ERR, "'label' not found in node\n");
-		goto err_bus;
-	}
-	/* need a non-const version of name, hence copying it over */
-	bus->name = devm_kstrdup(dev, temp_name, GFP_KERNEL);
-	if (!bus->name) {
-		rc = -ENOMEM;
-		goto err_bus;
-	}
+        rc = of_property_read_string(dev->of_node, "interconnect-names",
+                                     &temp_name);
+        if (rc) {
+                dprintk(CVP_ERR, "'interconnect-names' not found in node\n");
+                goto err_bus;
+        }
 
-	rc = of_property_read_u32(dev->of_node, "qcom,bus-master",
-			&bus->master);
-	if (rc) {
-		dprintk(CVP_ERR, "'qcom,bus-master' not found in node\n");
-		goto err_bus;
-	}
+        bus->name = devm_kstrdup(dev, temp_name, GFP_KERNEL);
+        if (!bus->name) {
+                rc = -ENOMEM;
+                goto err_bus;
+        }
 
-	rc = of_property_read_u32(dev->of_node, "qcom,bus-slave", &bus->slave);
-	if (rc) {
-		dprintk(CVP_ERR, "'qcom,bus-slave' not found in node\n");
-		goto err_bus;
-	}
+        bus->client = of_icc_get(dev, temp_name);
+        if (IS_ERR(bus->client)) {
+                rc = PTR_ERR(bus->client);
+                dprintk(CVP_ERR, "Failed to get ICC path for %s\n", temp_name);
+                goto err_bus;
+        }
 
-	rc = of_property_read_string(dev->of_node, "qcom,bus-governor",
-			&bus->governor);
-	if (rc) {
-		rc = 0;
-		dprintk(CVP_CORE,
-				"'qcom,bus-governor' not found, default to performance governor\n");
-		bus->governor = PERF_GOV;
-	}
+        rc = of_property_read_string(dev->of_node, "qcom,bus-governor",
+                                     &bus->governor);
+        if (rc) {
+                rc = 0;
+                dprintk(CVP_CORE,
+                        "'qcom,bus-governor' not found, default to performance governor\n");
+                bus->governor = PERF_GOV;
+        }
 
-	if (!strcmp(bus->governor, PERF_GOV))
-		bus->is_prfm_gov_used = true;
+        if (!strcmp(bus->governor, PERF_GOV))
+                bus->is_prfm_gov_used = true;
 
-	rc = of_property_read_u32_array(dev->of_node, "qcom,bus-range-kbps",
-			range, ARRAY_SIZE(range));
-	if (rc) {
-		rc = 0;
-		dprintk(CVP_CORE,
-				"'qcom,range' not found defaulting to <0 INT_MAX>\n");
-		range[0] = 0;
-		range[1] = INT_MAX;
-	}
+        rc = of_property_read_u32_array(dev->of_node, "qcom,bus-range-kbps",
+                                        range, ARRAY_SIZE(range));
+        if (rc) {
+                rc = 0;
+                dprintk(CVP_CORE,
+                        "'qcom,bus-range-kbps' not found defaulting to <0 INT_MAX>\n");
+                range[0] = 0;
+                range[1] = INT_MAX;
+        }
 
-	bus->range[0] = range[0]; /* min */
-	bus->range[1] = range[1]; /* max */
+        bus->range[0] = range[0];
+        bus->range[1] = range[1];
 
-	buses->count++;
-	bus->dev = dev;
-	dprintk(CVP_CORE, "Found bus %s [%d->%d] with governor %s\n",
-			bus->name, bus->master, bus->slave, bus->governor);
+        buses->count++;
+        bus->dev = dev;
+
+        dprintk(CVP_CORE, "Found bus %s [%d->%d] with governor %s\n",
+                bus->name, bus->master, bus->slave, bus->governor);
+
+        return 0;
+
 err_bus:
-	return rc;
+        return rc;
 }
 
 static int msm_cvp_load_regulator_table(
@@ -578,7 +577,7 @@ static int msm_cvp_load_regulator_table(
 					"Failed to alloc memory for regulator name\n");
 			goto err_reg_name_alloc;
 		}
-		strlcpy(rinfo->name, domains_property->name,
+		strscpy(rinfo->name, domains_property->name,
 			(supply - domains_property->name) + 1);
 
 		rinfo->has_hw_power_collapse = of_property_read_bool(
@@ -847,7 +846,8 @@ int cvp_read_platform_resources_from_dt(
 	res->register_size = kres ? (kres->end + 1 - kres->start) : -1;
 
 	kres = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
-	res->irq = kres ? kres->start : -1;
+	//res->irq = kres ? kres->start : -1;
+	res->irq = platform_get_irq(pdev, 0);
 
 	rc = msm_cvp_load_subcache_info(res);
 	if (rc)
@@ -925,7 +925,7 @@ static int msm_cvp_setup_context_bank(struct msm_cvp_platform_resources *res,
 		struct context_bank_info *cb, struct device *dev)
 {
 	int rc = 0;
-	struct bus_type *bus;
+	const struct bus_type *bus;
 
 	if (!dev || !cb || !res) {
 		dprintk(CVP_ERR,
@@ -949,8 +949,8 @@ static int msm_cvp_setup_context_bank(struct msm_cvp_platform_resources *res,
 	if (!dev->dma_parms)
 		dev->dma_parms =
 			devm_kzalloc(dev, sizeof(*dev->dma_parms), GFP_KERNEL);
-	dma_set_max_seg_size(dev, DMA_BIT_MASK(32));
-	dma_set_seg_boundary(dev, DMA_BIT_MASK(64));
+	dma_set_max_seg_size(dev, (unsigned int)DMA_BIT_MASK(32));
+	dma_set_seg_boundary(dev, (unsigned int)DMA_BIT_MASK(64));
 
 	dprintk(CVP_CORE, "Attached %s and created mapping\n", dev_name(dev));
 	dprintk(CVP_CORE,
@@ -1008,7 +1008,6 @@ static int msm_cvp_populate_context_bank(struct device *dev,
 	int rc = 0;
 	struct context_bank_info *cb = NULL;
 	struct device_node *np = NULL;
-
 	if (!dev || !core) {
 		dprintk(CVP_ERR, "%s - invalid inputs\n", __func__);
 		return -EINVAL;
@@ -1032,13 +1031,16 @@ static int msm_cvp_populate_context_bank(struct device *dev,
 	}
 
 	dprintk(CVP_CORE, "%s: context bank has name %s\n", __func__, cb->name);
-	rc = of_property_read_u32_array(np, "qcom,iommu-dma-addr-pool",
-			(u32 *)&cb->addr_range, 2);
-	if (rc) {
-		dprintk(CVP_ERR,
-			"Could not read addr pool for context bank : %s %d\n",
-			cb->name, rc);
-		goto err_setup_cb;
+	if (!strcmp(cb->name, "cvp_hlos")) {
+		cb->addr_range.start = 0x4b000000;
+		cb->addr_range.size = 0x90000000;
+		cb->addr_range.size = 0x90000000;
+	} else if (!strcmp(cb->name, "cvp_sec_nonpixel")) {
+		cb->addr_range.start = 0x01000000;
+		cb->addr_range.size = 0x25800000;
+	} else if (!strcmp(cb->name, "cvp_sec_pixel")) {
+		cb->addr_range.start = 0x26800000;
+		cb->addr_range.size = 0x24800000;
 	}
 
 	cb->is_secure = of_property_read_bool(np, "qcom,iommu-vmid");

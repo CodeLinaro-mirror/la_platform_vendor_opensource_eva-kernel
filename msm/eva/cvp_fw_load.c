@@ -6,7 +6,12 @@
 #include <linux/of.h>
 #include <linux/pm_qos.h>
 #include <linux/platform_device.h>
+#include <linux/version.h>
+#if (KERNEL_VERSION(6, 3, 0) <= LINUX_VERSION_CODE)
+#include <linux/firmware/qcom/qcom_scm.h>
+#else
 #include <linux/qcom_scm.h>
+#endif
 #include "msm_cvp_debug.h"
 #include "cvp_comm_def.h"
 #include "cvp_core_hfi.h"
@@ -40,7 +45,7 @@ static int __load_fw_to_memory(struct platform_device *pdev,
 		dprintk(CVP_ERR, "%s: Invalid fw name\n", __func__);
 		return -EINVAL;
 	}
-	scnprintf(firmware_name, ARRAY_SIZE(firmware_name), "%s.mdt", fw_name);
+	scnprintf(firmware_name, ARRAY_SIZE(firmware_name), "%s.mbn", fw_name);
 
 	rc = of_property_read_u32(pdev->dev.of_node, "pas-id", &pas_id);
 	if (rc) {

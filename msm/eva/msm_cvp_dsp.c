@@ -7,6 +7,13 @@
 #include <linux/rpmsg.h>
 #include <linux/of_platform.h>
 #include <linux/of_fdt.h>
+#include <linux/version.h>
+#include <linux/fdtable.h>
+#if (KERNEL_VERSION(6, 3, 0) <= LINUX_VERSION_CODE)
+#include <linux/firmware/qcom/qcom_scm.h>
+#else
+#include <linux/qcom_scm.h>
+#endif
 #include <soc/qcom/secure_buffer.h>
 #include "msm_cvp_core.h"
 #include "msm_cvp.h"
@@ -14,12 +21,6 @@
 #include "cvp_dump.h"
 
 struct cvp_dsp_apps gfa_cv;
-static int hlosVM[HLOS_VM_NUM] = {VMID_HLOS};
-static int dspVM[DSP_VM_NUM] = {VMID_HLOS, VMID_CDSP_Q6};
-static int dspVMperm[DSP_VM_NUM] = { PERM_READ | PERM_WRITE | PERM_EXEC,
-				PERM_READ | PERM_WRITE | PERM_EXEC };
-static int hlosVMperm[HLOS_VM_NUM] = { PERM_READ | PERM_WRITE | PERM_EXEC };
-
 static int cvp_reinit_dsp(void);
 
 static int __fastrpc_driver_register(struct fastrpc_driver *driver)
@@ -140,42 +141,47 @@ static int cvp_hyp_assign_to_dsp(uint64_t addr, uint32_t size)
 {
 	int rc = 0;
 	struct cvp_dsp_apps *me = &gfa_cv;
-
-	if (!me->hyp_assigned) {
-		rc = hyp_assign_phys(addr, size, hlosVM, HLOS_VM_NUM, dspVM,
-			dspVMperm, DSP_VM_NUM);
-		if (rc) {
-			dprintk(CVP_ERR, "%s failed. rc=%d\n", __func__, rc);
-			return rc;
-		}
-		me->addr = addr;
-		me->size = size;
-		me->hyp_assigned = true;
-	}
-
-	return rc;
-}
-
-static int cvp_hyp_assign_from_dsp(void)
-{
-	int rc = 0;
-	struct cvp_dsp_apps *me = &gfa_cv;
-
-	if (me->hyp_assigned) {
-		rc = hyp_assign_phys(me->addr, me->size, dspVM, DSP_VM_NUM,
-				hlosVM, hlosVMperm, HLOS_VM_NUM);
-		if (rc) {
-			dprintk(CVP_ERR, "%s failed. rc=%d\n", __func__, rc);
-			return rc;
-		}
-		me->addr = 0;
-		me->size = 0;
-		me->hyp_assigned = false;
-	}
-
-	return rc;
-}
-
+	
+	uint64_t hlosVMid = BIT(VMID_HLOS);
+	struct qcom_scm_vmperm dspVM[DSP_VM_NUM] = {
+  		{VMID_HLOS, PERM_READ | PERM_WRITE | PERM_EXEC},
+  		{VMID_CDSP_Q6, PERM_READ | PERM_WRITE | PERM_EXEC}
+  	};
+  	if (!me->hyp_assigned) {
+  		rc = qcom_scm_assign_mem(addr, size, &hlosVMid, dspVM, DSP_VM_NUM);
+  		if (rc) {
+  			dprintk(CVP_ERR, "%s failed. rc=%d\n", __func__, rc);
+  			return rc;
+  		}
+  		me->addr = addr;
+  		me->size = size;
+  		me->hyp_assigned = true;
+  	}
+  	return rc;
+  }
+  
+  static int cvp_hyp_assign_from_dsp(void)
+  {
+  	int rc = 0;
+  	struct cvp_dsp_apps *me = &gfa_cv;
+  
+  	uint64_t dspVMids = BIT(VMID_HLOS) | BIT(VMID_CDSP_Q6);
+  	struct qcom_scm_vmperm hlosVM[HLOS_VM_NUM] = {
+  		{VMID_HLOS, PERM_READ | PERM_WRITE | PERM_EXEC},
+  	};
+  	if (me->hyp_assigned) {
+  		rc = qcom_scm_assign_mem(me->addr, me->size, &dspVMids, hlosVM, HLOS_VM_NUM);
+  		if (rc) {
+  			dprintk(CVP_ERR, "%s failed. rc=%d\n", __func__, rc);
+  			return rc;
+  		}
+  		me->addr = 0;
+  		me->size = 0;
+  		me->hyp_assigned = false;
+  	}
+  	return rc;
+  }
+/*From LA.3.0 code ref*/
 static int cvp_dsp_rpmsg_probe(struct rpmsg_device *rpdev)
 {
 	struct cvp_dsp_apps *me = &gfa_cv;
@@ -715,7 +721,7 @@ void cvp_dsp_init_hfi_queue_hdr(struct iris_hfi_device *device)
 			device->dsp_iface_q_table.align_virtual_addr;
 	q_tbl_hdr->qtbl_version = 0;
 	q_tbl_hdr->device_addr = (void *)device;
-	strlcpy(q_tbl_hdr->name, "msm_cvp", sizeof(q_tbl_hdr->name));
+	strscpy(q_tbl_hdr->name, "msm_cvp", sizeof(q_tbl_hdr->name));
 	q_tbl_hdr->qtbl_size = CVP_IFACEQ_TABLE_SIZE;
 	q_tbl_hdr->qtbl_qhdr0_offset =
 				sizeof(struct cvp_hfi_queue_table_header);
@@ -1203,10 +1209,12 @@ void cvp_dsp_send_hfi_queue(void)
 		dprintk(CVP_DSP, "%s: HFI queue is not ready\n", __func__);
 		goto exit;
 	}
-
-	if (me->state != DSP_PROBED && me->state != DSP_INACTIVE)
+	if (me->state != DSP_PROBED && me->state != DSP_INACTIVE) {
+		dprintk(CVP_DSP,
+				"%s: DSP is not probed or  not in proper state. me->state = %d\n",
+				__func__, me->state);
 		goto exit;
-
+	} 
 	rc = cvp_hyp_assign_to_dsp(addr, size);
 	if (rc) {
 		dprintk(CVP_ERR, "%s: cvp_hyp_assign_to_dsp. rc=%d\n",
@@ -1944,7 +1952,6 @@ wait_dsp:
 	goto wait_dsp;
 exit:
 	dprintk(CVP_DBG, "dsp thread exit\n");
-	do_exit(rc);
 	return rc;
 }
 

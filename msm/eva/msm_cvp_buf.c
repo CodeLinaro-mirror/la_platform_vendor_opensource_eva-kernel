@@ -193,32 +193,32 @@ static bool __is_buf_valid(struct msm_cvp_inst *inst,
 static struct file *msm_cvp_fget(unsigned int fd, struct task_struct *task,
 			fmode_t mask, unsigned int refs)
 {
-	struct files_struct *files = task->files;
+
 	struct file *file;
 
-	if (!files)
+#if (KERNEL_VERSION(5, 13, 0) > LINUX_VERSION_CODE)
+	struct files_struct *files = task->files;
+
+  	if (!files)
 		return NULL;
 
-	rcu_read_lock();
-loop:
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 13, 0))
-	file = fcheck_files(files, fd);
+  	rcu_read_lock();
+  	file = fcheck_files(files, fd);
+  	rcu_read_unlock();
 #else
-	file = files_lookup_fd_rcu(files, fd);
-#endif
-	if (file) {
-		/* File object ref couldn't be taken.
-		 * dup2() atomicity guarantee is the reason
-		 * we loop to catch the new file (or NULL pointer)
-		 */
-		if (file->f_mode & mask)
-			file = NULL;
-		else if (!get_file_rcu_many(file, refs))
-			goto loop;
-	}
-	rcu_read_unlock();
+	unsigned int ret_fd = fd;
 
-	return file;
+#if (KERNEL_VERSION(6, 13, 0) <= LINUX_VERSION_CODE)
+	file = fget_task_next(task, &ret_fd);
+#else
+	file = task_lookup_next_fdget_rcu(task, &ret_fd);
+#endif
+	if (ret_fd != fd)
+  		dprintk(CVP_ERR, "%s FAILED to get file from fd = %u, %u\n",
+  			__func__, fd, ret_fd);
+#endif
+
+  	return file;
 }
 
 static struct dma_buf *cvp_dma_buf_get(struct file *file, int fd,
